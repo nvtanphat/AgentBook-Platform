@@ -1,0 +1,16 @@
+.git
+.pytest_cache
+.codex-logs
+data
+docs
+evaluation
+notebooks
+stitch_agentbook_graph_rag_intelligence_dashboard
+frontend/node_modules
+frontend/dist
+frontend/.vite
+backend/__pycache__
+backend/**/*.pyc
+backend/**/__pycache__
+**/__pycache__
+**/*.pyc

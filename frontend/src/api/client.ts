@@ -1,0 +1,553 @@
+export const API_BASE_URL = (import.meta.env.VITE_AGENTBOOK_API_URL ?? "http://127.0.0.1:8000").replace(/\/$/, "");
+const API_V1_BASE_URL = `${API_BASE_URL}/api/v1`;
+const AUTH_TOKEN_STORAGE_KEY = "prism.auth.token";
+
+function authHeaders(): HeadersInit {
+  const token = localStorage.getItem(AUTH_TOKEN_STORAGE_KEY) || import.meta.env.VITE_AGENTBOOK_AUTH_TOKEN;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+type ApiEnvelope<T> = {
+  success: boolean;
+  message: string;
+  data: T | null;
+  error: string | null;
+};
+
+export type BoundingBox = {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+};
+
+export type Citation = {
+  doc_id: string;
+  doc_name: string;
+  page: number | null;
+  pages: number[];
+  block_id: string | null;
+  block_type: string | null;
+  snippet_original: string;
+  snippet_translated: string | null;
+  bbox: BoundingBox | null;
+  role: string;
+  source_language: string;
+  confidence: number;
+};
+
+export type MaterialUploadMetadata = {
+  owner_id: string;
+  collection_id?: string | null;
+  collection_name?: string | null;
+  collection_description?: string | null;
+  subject?: string | null;
+  topic?: string | null;
+  language: string;
+  modality: string;
+  source_type?: string | null;
+  version: string;
+  extra_metadata?: Record<string, unknown>;
+};
+
+export type MaterialUploadResponse = {
+  material_id: string;
+  doc_id: string;
+  collection_id: string;
+  job_id: string;
+  status: string;
+  stage: string;
+  filename: string;
+  original_name: string;
+  checksum_sha256: string;
+  file_size_bytes: number;
+  storage_path: string;
+};
+
+export type MaterialBatchUploadItem = {
+  filename: string;
+  success: boolean;
+  data: MaterialUploadResponse | null;
+  error: string | null;
+};
+
+export type MaterialBatchUploadResponse = {
+  results: MaterialBatchUploadItem[];
+};
+
+export type MaterialInfo = {
+  material_id: string;
+  collection_id: string;
+  owner_id: string;
+  filename: string;
+  original_name: string;
+  file_type: string;
+  status: string;
+  subject: string | null;
+  topic: string | null;
+  page_count: number | null;
+  version: string;
+};
+
+export type DebugBlock = {
+  block_id: string;
+  block_index: number;
+  block_type: string;
+  content: string;
+  language: string;
+  bbox: BoundingBox | null;
+  ocr_confidence: number | null;
+  reading_order: number;
+};
+
+export type DebugPage = {
+  page_number: number;
+  width: number | null;
+  height: number | null;
+  ocr_confidence: number | null;
+  blocks: DebugBlock[];
+};
+
+export type DebugChunk = {
+  chunk_id: string;
+  content: string;
+  language: string;
+  modality: string;
+  token_count: number | null;
+  source_block_ids: string[];
+  source_pages: number[];
+  chunk_strategy: string;
+  embedding_model: string;
+};
+
+export type MaterialDebugResponse = {
+  material_id: string;
+  collection_id: string;
+  owner_id: string;
+  original_name: string;
+  file_type: string;
+  status: string;
+  modality: string;
+  language: string;
+  page_count: number;
+  pages: DebugPage[];
+  chunks: DebugChunk[];
+  qdrant_vector_count: number;
+  raw_image_url: string | null;
+};
+
+export type MaterialStatusResponse = {
+  material_id: string;
+  collection_id: string;
+  status: string;
+  stage: string;
+  progress_pct: number;
+  failed_stage: string | null;
+  error_message: string | null;
+};
+
+export type QueryRequest = {
+  owner_id: string;
+  collection_id?: string | null;
+  material_ids?: string[];
+  conversation_id?: string;
+  query: string;
+  top_k?: number | null;
+  answer_language?: string | null;
+};
+
+export type QueryResponse = {
+  answer: string;
+  answer_language: string;
+  query_language: string;
+  translated_query: string | null;
+  source_languages: string[];
+  citations: Citation[];
+  confidence: number;
+  was_refused: boolean;
+  refusal_reason: string | null;
+};
+
+export type CompareRequest = {
+  owner_id: string;
+  collection_id?: string | null;
+  material_ids?: string[];
+  topic: string;
+  dimensions: string[];
+  top_k?: number | null;
+};
+
+export type ComparisonCell = {
+  dimension: string;
+  value: string;
+  source: string;
+  citation: Citation | null;
+  confidence: number;
+};
+
+export type CompareResponse = {
+  topic: string;
+  comparison_table: ComparisonCell[];
+  conflicts: string[];
+  citations: Citation[];
+};
+
+export type EvidenceBlock = {
+  block_id: string;
+  block_type: string;
+  page: number;
+  snippet_original: string;
+  source_language: string;
+  bbox: BoundingBox | null;
+  confidence: number | null;
+  material_id: string | null;
+  doc_name: string | null;
+};
+
+export type EvidencePageResponse = {
+  doc_id: string;
+  doc_name: string;
+  page: number;
+  blocks: EvidenceBlock[];
+  source_filename: string;
+  raw_image_url: string | null;
+  file_type: string | null;
+};
+
+export type MindmapNode = {
+  id: string;
+  label: string;
+  summary: string | null;
+  children: MindmapNode[];
+  citations: Array<Record<string, string | number>>;
+};
+
+export type MindmapResponse = {
+  root_topic: string;
+  nodes: MindmapNode[];
+};
+
+export type GraphNode = {
+  id: string;
+  label: string;
+  type: string;
+  confidence: number | null;
+};
+
+export type GraphEdge = {
+  source: string;
+  target: string;
+  relation_type: string;
+  confidence: number | null;
+  evidence_refs: Array<Record<string, string | number>>;
+};
+
+export type GraphResponse = {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+};
+
+export type AdminMetricsResponse = {
+  total_docs: number;
+  failed_jobs: number;
+  indexed_docs: number;
+  query_stats: {
+    total_queries: number;
+    refused_queries: number;
+    average_confidence: number;
+    average_latency_ms: number;
+  };
+  retrieval_stats: {
+    average_top_k: number;
+    average_sources_used: number;
+    average_retrieval_time_ms: number;
+  };
+  feedback_count: number;
+};
+
+export type HealthResponse = {
+  status: string;
+  service: string;
+};
+
+export type CollectionSummary = {
+  collection_id: string;
+  name: string;
+  owner_id: string;
+  subject: string | null;
+  description: string | null;
+  material_count: number;
+  indexed_material_count: number;
+  retrievable_chunk_count: number;
+  latest_material_name: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+async function parseError(response: Response) {
+  const fallback = `Prism API request failed: ${response.status}`;
+  try {
+    const payload = (await response.json()) as { detail?: unknown; message?: string; error?: string };
+    if (typeof payload.detail === "string") return payload.detail;
+    if (Array.isArray(payload.detail)) return payload.detail.map((item) => item.msg ?? JSON.stringify(item)).join("; ");
+    return payload.error ?? payload.message ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+async function request<T>(path: string, init?: RequestInit, useApiV1 = true): Promise<T> {
+  const response = await fetch(`${useApiV1 ? API_V1_BASE_URL : API_BASE_URL}${path}`, {
+    ...init,
+    headers: {
+      ...authHeaders(),
+      ...(init?.headers ?? {}),
+    },
+  });
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+  const payload = (await response.json()) as ApiEnvelope<T> | T;
+  if (payload && typeof payload === "object" && "success" in payload) {
+    const envelope = payload as ApiEnvelope<T>;
+    if (!envelope.success || envelope.data === null) {
+      throw new Error(envelope.error ?? envelope.message);
+    }
+    return envelope.data;
+  }
+  return payload;
+}
+
+export function apiGet<T>(path: string): Promise<T> {
+  return request<T>(path);
+}
+
+export function apiPost<T>(path: string, body: unknown): Promise<T> {
+  return request<T>(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+}
+
+export async function checkHealth() {
+  return request<HealthResponse>("/health", undefined, false);
+}
+
+export function getAdminMetrics() {
+  return apiGet<AdminMetricsResponse>("/admin/metrics");
+}
+
+export function listCollections(ownerId: string) {
+  const params = new URLSearchParams({ owner_id: ownerId });
+  return apiGet<CollectionSummary[]>(`/collections?${params.toString()}`);
+}
+
+export function createCollection(payload: {
+  owner_id: string;
+  name: string;
+  subject?: string | null;
+  description?: string | null;
+}) {
+  return apiPost<CollectionSummary>("/collections", payload);
+}
+
+export function deleteCollection(collectionId: string, ownerId: string) {
+  const params = new URLSearchParams({ owner_id: ownerId });
+  return request<Record<string, number>>(`/collections/${encodeURIComponent(collectionId)}?${params.toString()}`, { method: "DELETE" });
+}
+
+export function deleteMaterial(materialId: string, ownerId: string) {
+  const params = new URLSearchParams({ owner_id: ownerId });
+  return request<Record<string, number>>(`/materials/${encodeURIComponent(materialId)}?${params.toString()}`, { method: "DELETE" });
+}
+
+export function listMaterials(ownerId: string, collectionId?: string | null) {
+  const params = new URLSearchParams({ owner_id: ownerId });
+  if (collectionId) params.set("collection_id", collectionId);
+  return apiGet<MaterialInfo[]>(`/materials?${params.toString()}`);
+}
+
+export function getMaterialStatus(materialId: string, ownerId: string) {
+  const params = new URLSearchParams({ owner_id: ownerId });
+  return apiGet<MaterialStatusResponse>(`/materials/${encodeURIComponent(materialId)}/status?${params.toString()}`);
+}
+
+export function getMaterialDebug(materialId: string, ownerId: string) {
+  const params = new URLSearchParams({ owner_id: ownerId });
+  return apiGet<MaterialDebugResponse>(`/materials/${encodeURIComponent(materialId)}/debug?${params.toString()}`);
+}
+
+export function getMaterialRawUrl(materialId: string, ownerId: string) {
+  const params = new URLSearchParams({ owner_id: ownerId });
+  return `${API_V1_BASE_URL}/materials/${encodeURIComponent(materialId)}/raw?${params.toString()}`;
+}
+
+export function uploadMaterial(file: File, metadata: MaterialUploadMetadata) {
+  const formData = new FormData();
+  formData.append("metadata", JSON.stringify(metadata));
+  formData.append("file", file);
+  return request<MaterialUploadResponse>("/materials/upload", {
+    method: "POST",
+    body: formData
+  });
+}
+
+export function uploadMaterialWithProgress(
+  file: File,
+  metadata: MaterialUploadMetadata,
+  onProgress: (pct: number) => void,
+): Promise<MaterialUploadResponse> {
+  return new Promise((resolve, reject) => {
+    const formData = new FormData();
+    formData.append("metadata", JSON.stringify(metadata));
+    formData.append("file", file);
+
+    const xhr = new XMLHttpRequest();
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+    };
+    xhr.onload = async () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          const payload = JSON.parse(xhr.responseText) as ApiEnvelope<MaterialUploadResponse>;
+          if (!payload.success || payload.data === null) {
+            reject(new Error(payload.error ?? payload.message ?? "Upload failed"));
+          } else {
+            resolve(payload.data);
+          }
+        } catch {
+          reject(new Error("Invalid response from upload"));
+        }
+      } else {
+        try {
+          const err = JSON.parse(xhr.responseText) as { detail?: string; error?: string };
+          reject(new Error(err.detail ?? err.error ?? `Upload failed: ${xhr.status}`));
+        } catch {
+          reject(new Error(`Upload failed: ${xhr.status}`));
+        }
+      }
+    };
+    xhr.onerror = () => reject(new Error("Network error during upload"));
+    xhr.open("POST", `${API_V1_BASE_URL}/materials/upload`);
+    const token = localStorage.getItem(AUTH_TOKEN_STORAGE_KEY) || import.meta.env.VITE_AGENTBOOK_AUTH_TOKEN;
+    if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    xhr.send(formData);
+  });
+}
+
+export function uploadMaterialsBatchWithProgress(
+  files: File[],
+  metadata: MaterialUploadMetadata[],
+  onProgress: (pct: number) => void,
+): Promise<MaterialBatchUploadResponse> {
+  return new Promise((resolve, reject) => {
+    const formData = new FormData();
+    formData.append("metadata", JSON.stringify(metadata));
+    files.forEach((file) => formData.append("files", file));
+
+    const xhr = new XMLHttpRequest();
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+    };
+    xhr.onload = async () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          const payload = JSON.parse(xhr.responseText) as ApiEnvelope<MaterialBatchUploadResponse>;
+          if (payload.data === null) {
+            reject(new Error(payload.error ?? payload.message ?? "Upload failed"));
+          } else {
+            resolve(payload.data);
+          }
+        } catch {
+          reject(new Error("Invalid response from upload"));
+        }
+      } else {
+        try {
+          const err = JSON.parse(xhr.responseText) as { detail?: string; error?: string };
+          reject(new Error(err.detail ?? err.error ?? `Upload failed: ${xhr.status}`));
+        } catch {
+          reject(new Error(`Upload failed: ${xhr.status}`));
+        }
+      }
+    };
+    xhr.onerror = () => reject(new Error("Network error during upload"));
+    xhr.open("POST", `${API_V1_BASE_URL}/materials/batch_upload`);
+    const token = localStorage.getItem(AUTH_TOKEN_STORAGE_KEY) || import.meta.env.VITE_AGENTBOOK_AUTH_TOKEN;
+    if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    xhr.send(formData);
+  });
+}
+
+export function askQuestion(payload: QueryRequest) {
+  return apiPost<QueryResponse>("/query/ask", payload);
+}
+
+export function compareDocuments(payload: CompareRequest) {
+  return apiPost<CompareResponse>("/query/compare", payload);
+}
+
+export function loadEvidencePage(docId: string, page: number, ownerId: string, collectionId?: string | null) {
+  const params = new URLSearchParams({ owner_id: ownerId });
+  if (collectionId) params.set("collection_id", collectionId);
+  return apiGet<EvidencePageResponse>(`/evidence/${docId}/${page}?${params.toString()}`);
+}
+
+export function loadMindmap(payload: {
+  owner_id: string;
+  collection_id?: string | null;
+  material_ids?: string[];
+  root_topic?: string | null;
+}) {
+  return apiPost<MindmapResponse>("/graph/mindmap", payload);
+}
+
+export function loadGraph(payload: {
+  owner_id: string;
+  collection_id?: string | null;
+  material_ids?: string[];
+  root_topic?: string | null;
+}) {
+  return apiPost<GraphResponse>("/graph", payload);
+}
+
+export type SummaryRequest = {
+  owner_id: string;
+  collection_id?: string | null;
+  material_id?: string | null;
+  scope?: string;
+  top_k?: number | null;
+};
+
+export type SummaryResponse = {
+  summary: string;
+  citations: Citation[];
+  confidence: number;
+  was_refused?: boolean;
+  refusal_reason?: string | null;
+};
+
+export type StudyGuideRequest = {
+  owner_id: string;
+  collection_id?: string | null;
+  material_id?: string | null;
+  scope?: string;
+  format?: string;
+  top_k?: number | null;
+};
+
+export type StudyGuideResponse = {
+  overview: string;
+  key_concepts: string[];
+  outline: string[];
+  citations: Citation[];
+  confidence: number;
+};
+
+export function summarizeCollection(payload: SummaryRequest) {
+  return apiPost<SummaryResponse>("/query/summarize", payload);
+}
+
+export function buildStudyGuide(payload: StudyGuideRequest) {
+  return apiPost<StudyGuideResponse>("/query/study-guide", payload);
+}

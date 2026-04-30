@@ -1,0 +1,9 @@
+name: "A4 No Refusal Gate vs With Refusal Gate"
+dataset: "evaluation/datasets/false_premise.json"
+variant:
+  refusal_gate: true
+  min_evidence_confidence: 0.55
+  min_reranker_score: 0.35
+metrics:
+  k_values: [1, 3, 5]
+  refusal_metrics: true

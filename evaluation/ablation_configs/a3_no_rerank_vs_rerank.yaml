@@ -1,0 +1,10 @@
+name: "A3 No Reranking vs Cross-Encoder Reranking"
+dataset: "evaluation/datasets/gold_qa_pairs.json"
+variant:
+  dense: true
+  sparse: true
+  graph: false
+  reranker: "BAAI/bge-reranker-v2-m3"
+  compare_to_no_rerank: true
+metrics:
+  k_values: [1, 3, 5, 10]

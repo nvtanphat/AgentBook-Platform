@@ -1,0 +1,19 @@
+[
+  {
+    "id": "xl-001",
+    "owner_id": "user_demo",
+    "collection_id": "demo_collection",
+    "query": "Dropout giúp giảm overfitting như thế nào?",
+    "query_language": "vi",
+    "expected_answer_language": "vi",
+    "expected_source_language": "en",
+    "expected_evidence": [
+      {
+        "doc_id": "demo_material",
+        "document_name": "Lecture 05 - Regularization.pdf",
+        "page": 14,
+        "block_id": "blk-002"
+      }
+    ]
+  }
+]

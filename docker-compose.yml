@@ -1,0 +1,60 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file:
+      - backend/.env
+    environment:
+      AGENTBOOK_QDRANT_URL: http://qdrant:6333
+      AGENTBOOK_REDIS_URL: redis://redis:6379/0
+      AGENTBOOK_OLLAMA_BASE_URL: http://host.docker.internal:11434
+      AGENTBOOK_LLM_LOCAL_MODEL: qwen3:4b
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config:ro
+    depends_on:
+      - qdrant
+      - redis
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file:
+      - backend/.env
+    environment:
+      AGENTBOOK_QDRANT_URL: http://qdrant:6333
+      AGENTBOOK_REDIS_URL: redis://redis:6379/0
+      AGENTBOOK_CELERY_BROKER_URL: redis://redis:6379/0
+      AGENTBOOK_CELERY_RESULT_BACKEND: redis://redis:6379/1
+      AGENTBOOK_OLLAMA_BASE_URL: http://host.docker.internal:11434
+      AGENTBOOK_LLM_LOCAL_MODEL: qwen3:4b
+    command: ["celery", "-A", "src.tasks.celery_tasks.celery_app", "worker", "--loglevel=INFO", "--pool=solo"]
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config:ro
+    depends_on:
+      - qdrant
+      - redis
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    ports:
+      - "127.0.0.1:6333:6333"
+      - "127.0.0.1:6334:6334"
+    volumes:
+      - ./data/vectordb:/qdrant/storage
+
+  redis:
+    image: redis:7.4-alpine
+    ports:
+      - "127.0.0.1:6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+
+volumes:
+  redis-data:

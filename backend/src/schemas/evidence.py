@@ -1,0 +1,53 @@
+from __future__ import annotations
+
+from pydantic import BaseModel, Field, field_validator
+
+
+class BoundingBoxSchema(BaseModel):
+    x1: float
+    y1: float
+    x2: float
+    y2: float
+
+
+class CitationSchema(BaseModel):
+    doc_id: str
+    doc_name: str
+    page: int | None = None
+    pages: list[int] = Field(default_factory=list)
+    block_id: str | None = None
+    block_type: str | None = None
+    snippet_original: str
+    snippet_translated: str | None = None
+    bbox: BoundingBoxSchema | None = None
+    role: str = "primary"
+    source_language: str
+    confidence: float = Field(ge=0.0, le=1.0)
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def clamp_confidence(cls, v: float) -> float:
+        return min(1.0, max(0.0, float(v)))
+
+
+class EvidenceBlockSchema(BaseModel):
+    block_id: str
+    block_type: str
+    page: int
+    snippet_original: str
+    source_language: str
+    bbox: BoundingBoxSchema | None = None
+    confidence: float | None = None
+    material_id: str | None = None
+    doc_name: str | None = None
+
+
+class EvidencePageResponse(BaseModel):
+    doc_id: str
+    doc_name: str
+    page: int
+    blocks: list[EvidenceBlockSchema] = Field(default_factory=list)
+    source_filename: str
+    # Populated for image-type documents (png/jpg/jpeg) so the UI can show the source image
+    raw_image_url: str | None = None
+    file_type: str | None = None

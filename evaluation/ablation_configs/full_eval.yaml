@@ -1,0 +1,8 @@
+name: "AgentBook Full Evaluation"
+dataset: "evaluation/datasets/gold_qa_pairs.json"
+variant:
+  dense: true
+  sparse: true
+  graph: true
+metrics:
+  k_values: [1, 3, 5, 10]

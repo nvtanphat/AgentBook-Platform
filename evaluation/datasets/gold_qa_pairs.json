@@ -1,0 +1,17 @@
+[
+  {
+    "id": "gold-001",
+    "owner_id": "user_demo",
+    "collection_id": "demo_collection",
+    "query": "Dropout helps reduce overfitting how?",
+    "expected_answer": "Dropout randomly disables activations during training to reduce co-adaptation.",
+    "expected_evidence": [
+      {
+        "doc_id": "demo_material",
+        "document_name": "Lecture 05 - Regularization.pdf",
+        "page": 14,
+        "block_id": "blk-002"
+      }
+    ]
+  }
+]

@@ -1,0 +1,23 @@
+qdrant:
+  collection_name: "agentbook_chunks"
+  dense_vector_name: "dense"
+  sparse_vector_name: "bge_m3_sparse"
+  dense_size: 1024
+  distance: "Cosine"
+  index_batch_size: 64
+
+retrieval:
+  dense_top_k: 20
+  sparse_top_k: 20
+  graph_top_k: 10
+  top_k: 5
+  final_top_k: 5
+  rrf_k: 60
+  rerank_input_k: 15
+  graph_max_hops: 2
+  query_rewriter_enabled: true  # LLM-based Multi-Query / RAG-Fusion (replaces dictionary VI→EN)
+
+chunking:
+  target_token_count: 512
+  overlap_token_count: 50
+  max_blocks_per_chunk: 8

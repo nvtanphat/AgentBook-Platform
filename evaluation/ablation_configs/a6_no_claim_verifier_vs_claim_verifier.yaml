@@ -1,0 +1,8 @@
+name: "A6 No Claim Verifier vs With Claim Verifier"
+dataset: "evaluation/datasets/false_premise.json"
+variant:
+  claim_verifier: true
+  contradiction_detector: true
+metrics:
+  k_values: [1, 3, 5]
+  false_premise_metrics: true

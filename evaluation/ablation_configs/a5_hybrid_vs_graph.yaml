@@ -1,0 +1,9 @@
+name: "A5 Hybrid vs Hybrid Plus Graph"
+dataset: "evaluation/datasets/cross_lingual.json"
+variant:
+  dense: true
+  sparse: true
+  graph: true
+  graph_max_hops: 2
+metrics:
+  k_values: [1, 3, 5, 10]

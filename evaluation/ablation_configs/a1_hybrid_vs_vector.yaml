@@ -1,0 +1,8 @@
+name: "A1 Hybrid vs Dense Vector"
+dataset: "evaluation/datasets/gold_qa_pairs.json"
+variant:
+  dense: true
+  sparse: true
+  graph: false
+metrics:
+  k_values: [1, 3, 5, 10]

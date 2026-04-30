@@ -1,0 +1,166 @@
+import { ReactNode, createContext, useContext, useEffect, useMemo, useState } from "react";
+import { Citation, MaterialUploadResponse } from "../api/client";
+
+const WORKSPACE_STORAGE_KEY = "prism.workspace.v1";
+const LEGACY_WORKSPACE_STORAGE_KEY = "agentbook.workspace.v2";
+const MATERIALS_STORAGE_KEY = "prism.materials.v1";
+
+export type WorkspaceSettings = {
+  ownerId: string;
+  collectionId: string;
+  collectionName: string;
+  subject: string;
+  language: string;
+  topK: number;
+};
+
+export type UploadedMaterial = {
+  materialId: string;
+  docId: string;
+  collectionId: string;
+  jobId: string;
+  status: string;
+  stage: string;
+  originalName: string;
+  filename: string;
+  fileSizeBytes: number;
+  topic: string;
+  language: string;
+  uploadedAt: string;
+};
+
+type WorkspaceContextValue = {
+  workspace: WorkspaceSettings;
+  updateWorkspace: (settings: Partial<WorkspaceSettings>) => void;
+  materials: UploadedMaterial[];
+  addUploadedMaterial: (response: MaterialUploadResponse, metadata: { topic: string; language: string }) => void;
+  updateMaterialStatus: (materialId: string, status: string, stage: string) => void;
+  removeUploadedMaterial: (materialId: string) => void;
+  clearUploadedMaterialsForCollection: (collectionId: string) => void;
+  selectedCitation: Citation | null;
+  setSelectedCitation: (citation: Citation) => void;
+  activeCitations: Citation[];
+  setActiveCitations: (citations: Citation[]) => void;
+  scopedMaterialIds: string[];
+};
+
+const defaultWorkspace: WorkspaceSettings = {
+  ownerId: "user_demo",
+  collectionId: "",
+  collectionName: "",
+  subject: "",
+  language: "vi",
+  topK: 5
+};
+
+const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
+
+function readStorage<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function readWorkspaceStorage(): WorkspaceSettings {
+  const stored = readStorage<WorkspaceSettings | null>(WORKSPACE_STORAGE_KEY, null);
+  if (stored) return { ...defaultWorkspace, ...stored };
+
+  const legacy = readStorage<WorkspaceSettings | null>(LEGACY_WORKSPACE_STORAGE_KEY, null);
+  if (!legacy) return defaultWorkspace;
+
+  const migrated = { ...defaultWorkspace, ...legacy };
+  if (migrated.collectionName === "Machine Learning") {
+    migrated.collectionName = migrated.collectionId ? "Active collection" : "";
+  }
+  if (migrated.subject === "Machine Learning") {
+    migrated.subject = "";
+  }
+  return migrated;
+}
+
+export function WorkspaceProvider({ children }: { children: ReactNode }) {
+  const [workspace, setWorkspace] = useState<WorkspaceSettings>(() => readWorkspaceStorage());
+  const [materials, setMaterials] = useState<UploadedMaterial[]>(() => readStorage(MATERIALS_STORAGE_KEY, []));
+  const [selectedCitation, setSelectedCitation] = useState<Citation | null>(null);
+  const [activeCitations, setActiveCitations] = useState<Citation[]>([]);
+
+  useEffect(() => {
+    localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(workspace));
+  }, [workspace]);
+
+  useEffect(() => {
+    localStorage.setItem(MATERIALS_STORAGE_KEY, JSON.stringify(materials));
+  }, [materials]);
+
+  const value = useMemo<WorkspaceContextValue>(() => {
+    const updateWorkspace = (settings: Partial<WorkspaceSettings>) => {
+      setWorkspace((current) => ({ ...current, ...settings }));
+    };
+
+    const addUploadedMaterial = (response: MaterialUploadResponse, metadata: { topic: string; language: string }) => {
+      const item: UploadedMaterial = {
+        materialId: response.material_id,
+        docId: response.doc_id,
+        collectionId: response.collection_id,
+        jobId: response.job_id,
+        status: response.status,
+        stage: response.stage,
+        originalName: response.original_name,
+        filename: response.filename,
+        fileSizeBytes: response.file_size_bytes,
+        topic: metadata.topic,
+        language: metadata.language,
+        uploadedAt: new Date().toISOString()
+      };
+      setMaterials((current) => [item, ...current.filter((material) => material.materialId !== item.materialId)]);
+      setWorkspace((current) => ({ ...current, collectionId: response.collection_id }));
+    };
+
+    const updateMaterialStatus = (materialId: string, status: string, stage: string) => {
+      setMaterials((current) =>
+        current.map((material) =>
+          material.materialId === materialId ? { ...material, status, stage } : material
+        )
+      );
+    };
+
+    const removeUploadedMaterial = (materialId: string) => {
+      setMaterials((current) => current.filter((material) => material.materialId !== materialId));
+    };
+
+    const clearUploadedMaterialsForCollection = (collectionId: string) => {
+      setMaterials((current) => current.filter((material) => material.collectionId !== collectionId));
+    };
+
+    return {
+      workspace,
+      updateWorkspace,
+      materials,
+      addUploadedMaterial,
+      updateMaterialStatus,
+      removeUploadedMaterial,
+      clearUploadedMaterialsForCollection,
+      selectedCitation,
+      setSelectedCitation,
+      activeCitations,
+      setActiveCitations,
+      scopedMaterialIds: materials
+        .filter((item) => item.status.toLowerCase() === "indexed")
+        .filter((item) => !workspace.collectionId || item.collectionId === workspace.collectionId)
+        .map((item) => item.materialId)
+    };
+  }, [materials, selectedCitation, activeCitations, workspace]);
+
+  return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;
+}
+
+export function useWorkspace() {
+  const context = useContext(WorkspaceContext);
+  if (!context) {
+    throw new Error("useWorkspace must be used inside WorkspaceProvider");
+  }
+  return context;
+}
