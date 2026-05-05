@@ -1,8 +1,50 @@
 import { FormEvent, useEffect, useState } from "react";
-import { AlertCircle, CheckCircle2, Loader2, X } from "lucide-react";
+import { AlertCircle, CheckCircle2, Loader2, X, Zap } from "lucide-react";
 import { API_BASE_URL, CollectionSummary, checkHealth, getAdminMetrics, listCollections } from "../../api/client";
 import { useWorkspace } from "../../state/workspace";
 import { useSearchParams, useNavigate } from "react-router-dom";
+
+// ─── Pipeline settings API ────────────────────────────────────────────────────
+
+async function fetchPipelineSettings(): Promise<{ contextual_retrieval_enabled: boolean }> {
+  const res = await fetch(`${API_BASE_URL}/admin/settings`);
+  if (!res.ok) throw new Error("Failed to load pipeline settings");
+  return res.json();
+}
+
+async function patchPipelineSettings(patch: { contextual_retrieval_enabled?: boolean }): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/admin/settings`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) throw new Error("Failed to update pipeline settings");
+}
+
+// ─── Toggle switch ────────────────────────────────────────────────────────────
+
+function Toggle({ checked, onChange, disabled }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none disabled:opacity-40 ${
+        checked ? "bg-primary" : "bg-slate-300"
+      }`}
+    >
+      <span
+        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ${
+          checked ? "translate-x-4" : "translate-x-0"
+        }`}
+      />
+    </button>
+  );
+}
+
+// ─── Main modal ───────────────────────────────────────────────────────────────
 
 export default function SettingsModal() {
   const { workspace, updateWorkspace, materials } = useWorkspace();
@@ -17,15 +59,25 @@ export default function SettingsModal() {
   const [collections, setCollections] = useState<CollectionSummary[]>([]);
   const [loadingCollections, setLoadingCollections] = useState(false);
 
+  // Pipeline settings
+  const [contextualRetrieval, setContextualRetrieval] = useState(true);
+  const [loadingPipeline, setLoadingPipeline] = useState(false);
+  const [savingPipeline, setSavingPipeline] = useState(false);
+
   useEffect(() => {
-    if (isOpen) {
-      setDraft(workspace);
-      setLoadingCollections(true);
-      listCollections(workspace.ownerId)
-        .then(setCollections)
-        .catch(() => {})
-        .finally(() => setLoadingCollections(false));
-    }
+    if (!isOpen) return;
+    setDraft(workspace);
+    setLoadingCollections(true);
+    listCollections(workspace.ownerId)
+      .then(setCollections)
+      .catch(() => {})
+      .finally(() => setLoadingCollections(false));
+
+    setLoadingPipeline(true);
+    fetchPipelineSettings()
+      .then((s) => setContextualRetrieval(s.contextual_retrieval_enabled))
+      .catch(() => {})
+      .finally(() => setLoadingPipeline(false));
   }, [isOpen, workspace.ownerId]);
 
   function close() {
@@ -44,19 +96,27 @@ export default function SettingsModal() {
       ...d,
       collectionId,
       collectionName: col?.name ?? "",
-      subject: col?.subject ?? d.subject
+      subject: col?.subject ?? d.subject,
     }));
   }
 
-  function save(event: FormEvent) {
+  async function save(event: FormEvent) {
     event.preventDefault();
     updateWorkspace(draft);
-    setStatus("Settings saved locally.");
+
+    // Save pipeline settings
+    setSavingPipeline(true);
+    try {
+      await patchPipelineSettings({ contextual_retrieval_enabled: contextualRetrieval });
+    } catch {
+      // non-fatal
+    } finally {
+      setSavingPipeline(false);
+    }
+
+    setStatus("Settings saved.");
     setError(null);
-    setTimeout(() => {
-      setStatus(null);
-      close();
-    }, 1500);
+    setTimeout(() => { setStatus(null); close(); }, 1500);
   }
 
   async function testConnection() {
@@ -86,11 +146,13 @@ export default function SettingsModal() {
 
         <div className="p-6">
           <form className="space-y-5" onSubmit={save}>
+            {/* API URL */}
             <div>
               <p className="label-caps">API base URL</p>
               <p className="mt-1 rounded-md bg-slate-50 px-3 py-2 text-sm font-mono text-muted border border-outline">{API_BASE_URL}</p>
             </div>
 
+            {/* Workspace fields */}
             <div className="grid gap-4 md:grid-cols-2">
               <label>
                 <span className="label-caps">Owner ID</span>
@@ -126,6 +188,42 @@ export default function SettingsModal() {
               </label>
             </div>
 
+            {/* ── Pipeline Settings ── */}
+            <div className="rounded-lg border border-outline bg-slate-50 p-4 space-y-3">
+              <div className="flex items-center gap-2 mb-1">
+                <Zap size={13} className="text-primary" />
+                <p className="text-xs font-bold uppercase tracking-wider text-text">Pipeline Settings</p>
+              </div>
+
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-text">Contextual Retrieval</p>
+                  <p className="text-xs text-muted mt-0.5">
+                    LLM tự động thêm context cho từng chunk trước khi index.
+                    Tăng độ chính xác tìm kiếm nhưng <span className="font-semibold text-yellow-600">làm chậm pipeline ~10× </span>
+                    (mỗi chunk gọi Ollama 1 lần).
+                  </p>
+                </div>
+                <div className="flex shrink-0 flex-col items-end gap-1 pt-0.5">
+                  {loadingPipeline ? (
+                    <Loader2 size={16} className="animate-spin text-muted" />
+                  ) : (
+                    <Toggle checked={contextualRetrieval} onChange={setContextualRetrieval} />
+                  )}
+                  <span className={`text-[10px] font-semibold ${contextualRetrieval ? "text-primary" : "text-muted"}`}>
+                    {contextualRetrieval ? "Bật" : "Tắt"}
+                  </span>
+                </div>
+              </div>
+
+              {contextualRetrieval && (
+                <div className="rounded-md border border-yellow-200 bg-yellow-50 px-3 py-2 text-xs text-yellow-700">
+                  ⚠️ Bật sẽ làm pipeline chậm đáng kể. Chỉ nên dùng khi demo hoặc production.
+                </div>
+              )}
+            </div>
+
+            {/* Status / Error */}
             {status && (
               <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
                 <CheckCircle2 size={16} /> {status}
@@ -137,13 +235,17 @@ export default function SettingsModal() {
               </div>
             )}
 
+            {/* Actions */}
             <div className="flex justify-between items-center pt-4 border-t border-outline">
               <button type="button" className="flex items-center gap-2 rounded-md border border-outline bg-white px-4 py-2 text-sm font-semibold text-muted hover:bg-slate-50" onClick={testConnection} disabled={checking}>
                 {checking ? <Loader2 className="animate-spin" size={16} /> : null} Test API
               </button>
               <div className="flex gap-2">
                 <button type="button" onClick={close} className="rounded-md px-4 py-2 text-sm font-semibold text-muted hover:bg-slate-50">Cancel</button>
-                <button type="submit" className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary-bright">Save</button>
+                <button type="submit" disabled={savingPipeline} className="flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary-bright disabled:opacity-60">
+                  {savingPipeline && <Loader2 size={14} className="animate-spin" />}
+                  Save
+                </button>
               </div>
             </div>
           </form>

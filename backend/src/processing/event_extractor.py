@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import re
+import logging
 
 from src.processing.types import EvidenceBlock, EvidenceMap, ExtractedEntity, ExtractedEvent, ExtractedRelation
+
+logger = logging.getLogger(__name__)
 
 
 DATE_PATTERN = re.compile(
@@ -18,6 +21,9 @@ CAPTION_HINT = re.compile(r"\b(?:figure|fig\.?|table|equation|hình|bảng|công
 
 
 class EventExtractor:
+    def __init__(self) -> None:
+        self._relation_extractor = None
+
     def extract(
         self,
         evidence_map: EvidenceMap,
@@ -56,8 +62,43 @@ class EventExtractor:
                     )
                 )
 
+        # Add structural relations (block-level)
         relations.extend(self._structural_relations(evidence_map, entities))
+
+        # Add semantic relations (entity-to-entity)
+        semantic_relations = self._extract_semantic_relations(evidence_map, entities)
+        relations.extend(semantic_relations)
+
+        logger.info(
+            "Relation extraction completed",
+            extra={
+                "structural_relations": len(relations) - len(semantic_relations),
+                "semantic_relations": len(semantic_relations),
+                "total_relations": len(relations),
+            },
+        )
+
         return events, self._dedupe_relations(relations)
+
+    def _extract_semantic_relations(
+        self,
+        evidence_map: EvidenceMap,
+        entities: list[ExtractedEntity],
+    ) -> list[ExtractedRelation]:
+        """Extract semantic relations between entities using pattern matching."""
+        if self._relation_extractor is None:
+            try:
+                from src.processing.relation_extractor import RelationExtractor
+                self._relation_extractor = RelationExtractor()
+            except ImportError:
+                logger.warning("RelationExtractor not available, skipping semantic relation extraction")
+                return []
+
+        try:
+            return self._relation_extractor.extract(evidence_map, entities)
+        except Exception as exc:
+            logger.exception("Semantic relation extraction failed", extra={"error": str(exc)})
+            return []
 
     def _structural_relations(
         self,

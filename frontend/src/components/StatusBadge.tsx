@@ -22,6 +22,16 @@ const STAGE_CONFIG: Record<string, StageConfig> = {
     label: "Parsed",
     icon: <Layers size={9} />,
   },
+  chunking: {
+    style: "bg-violet-50 text-violet-700 border-violet-200",
+    label: "Chunking…",
+    icon: <Layers size={9} className="animate-pulse" />,
+  },
+  embedding: {
+    style: "bg-blue-50 text-blue-700 border-blue-200",
+    label: "Embedding…",
+    icon: <Cpu size={9} className="animate-pulse" />,
+  },
   indexing: {
     style: "bg-amber-50 text-amber-700 border-amber-200",
     label: "Indexing…",

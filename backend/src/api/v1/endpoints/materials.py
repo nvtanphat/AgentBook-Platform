@@ -380,6 +380,23 @@ async def material_raw_file(
     return FileResponse(target, filename=material.original_name)
 
 
+@router.post("/{material_id}/retry", response_model=APIResponse[dict])
+async def retry_material(
+    request: Request,
+    material_id: str,
+    owner_id: str = Query(..., min_length=1),
+    material_service: MaterialService = Depends(get_material_service),
+) -> APIResponse[dict]:
+    verify_owner_access(request, owner_id)
+    try:
+        result = await material_service.retry_material(material_id=material_id, owner_id=owner_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return APIResponse(success=True, message="Pipeline retry queued", data=result, error=None)
+
+
 @router.delete("/{material_id}", response_model=APIResponse[dict])
 async def delete_material(
     request: Request,

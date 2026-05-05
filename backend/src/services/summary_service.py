@@ -90,4 +90,5 @@ class SummaryService:
                 was_refused=True,
                 refusal_reason=f"LLM generation failed: {type(exc).__name__}",
             )
-        return SummaryResponse(summary=summary, citations=citations, confidence=confidence)
+        from src.inference.response_parser import _fix_numbered_lists
+        return SummaryResponse(summary=_fix_numbered_lists(summary), citations=citations, confidence=confidence)

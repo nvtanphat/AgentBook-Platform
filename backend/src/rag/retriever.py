@@ -18,7 +18,7 @@ from src.rag.types import RetrievalScope, RetrievedChunk
 
 logger = logging.getLogger(__name__)
 
-# ── Query embedding TTL cache (per-process, not shared across workers) ─────────
+# ── Query embedding cache (Redis shared or in-memory fallback) ─────────
 
 _EMBEDDING_CACHE_TTL = 300  # 5 minutes
 _EMBEDDING_CACHE_MAX = 1024
@@ -32,9 +32,36 @@ class _EmbeddingCacheEntry:
 
 _embedding_cache: dict[str, _EmbeddingCacheEntry] = {}
 _embedding_cache_lock = RLock()
+_redis_cache = None
+
+
+def _get_redis_cache():
+    """Lazy-load Redis cache (shared across workers)."""
+    global _redis_cache
+    if _redis_cache is None:
+        try:
+            from src.rag.embedding_cache import RedisEmbeddingCache
+            from src.core.config import get_settings
+            settings = get_settings()
+            _redis_cache = RedisEmbeddingCache(
+                redis_url=settings.redis_url,
+                ttl=_EMBEDDING_CACHE_TTL,
+            )
+        except Exception as exc:
+            logger.info("Redis cache unavailable, using in-memory cache", extra={"error": str(exc)})
+            _redis_cache = False  # Mark as unavailable
+    return _redis_cache if _redis_cache is not False else None
 
 
 def _get_cached_embedding(text: str) -> EmbeddedText | None:
+    # Try Redis first (shared cache)
+    redis_cache = _get_redis_cache()
+    if redis_cache:
+        result = redis_cache.get(text)
+        if result:
+            return result
+
+    # Fallback to in-memory cache
     with _embedding_cache_lock:
         entry = _embedding_cache.get(text)
         if entry is None:
@@ -46,6 +73,12 @@ def _get_cached_embedding(text: str) -> EmbeddedText | None:
 
 
 def _set_cached_embedding(text: str, embedding: EmbeddedText) -> None:
+    # Set in Redis (shared cache)
+    redis_cache = _get_redis_cache()
+    if redis_cache:
+        redis_cache.set(text, embedding)
+
+    # Also set in-memory for fast local access
     with _embedding_cache_lock:
         if len(_embedding_cache) >= _EMBEDDING_CACHE_MAX:
             # Evict oldest entry
@@ -112,15 +145,13 @@ class HybridRetriever:
                 extra={"owner_id": scope.owner_id, "query_preview": query[:60]},
             )
 
-        result = self.qdrant_client.query_points(
-            collection_name=self.settings.qdrant_collection_name,
-            prefetch=prefetches,
-            query=models.FusionQuery(fusion=models.Fusion.RRF),
+        semantic_points = self._query_with_rrf(
+            embedding=embedding,
+            prefetches=prefetches,
+            has_sparse=has_sparse_signal,
+            query_filter=query_filter,
             limit=limit or self.settings.rerank_input_k,
-            with_payload=True,
         )
-
-        semantic_points = list(result.points)
         lexical_points = self._lexical_fallback_points(query=query, scope_filter=query_filter, limit=limit or self.settings.rerank_input_k)
         if lexical_points:
             points = list(lexical_points)
@@ -169,6 +200,80 @@ class HybridRetriever:
         ]
         scored.sort(key=lambda point: point.score, reverse=True)
         return scored[:limit]
+
+    def _query_with_rrf(
+        self,
+        *,
+        embedding,
+        prefetches: list[models.Prefetch],
+        has_sparse: bool,
+        query_filter: models.Filter,
+        limit: int,
+    ) -> list[models.ScoredPoint]:
+        """Try server-side prefetch+RRF; fall back to Python RRF for embedded client."""
+        try:
+            result = self.qdrant_client.query_points(
+                collection_name=self.settings.qdrant_collection_name,
+                prefetch=prefetches,
+                query=models.FusionQuery(fusion=models.Fusion.RRF),
+                limit=limit,
+                with_payload=True,
+            )
+            return list(result.points)
+        except Exception as exc:
+            logger.debug(
+                "query_points prefetch/RRF not supported (embedded client), using Python RRF fallback",
+                extra={"error": str(exc)},
+            )
+
+        # Embedded client fallback: run dense + sparse searches separately, fuse in Python.
+        dense_hits: list[models.ScoredPoint] = self.qdrant_client.search(
+            collection_name=self.settings.qdrant_collection_name,
+            query_vector=models.NamedVector(name="dense", vector=embedding.dense),
+            query_filter=query_filter,
+            limit=self.settings.dense_top_k,
+            with_payload=True,
+        )
+        results_list: list[list[models.ScoredPoint]] = [dense_hits]
+
+        if has_sparse:
+            try:
+                sparse_hits: list[models.ScoredPoint] = self.qdrant_client.search(
+                    collection_name=self.settings.qdrant_collection_name,
+                    query_vector=models.NamedSparseVector(
+                        name="bge_m3_sparse",
+                        vector=models.SparseVector(
+                            indices=embedding.sparse.indices,
+                            values=embedding.sparse.values,
+                        ),
+                    ),
+                    query_filter=query_filter,
+                    limit=self.settings.sparse_top_k,
+                    with_payload=True,
+                )
+                results_list.append(sparse_hits)
+            except Exception as exc2:
+                logger.debug("Sparse search fallback failed", extra={"error": str(exc2)})
+
+        return self._rrf_fuse(results_list, limit=limit, k=self.settings.rrf_k)
+
+    def _rrf_fuse(
+        self,
+        results_list: list[list[models.ScoredPoint]],
+        limit: int,
+        k: int = 60,
+    ) -> list[models.ScoredPoint]:
+        """Reciprocal Rank Fusion across multiple ranked lists."""
+        scores: dict[str | int, float] = {}
+        by_id: dict[str | int, models.ScoredPoint] = {}
+        for results in results_list:
+            for rank, point in enumerate(results):
+                scores[point.id] = scores.get(point.id, 0.0) + 1.0 / (k + rank + 1)
+                by_id[point.id] = point
+        ranked = sorted(by_id.values(), key=lambda p: scores[p.id], reverse=True)
+        for point in ranked:
+            point.score = scores[point.id]
+        return ranked[:limit]
 
     def _scope_filter(self, scope: RetrievalScope) -> models.Filter:
         must: list[models.FieldCondition] = [
@@ -310,11 +415,4 @@ def _lexical_score(query: str, content: str) -> float:
     }
     content_terms = set(re.findall(r"[\w@%]+", content_lower, flags=re.UNICODE))
     overlap = len(query_terms & content_terms)
-    score = 1.0 + overlap
-    if "precision" in query_lower and "precision" in content_lower:
-        score += 3.0
-    if re.search(r"\b(cao nhất|highest|max|maximum|lớn nhất)\b", query_lower, re.IGNORECASE) and re.search(r"\b\d+(?:[.,]\d+)?\b", content_lower):
-        score += 2.0
-    if re.search(r"\b(bảng|table|hình|chart|biểu đồ)\b", query_lower, re.IGNORECASE) and re.search(r"\b(docx|pdf|pptx|xlsx|png|ocr)\b", content_lower, re.IGNORECASE):
-        score += 2.0
-    return score
+    return 1.0 + overlap

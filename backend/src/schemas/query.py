@@ -1,8 +1,23 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from src.schemas.evidence import CitationSchema
+
+
+class ReasoningStep(BaseModel):
+    """
+    Single step in the reasoning path showing how AI traversed the graph.
+
+    Used for transparency - shows users which entities and relations were used.
+    """
+    step_type: Literal["retrieve", "traverse", "synthesize"]
+    entities: list[str] = Field(default_factory=list)  # Entity labels involved
+    relations: list[str] = Field(default_factory=list)  # Relation types used
+    confidence: float = Field(ge=0.0, le=1.0)
+    description: str  # Human-readable explanation
 
 
 class QueryRequest(BaseModel):
@@ -25,6 +40,9 @@ class QueryResponse(BaseModel):
     confidence: float
     was_refused: bool
     refusal_reason: str | None = None
+
+    # NEW: Reasoning path for transparency
+    reasoning_path: list[ReasoningStep] = Field(default_factory=list)
 
 
 class CompareRequest(BaseModel):

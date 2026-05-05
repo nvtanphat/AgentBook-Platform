@@ -10,6 +10,7 @@ type StudioPanelProps = {
   onTabChange: (tab: StudioTab) => void;
   evidenceDocId?: string | null;
   evidencePage?: number | null;
+  onOpenEvidence?: (target: { docId: string; page: number; blockId?: string | null }) => void;
 };
 
 const TABS: { id: StudioTab; label: string; icon: React.ReactNode }[] = [
@@ -20,7 +21,7 @@ const TABS: { id: StudioTab; label: string; icon: React.ReactNode }[] = [
   { id: "mindmap", label: "Mindmap", icon: <Share2 size={13} /> },
 ];
 
-export default function StudioPanel({ activeTab, onTabChange, evidenceDocId, evidencePage }: StudioPanelProps) {
+export default function StudioPanel({ activeTab, onTabChange, evidenceDocId, evidencePage, onOpenEvidence }: StudioPanelProps) {
   return (
     <div className="flex h-full flex-col bg-white">
       {/* Tabs Header */}
@@ -43,8 +44,8 @@ export default function StudioPanel({ activeTab, onTabChange, evidenceDocId, evi
         {activeTab === "studio" && <StudioHomeTab />}
         {activeTab === "evidence" && <EvidencePanel docId={evidenceDocId} page={evidencePage} />}
         {activeTab === "compare" && <CompareTab onOpenEvidence={() => onTabChange("evidence")} />}
-        {activeTab === "graph" && <GraphTab mode="graph" />}
-        {activeTab === "mindmap" && <GraphTab mode="mindmap" />}
+        {activeTab === "graph" && <GraphTab mode="graph" onOpenEvidence={onOpenEvidence} />}
+        {activeTab === "mindmap" && <GraphTab mode="mindmap" onOpenEvidence={onOpenEvidence} />}
       </div>
     </div>
   );

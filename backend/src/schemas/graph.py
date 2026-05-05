@@ -8,6 +8,9 @@ class GraphNode(BaseModel):
     label: str
     type: str
     confidence: float | None = None
+    mention_count: int = 0
+    source_docs: list[str] = Field(default_factory=list)
+    evidence_refs: list[dict[str, str | int]] = Field(default_factory=list)
 
 
 class GraphEdge(BaseModel):

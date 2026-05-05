@@ -1,9 +1,10 @@
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
 import { AlertCircle, BookOpen, GitBranch, Loader2, Network, Send, Share2, Sparkles, Trash2, Library } from "lucide-react";
-import { Citation, QueryResponse, askQuestion } from "../../api/client";
+import { Citation, QueryResponse, askQuestionStream } from "../../api/client";
 import { useWorkspace } from "../../state/workspace";
 import { StudioTab } from "../../pages/WorkspacePage";
 import MarkdownRenderer from "../MarkdownRenderer";
+import ReasoningTrace from "../ReasoningTrace";
 
 type ChatMessage = {
   id: string;
@@ -69,18 +70,32 @@ function ConfidenceBadge({ value }: { value: number }) {
 
 // ─── Message content (full markdown with citation refs) ───────────────────────
 
-function MessageContent({ content, citations, onCitationClick }: {
+function MessageContent({ content, citations, response, onCitationClick }: {
   content: string;
   citations: Citation[];
+  response?: QueryResponse;
   onCitationClick: (idx: number) => void;
 }) {
   return (
-    <MarkdownRenderer
-      text={content}
-      onCitationClick={(ref) => {
-        if (ref >= 0 && ref < citations.length) onCitationClick(ref);
-      }}
-    />
+    <>
+      <MarkdownRenderer
+        text={content}
+        onCitationClick={(ref) => {
+          if (ref >= 0 && ref < citations.length) onCitationClick(ref);
+        }}
+      />
+
+      {/* Reasoning trace */}
+      {response?.reasoning_path && response.reasoning_path.length > 0 && (
+        <ReasoningTrace
+          steps={response.reasoning_path}
+          onStepHover={(entities) => {
+            // TODO: Highlight entities in graph
+            console.log('Hover entities:', entities);
+          }}
+        />
+      )}
+    </>
   );
 }
 
@@ -143,7 +158,15 @@ type ChatPanelProps = {
 };
 
 export default function ChatPanel({ onOpenSources, onOpenEvidence, onTabChange }: ChatPanelProps) {
-  const { workspace, scopedMaterialIds, setSelectedCitation, setActiveCitations } = useWorkspace();
+  const {
+    workspace,
+    scopedMaterialIds,
+    setSelectedCitation,
+    setActiveCitations,
+    setActiveQueryContext,
+    chatDraft,
+    setChatDraft,
+  } = useWorkspace();
   const currentChatStorageKey = chatStorageKey(workspace.ownerId, workspace.collectionId);
   const suppressNextPersistRef = useRef(false);
 
@@ -164,6 +187,7 @@ export default function ChatPanel({ onOpenSources, onOpenEvidence, onTabChange }
 
   const [question, setQuestion] = useState("");
   const [loading, setLoading] = useState(false);
+  const [streamingId, setStreamingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -185,6 +209,17 @@ export default function ChatPanel({ onOpenSources, onOpenEvidence, onTabChange }
   }, [currentChatStorageKey, workspace.language]);
 
   useEffect(() => {
+    if (!chatDraft) {
+      return;
+    }
+    setQuestion(chatDraft);
+    setChatDraft(null);
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+    });
+  }, [chatDraft, setChatDraft]);
+
+  useEffect(() => {
     if (suppressNextPersistRef.current) {
       suppressNextPersistRef.current = false;
       return;
@@ -195,6 +230,7 @@ export default function ChatPanel({ onOpenSources, onOpenEvidence, onTabChange }
   function clearChat() {
     setMessages([makeIntroMessage()]);
     setError(null);
+    setActiveQueryContext(null);
   }
 
   function selectCitation(citation: Citation) {
@@ -228,7 +264,7 @@ export default function ChatPanel({ onOpenSources, onOpenEvidence, onTabChange }
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     const trimmed = question.trim();
-    if (!trimmed || loading) return;
+    if (!trimmed || loading || streamingId) return;
 
     const localReply = casualReply(trimmed, hasScope);
     if (localReply) {
@@ -258,8 +294,10 @@ export default function ChatPanel({ onOpenSources, onOpenEvidence, onTabChange }
     setQuestion("");
     setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "user", content: trimmed }]);
 
-    try {
-      const response = await askQuestion({
+    const assistantId = crypto.randomUUID();
+
+    await askQuestionStream(
+      {
         owner_id: workspace.ownerId,
         collection_id: workspace.collectionId || null,
         material_ids: workspace.collectionId ? [] : scopedMaterialIds,
@@ -267,25 +305,50 @@ export default function ChatPanel({ onOpenSources, onOpenEvidence, onTabChange }
         query: trimmed,
         top_k: workspace.topK,
         answer_language: workspace.language,
-      });
-      if (response.citations.length > 0) {
-        setActiveCitations(response.citations);
-        selectCitation(response.citations[0]);
-      }
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content: response.was_refused ? friendlyRefusal(response.refusal_reason) : response.answer,
-          response,
+      },
+      {
+        onToken(token) {
+          setLoading(false);
+          setStreamingId(assistantId);
+          setMessages((prev) => {
+            const exists = prev.some((m) => m.id === assistantId);
+            if (exists) {
+              return prev.map((m) =>
+                m.id === assistantId ? { ...m, content: m.content + token } : m,
+              );
+            }
+            return [...prev, { id: assistantId, role: "assistant", content: token }];
+          });
         },
-      ]);
-    } catch (err) {
-      setError(friendlyError(err));
-    } finally {
-      setLoading(false);
-    }
+        onDone(response) {
+          setStreamingId(null);
+          setLoading(false);
+          const content = response.was_refused
+            ? friendlyRefusal(response.refusal_reason)
+            : response.answer;
+          setMessages((prev) => {
+            const exists = prev.some((m) => m.id === assistantId);
+            if (exists) {
+              return prev.map((m) =>
+                m.id === assistantId ? { ...m, content, response } : m,
+              );
+            }
+            return [...prev, { id: assistantId, role: "assistant", content, response }];
+          });
+          if (response.citations.length > 0) {
+            setActiveCitations(response.citations);
+            selectCitation(response.citations[0]);
+          }
+          setActiveQueryContext({ question: trimmed, response, createdAt: new Date().toISOString() });
+        },
+        onError(message) {
+          setStreamingId(null);
+          setLoading(false);
+          setMessages((prev) => prev.filter((m) => m.id !== assistantId));
+          setError(friendlyError(new Error(message)));
+        },
+      },
+    );
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -343,37 +406,46 @@ export default function ChatPanel({ onOpenSources, onOpenEvidence, onTabChange }
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">
         {!hasScope && messages.length <= 1 && <NoSourcesCallout onOpenSources={onOpenSources} />}
-        {messages.map((message) => (
-          <article key={message.id} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
-            <div className={`max-w-[90%] md:max-w-[80%] rounded-2xl px-5 py-4 ${message.role === "user" ? "bg-primary text-white" : "bg-white border border-outline shadow-sm"}`}>
-              {message.response && !message.response.was_refused ? (
-                <MessageContent
-                  content={message.content}
-                  citations={message.response.citations}
-                  onCitationClick={(idx) => selectCitation(message.response!.citations[idx])}
-                />
-              ) : (
-                <p className="whitespace-pre-wrap text-sm leading-relaxed">{message.content}</p>
-              )}
+        {messages.map((message) => {
+          const isStreaming = message.id === streamingId;
+          return (
+            <article key={message.id} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
+              <div className={`max-w-[90%] md:max-w-[80%] rounded-2xl px-5 py-4 ${message.role === "user" ? "bg-primary text-white" : "bg-white border border-outline shadow-sm"}`}>
+                {message.response && !message.response.was_refused ? (
+                  <MessageContent
+                    content={message.content}
+                    citations={message.response.citations}
+                    response={message.response}
+                    onCitationClick={(idx) => selectCitation(message.response!.citations[idx])}
+                  />
+                ) : (
+                  <p className="whitespace-pre-wrap text-sm leading-relaxed">
+                    {message.content}
+                    {isStreaming && (
+                      <span className="ml-0.5 inline-block w-0.5 h-4 bg-current align-middle animate-pulse" />
+                    )}
+                  </p>
+                )}
 
-              {/* Confidence badge */}
-              {message.response && !message.response.was_refused && (
-                <div className="mt-2 flex items-center gap-2">
-                  <ConfidenceBadge value={message.response.confidence} />
-                </div>
-              )}
+                {/* Confidence badge */}
+                {message.response && !message.response.was_refused && (
+                  <div className="mt-2 flex items-center gap-2">
+                    <ConfidenceBadge value={message.response.confidence} />
+                  </div>
+                )}
 
-              {/* Citations footer */}
-              {message.response && !message.response.was_refused && message.response.citations.length > 0 && (
-                <CitationFooter
-                  content={message.content}
-                  citations={message.response.citations}
-                  onSelect={selectCitation}
-                />
-              )}
-            </div>
-          </article>
-        ))}
+                {/* Citations footer */}
+                {message.response && !message.response.was_refused && message.response.citations.length > 0 && (
+                  <CitationFooter
+                    content={message.content}
+                    citations={message.response.citations}
+                    onSelect={selectCitation}
+                  />
+                )}
+              </div>
+            </article>
+          );
+        })}
         {loading && (
           <div className="flex justify-start">
             <div className="bg-white border border-outline shadow-sm rounded-2xl px-5 py-4 flex items-center gap-3 text-sm text-muted">
@@ -403,10 +475,10 @@ export default function ChatPanel({ onOpenSources, onOpenEvidence, onTabChange }
             />
             <div className="absolute right-2 bottom-2">
               <button
-                disabled={loading || !question.trim()}
+                disabled={loading || !!streamingId || !question.trim()}
                 className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-white disabled:opacity-50 transition hover:bg-primary/90"
               >
-                {loading ? <Loader2 className="animate-spin" size={14} /> : <Send size={14} className="ml-0.5" />}
+                {loading || streamingId ? <Loader2 className="animate-spin" size={14} /> : <Send size={14} className="ml-0.5" />}
               </button>
             </div>
           </form>

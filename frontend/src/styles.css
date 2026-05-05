@@ -71,6 +71,36 @@ body {
   @apply inline-flex items-center gap-2 rounded border-l-2 border-secondary-bright bg-slate-50 px-3 py-1.5 text-xs font-medium text-muted;
 }
 
+.mindmap-flow {
+  background:
+    linear-gradient(90deg, rgba(226, 232, 240, 0.34) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(226, 232, 240, 0.34) 1px, transparent 1px),
+    #ffffff;
+  background-size: 28px 28px;
+}
+
+.mindmap-flow .react-flow__controls,
+.graph-flow .react-flow__controls {
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+  box-shadow: 0 10px 24px -18px rgba(15, 23, 42, 0.75);
+  overflow: hidden;
+}
+
+.mindmap-flow .react-flow__controls-button,
+.graph-flow .react-flow__controls-button {
+  border-bottom-color: #e5edf6;
+}
+
+.mindmap-flow .react-flow__edge-path {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.mindmap-panel {
+  margin: 10px;
+}
+
 /* Paper-quality prose used inside evidence blocks and chat messages */
 .prose-paper {
   font-size: 0.875rem;   /* 14px */

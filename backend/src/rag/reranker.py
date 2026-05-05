@@ -147,7 +147,8 @@ class CrossEncoderReranker:
     @staticmethod
     def _rank_key(chunk: RetrievedChunk) -> float:
         rerank = chunk.rerank_score if chunk.rerank_score is not None else 0.0
-        return rerank + (chunk.fused_score or 0.0)
+        # fused_score is RRF-normalized (0–1); blend at 10% weight as tiebreaker only
+        return rerank + 0.1 * (chunk.fused_score or 0.0)
 
     @staticmethod
     def _jaccard(a: str, b: str) -> float:

@@ -56,7 +56,7 @@ def test_pdf_parse_uses_docling_before_text_fallback(monkeypatch) -> None:
     monkeypatch.setattr(parser, "_ensure_docling_available", lambda: None)
     monkeypatch.setattr(parser, "_converter", lambda extension: FakeConverter())
     monkeypatch.setattr(parser, "_add_pdf_text_fallback_pages", lambda *args, **kwargs: None)
-    monkeypatch.setattr(parser, "_add_pdf_paddleocr_pages", lambda *args, **kwargs: None)
+    monkeypatch.setattr(parser, "_add_easyocr_pages", lambda *args, **kwargs: None)
 
     parsed = parser.parse(Path("lecture.pdf"), language="en")
 
@@ -73,7 +73,7 @@ def test_pdf_parse_falls_back_when_docling_conversion_fails(monkeypatch) -> None
     parser = DoclingParser()
     monkeypatch.setattr(parser, "_ensure_docling_available", lambda: None)
     monkeypatch.setattr(parser, "_converter", lambda extension: BrokenConverter())
-    monkeypatch.setattr(parser, "_add_pdf_paddleocr_pages", lambda *args, **kwargs: None)
+    monkeypatch.setattr(parser, "_add_easyocr_pages", lambda *args, **kwargs: None)
 
     parsed = parser.parse(Path("lecture.pdf"), language="en")
 

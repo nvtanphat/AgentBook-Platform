@@ -47,7 +47,16 @@
       "Bash(AGENTBOOK_RUN_CORPUS_SMOKE=true AGENTBOOK_TESTING=true python -m pytest tests/integration/test_sample_corpus_smoke.py -v --tb=long)",
       "PowerShell(Test-NetConnection -ComputerName localhost -Port 8000 -WarningAction SilentlyContinue)",
       "PowerShell(Test-NetConnection -ComputerName localhost -Port 5173 -WarningAction SilentlyContinue)",
-      "PowerShell(Test-NetConnection -ComputerName localhost -Port 6333 -WarningAction SilentlyContinue)"
+      "PowerShell(Test-NetConnection -ComputerName localhost -Port 6333 -WarningAction SilentlyContinue)",
+      "Bash(grep -E \"\\\\.\\(py\\)$\")",
+      "Bash(echo \"qdrant health code: $?\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); h=d[0]['State']['Health']; print\\(h['Status']\\); [print\\(l['Output'][:200]\\) for l in h['Log'][-3:]]\")",
+      "PowerShell(python -c \"import json,sys; d=json.load\\(sys.stdin\\); h=d[0]['State']['Health']; print\\(h['Status']\\); [print\\(l['Output'][:300]\\) for l in h['Log'][-3:]]\" 2>&1)",
+      "Bash(docker exec *)",
+      "Bash(echo \"exit:$?\")",
+      "Bash(docker *)",
+      "Bash(powershell.exe *)",
+      "Bash(ollama list *)"
     ]
   }
 }

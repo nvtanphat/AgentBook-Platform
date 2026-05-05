@@ -14,6 +14,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?\u3002\uff01\uff1f])\s+")
+_PARAGRAPH_SPLIT = re.compile(r"\n\s*\n")
+_LIST_ITEM = re.compile(r"^[\s]*(?:[\u25a1\u2022\u25cf\u25aa\u25ab\u2013\u2014\-\*\u25c6\u25c7\u25cb]|\d+\.|\w\))\s+", re.MULTILINE)
+_CODE_BLOCK = re.compile(r"```[\s\S]*?```|`[^`\n]+`")
 _TABLE_BLOCK_TYPE = BlockType.TABLE.value
 
 
@@ -37,6 +40,106 @@ def _percentile(values: list[float], p: float) -> float:
     return sorted_vals[lo] * (1 - frac) + sorted_vals[hi] * frac
 
 
+def _merge_two_chunks(a: TextChunk, b: TextChunk) -> TextChunk:
+    content = f"{a.content}\n{b.content}".strip()
+    modalities = {a.modality, b.modality} - {"mixed"}
+    modality = "mixed" if len(modalities) > 1 else (modalities.pop() if modalities else "mixed")
+    pages = sorted(set(a.source_pages + b.source_pages))
+    seen_ids = set(a.source_block_ids)
+    block_ids = a.source_block_ids + [bid for bid in b.source_block_ids if bid not in seen_ids]
+    bboxes = a.bboxes + b.bboxes
+    langs = {a.language, b.language} - {"unknown", "mixed"}
+    language = next(iter(langs)) if len(langs) == 1 else ("mixed" if langs else a.language)
+    return a.model_copy(update={
+        "content": content,
+        "modality": modality,
+        "source_pages": pages,
+        "source_block_ids": block_ids,
+        "bboxes": bboxes,
+        "language": language,
+        "token_count": a.token_count + b.token_count,
+        "evidence": a.evidence + b.evidence,
+    })
+
+
+def _can_merge(a: TextChunk, b: TextChunk, target_tokens: int) -> bool:
+    return a.modality != "table" and b.modality != "table" and a.token_count + b.token_count <= target_tokens
+
+
+def _merge_tiny_chunks(chunks: list[TextChunk], min_tokens: int, target_tokens: int) -> list[TextChunk]:
+    """
+    Bidirectional iterative merge to eliminate sub-minimum chunks.
+
+    Each iteration runs:
+      • Forward pass  — absorb tiny tail into the incoming chunk.
+      • Backward pass — absorb tiny trailing chunk into its predecessor.
+      • Isolated pass — absorb a tiny chunk sandwiched between two
+                        non-tiny chunks into whichever neighbour gives
+                        the smaller combined size.
+
+    Loops until stable (no merge occurred in the last iteration).
+    Table-modality chunks are never merged with adjacent chunks.
+    """
+    if not chunks:
+        return chunks
+
+    for _ in range(len(chunks)):  # at most O(n) iterations
+        changed = False
+
+        # --- forward pass ---
+        result: list[TextChunk] = []
+        for chunk in chunks:
+            if result and result[-1].token_count < min_tokens and _can_merge(result[-1], chunk, target_tokens):
+                result[-1] = _merge_two_chunks(result[-1], chunk)
+                changed = True
+            else:
+                result.append(chunk)
+        chunks = result
+
+        # --- backward pass: trailing tiny chunk → predecessor ---
+        if (
+            len(chunks) >= 2
+            and chunks[-1].token_count < min_tokens
+            and _can_merge(chunks[-2], chunks[-1], target_tokens)
+        ):
+            chunks[-2] = _merge_two_chunks(chunks[-2], chunks[-1])
+            chunks.pop()
+            changed = True
+
+        # --- isolated tiny chunk → smaller neighbour ---
+        result = []
+        i = 0
+        while i < len(chunks):
+            c = chunks[i]
+            if c.token_count < min_tokens and c.modality != "table":
+                prev_ok = i > 0 and _can_merge(result[-1], c, target_tokens) if result else False
+                next_ok = i + 1 < len(chunks) and _can_merge(c, chunks[i + 1], target_tokens)
+                if prev_ok and next_ok:
+                    # merge into whichever gives the smaller combined chunk
+                    if result[-1].token_count <= chunks[i + 1].token_count:
+                        result[-1] = _merge_two_chunks(result[-1], c)
+                    else:
+                        chunks[i + 1] = _merge_two_chunks(c, chunks[i + 1])
+                    changed = True
+                elif prev_ok:
+                    result[-1] = _merge_two_chunks(result[-1], c)
+                    changed = True
+                elif next_ok:
+                    chunks[i + 1] = _merge_two_chunks(c, chunks[i + 1])
+                    changed = True
+                else:
+                    result.append(c)
+            else:
+                result.append(c)
+            i += 1
+        chunks = result
+
+        if not changed:
+            break
+
+    return chunks
+
+
 class LayoutAwareChunker:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -52,6 +155,8 @@ class LayoutAwareChunker:
         current_tokens = 0
 
         for source_block in evidence_map.blocks:
+            if not source_block.snippet_original.strip():
+                continue
             for block in self._split_oversized_block(source_block):
                 current, current_tokens = self._append_block(
                     evidence_map=evidence_map,
@@ -64,7 +169,11 @@ class LayoutAwareChunker:
         if current:
             chunks.append(self._make_chunk(evidence_map, current))
 
-        return chunks
+        return _merge_tiny_chunks(
+            [c for c in chunks if c.content.strip() and c.token_count > 0],
+            self.settings.chunk_min_token_count,
+            self.settings.chunk_target_token_count,
+        )
 
     def _append_block(
         self,
@@ -77,6 +186,10 @@ class LayoutAwareChunker:
     ) -> tuple[list[EvidenceBlock], int]:
         block_tokens = self._count_tokens(block.snippet_original)
         starts_new_section = self._starts_new_section(block, current)
+        # Suppress heading-triggered split when the current buffer is too small to
+        # stand alone; let it accumulate until it reaches a meaningful size.
+        if starts_new_section and current_tokens < self.settings.chunk_min_token_count:
+            starts_new_section = False
         table_boundary = self._is_table_boundary(block, current)
         exceeds_token_budget = current and current_tokens + block_tokens > self.settings.chunk_target_token_count
         exceeds_block_budget = self._exceeds_block_budget(current, current_tokens)
@@ -171,9 +284,88 @@ class LayoutAwareChunker:
             if table_parts:
                 return self._wrap_split_parts(block, table_parts)
 
-        sentences = _SENTENCE_SPLIT.split(block.snippet_original)
+        content = block.snippet_original
+
+        # Preserve code blocks: extract them, split around them, then reinsert
+        code_blocks: list[tuple[int, int, str]] = []
+        for match in _CODE_BLOCK.finditer(content):
+            code_blocks.append((match.start(), match.end(), match.group(0)))
+
+        # If content has code blocks, split non-code parts only
+        if code_blocks:
+            parts: list[str] = []
+            last_end = 0
+            for start, end, code in code_blocks:
+                # Split text before code block
+                before = content[last_end:start]
+                if before.strip():
+                    parts.extend(self._split_text_content(before))
+                # Keep code block intact if it fits, otherwise split by lines
+                if self._count_tokens(code) <= self.settings.chunk_target_token_count:
+                    parts.append(code)
+                else:
+                    # Split large code blocks by lines
+                    parts.extend(self._split_by_lines(code))
+                last_end = end
+            # Split remaining text after last code block
+            after = content[last_end:]
+            if after.strip():
+                parts.extend(self._split_text_content(after))
+            if parts:
+                return self._wrap_split_parts(block, parts)
+
+        # No code blocks: use paragraph-aware splitting
+        return self._wrap_split_parts(block, self._split_text_content(content))
+
+    def _split_text_content(self, text: str) -> list[str]:
+        """Split text content by paragraphs, then sentences, respecting list items."""
+        # Try paragraph split first
+        paragraphs = _PARAGRAPH_SPLIT.split(text)
+        if len(paragraphs) > 1:
+            # Check if splitting by paragraphs gives reasonable chunks
+            para_parts: list[str] = []
+            current_paras: list[str] = []
+            current_tokens = 0
+
+            for para in paragraphs:
+                para = para.strip()
+                if not para:
+                    continue
+                para_tokens = self._count_tokens(para)
+
+                # If single paragraph exceeds target, split it further
+                if para_tokens > self.settings.chunk_target_token_count:
+                    if current_paras:
+                        para_parts.append("\n\n".join(current_paras))
+                        current_paras = []
+                        current_tokens = 0
+                    # Recursively split oversized paragraph
+                    para_parts.extend(self._split_by_sentences(para))
+                    continue
+
+                # Accumulate paragraphs
+                if current_tokens + para_tokens > self.settings.chunk_target_token_count and current_paras:
+                    para_parts.append("\n\n".join(current_paras))
+                    current_paras = []
+                    current_tokens = 0
+
+                current_paras.append(para)
+                current_tokens += para_tokens
+
+            if current_paras:
+                para_parts.append("\n\n".join(current_paras))
+
+            if para_parts:
+                return para_parts
+
+        # Fallback to sentence splitting
+        return self._split_by_sentences(text)
+
+    def _split_by_sentences(self, text: str) -> list[str]:
+        """Split text by sentences, preserving list items."""
+        sentences = _SENTENCE_SPLIT.split(text)
         if len(sentences) <= 1:
-            sentences = block.snippet_original.split()
+            return self._split_by_lines(text)
 
         part_texts: list[str] = []
         current_units: list[str] = []
@@ -191,10 +383,48 @@ class LayoutAwareChunker:
         if current_units:
             part_texts.append(" ".join(current_units))
 
-        if not part_texts:
-            return [block]
+        return part_texts if part_texts else [text]
 
-        return self._wrap_split_parts(block, part_texts)
+    def _split_by_lines(self, text: str) -> list[str]:
+        """Fallback: split by lines when sentences are too long."""
+        lines = text.split('\n')
+        if len(lines) <= 1:
+            # Ultimate fallback: split by words
+            words = text.split()
+            part_texts: list[str] = []
+            current_words: list[str] = []
+            current_tokens = 0
+
+            for word in words:
+                word_tokens = self._count_tokens(word)
+                if current_tokens + word_tokens > self.settings.chunk_target_token_count and current_words:
+                    part_texts.append(" ".join(current_words))
+                    current_words = []
+                    current_tokens = 0
+                current_words.append(word)
+                current_tokens += word_tokens
+
+            if current_words:
+                part_texts.append(" ".join(current_words))
+            return part_texts if part_texts else [text]
+
+        part_texts: list[str] = []
+        current_lines: list[str] = []
+        current_tokens = 0
+
+        for line in lines:
+            line_tokens = self._count_tokens(line)
+            if current_tokens + line_tokens > self.settings.chunk_target_token_count and current_lines:
+                part_texts.append("\n".join(current_lines))
+                current_lines = []
+                current_tokens = 0
+            current_lines.append(line)
+            current_tokens += line_tokens
+
+        if current_lines:
+            part_texts.append("\n".join(current_lines))
+
+        return part_texts if part_texts else [text]
 
     def _wrap_split_parts(self, block: EvidenceBlock, part_texts: list[str]) -> list[EvidenceBlock]:
         part_count = len(part_texts)
@@ -266,7 +496,7 @@ class SemanticChunker:
         self._layout = LayoutAwareChunker(settings)
 
     def build_chunks(self, evidence_map: EvidenceMap) -> list[TextChunk]:
-        blocks = list(evidence_map.blocks)
+        blocks = [b for b in evidence_map.blocks if b.snippet_original.strip()]
         if not blocks:
             return []
         if self.embedder is None or len(blocks) < 2:
@@ -304,13 +534,26 @@ class SemanticChunker:
             if dist >= threshold:
                 split_before.add(i + 1)
 
-        # Layout hard-breaks always override
+        # Pre-compute cumulative token counts to suppress tiny-buffer heading splits
+        _tok = [self._layout._count_tokens(b.snippet_original) for b in blocks]
+        _cum = [0] * (len(blocks) + 1)
+        for _i, _t in enumerate(_tok):
+            _cum[_i + 1] = _cum[_i] + _t
+
+        # Layout hard-breaks always override, except when the buffer that would
+        # be emitted is too small to stand alone.
+        min_tok = self.settings.chunk_min_token_count
         for i in range(1, len(blocks)):
             prev, curr = blocks[i - 1], blocks[i]
             # heading after body content → new section
             if curr.block_type == "heading" and prev.block_type != "heading":
-                split_before.add(i)
-            # table ↔ non-table
+                # Find the start of the current segment (last split point before i)
+                seg_start = max((s for s in split_before if s < i), default=0)
+                seg_tokens = _cum[i] - _cum[seg_start]
+                if seg_tokens >= min_tok:
+                    split_before.add(i)
+                # else: suppress — buffer too small, keep accumulating
+            # table ↔ non-table (always hard-break; table isolation is non-negotiable)
             if (curr.block_type == _TABLE_BLOCK_TYPE) != (prev.block_type == _TABLE_BLOCK_TYPE):
                 split_before.add(i)
 
@@ -350,7 +593,11 @@ class SemanticChunker:
         if current:
             chunks.append(self._make_chunk(evidence_map, current))
 
-        return chunks
+        return _merge_tiny_chunks(
+            [c for c in chunks if c.content.strip() and c.token_count > 0],
+            self.settings.chunk_min_token_count,
+            self.settings.chunk_target_token_count,
+        )
 
     def _make_chunk(self, evidence_map: EvidenceMap, blocks: list[EvidenceBlock]) -> TextChunk:
         chunk = self._layout._make_chunk(evidence_map, blocks)

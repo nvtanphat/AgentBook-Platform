@@ -29,6 +29,9 @@ export default function WorkspacePage() {
     if (panel === "evidence" || panel === "studio" || panel === "graph" || panel === "mindmap" || panel === "compare") {
       setRightTab(panel);
     }
+    if (panel && typeof window !== "undefined" && window.innerWidth < 1024) {
+      setShowStudioMobile(true);
+    }
     if (panel === "evidence") {
       const doc = searchParams.get("doc");
       const page = searchParams.get("page");
@@ -46,6 +49,12 @@ export default function WorkspacePage() {
     setRightTab(tab);
     // On mobile, opening a tab via suggestion chip or citation should also open the drawer
     if (window.innerWidth < 1024) setShowStudioMobile(true);
+  }
+
+  function handleOpenEvidence(target: { docId: string; page: number; blockId?: string | null }) {
+    setEvidenceDocId(target.docId);
+    setEvidencePage(target.page);
+    handleTabChange("evidence");
   }
 
   return (
@@ -83,6 +92,7 @@ export default function WorkspacePage() {
           onTabChange={setRightTab}
           evidenceDocId={evidenceDocId}
           evidencePage={evidencePage}
+          onOpenEvidence={handleOpenEvidence}
         />
       </div>
 
@@ -107,6 +117,7 @@ export default function WorkspacePage() {
               onTabChange={(tab) => { setRightTab(tab); }}
               evidenceDocId={evidenceDocId}
               evidencePage={evidencePage}
+              onOpenEvidence={handleOpenEvidence}
             />
           </div>
         </div>

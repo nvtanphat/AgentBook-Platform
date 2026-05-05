@@ -776,3 +776,789 @@ Các nguồn dưới đây khớp nhất với những kỹ thuật đang dùng 
 - Hướng dẫn kiểm thử trong `docs/testing_guide.md`
 - Báo cáo audit tổng dự án trong `docs/full_project_audit.md`
 - Code backend, frontend, tests và corpus mẫu hiện tại trong repo
+
+## 18) Phụ Lục Chi Tiết Technical
+
+Phần này bổ sung chi tiết triển khai có thể đối chiếu trực tiếp với cấu hình, API và module hiện tại của hệ thống. Mục tiêu là làm rõ hệ thống đang chạy như thế nào ở mức engineering, không chỉ mô tả theo hướng sản phẩm.
+
+### 18.1 Runtime service và lifecycle backend
+
+Backend được đóng gói quanh một ứng dụng FastAPI có lifecycle rõ:
+
+1. Khi service khởi động, hệ thống nạp cấu hình logging từ YAML nếu có.
+2. Settings được tổng hợp từ file cấu hình, biến môi trường và giá trị mặc định.
+3. Backend khởi tạo kết nối metadata database.
+4. Backend kiểm tra và tạo collection vector nếu chưa tồn tại.
+5. Backend tạo payload index trong Qdrant cho các trường lọc quan trọng.
+6. Khi service shutdown, hệ thống đóng query service, Qdrant client và kết nối database.
+
+Các payload index quan trọng trong vector store:
+
+| Payload field | Vai trò |
+|---|---|
+| `owner_id` | Bắt buộc để cô lập dữ liệu theo người dùng/workspace |
+| `collection_id` | Scope retrieval theo collection |
+| `material_id` | Scope retrieval theo tài liệu cụ thể |
+| `language` | Lọc theo ngôn ngữ block/chunk |
+| `modality` | Phân biệt text, table, figure, OCR, handwriting |
+| `content_text` | Text index đa ngôn ngữ phục vụ lexical matching |
+
+Qdrant collection dùng hai vector channel:
+
+| Vector channel | Kiểu | Mục đích |
+|---|---|---|
+| `dense` | Dense vector 1024 chiều | Semantic retrieval |
+| `bge_m3_sparse` | Sparse vector | Lexical/sparse retrieval |
+
+Thiết kế này giúp retrieval không phụ thuộc hoàn toàn vào một tín hiệu. Dense vector bắt quan hệ ngữ nghĩa, sparse vector giữ tốt thuật ngữ chính xác, tên riêng, công thức, mã môn học và cụm từ trong slide.
+
+### 18.2 API surface
+
+API chính nằm dưới prefix `/api/v1`. Các nhóm endpoint hiện tại:
+
+| Nhóm | Endpoint tiêu biểu | Chức năng |
+|---|---|---|
+| Collections | `/collections` | Tạo, liệt kê và quản lý workspace/collection |
+| Materials | `/materials`, `/materials/upload`, `/materials/batch_upload` | Upload, batch upload, list tài liệu |
+| Material status | `/materials/{material_id}/status` | Theo dõi stage parse/index |
+| Material debug | `/materials/{material_id}/debug` | Xem page, block, bbox, chunk phục vụ debug |
+| Query | `/query/ask` | Hỏi đáp grounded theo scope |
+| Compare | `/query/compare` | So sánh nhiều tài liệu/chủ đề |
+| Summary | `/query/summarize` | Tóm tắt có citation |
+| Study guide | `/query/study-guide` | Sinh hướng dẫn học tập |
+| Evidence | `/evidence/...` | Lấy evidence theo trang/block |
+| Graph | `/graph`, `/graph/mindmap` | Lấy graph/mindmap từ entity và relation |
+| Admin | `/admin/metrics`, `/admin/feedback` | Metrics và feedback |
+
+Các endpoint query có rate limit ở những luồng tốn tài nguyên:
+
+| Endpoint | Rate limit |
+|---|---|
+| `/query/ask` | 15 request/phút |
+| `/query/compare` | 10 request/phút |
+
+Điểm quan trọng về bảo mật dữ liệu là mọi request theo scope đều kiểm tra `owner_id`. Khi bật auth production, API key được dùng để tránh expose service trực tiếp ra internet khi chưa có lớp xác thực hoàn chỉnh.
+
+### 18.3 Upload, validation và lưu trữ file
+
+Luồng upload không đọc toàn bộ file vào RAM. File được stream vào vùng tạm, đồng thời tính checksum và đọc phần đầu file để validate. Sau đó service mới chuyển file sang storage chính.
+
+Các cơ chế kiểm soát:
+
+| Cơ chế | Chi tiết |
+|---|---|
+| Extension allowlist | `pdf`, `docx`, `pptx`, `png`, `jpg`, `jpeg`, `csv`, `xlsx`, `xls` |
+| Giới hạn dung lượng | Mặc định 20 MB, lấy từ guardrail config |
+| Magic bytes/head check | Giảm rủi ro file giả đuôi |
+| Checksum SHA-256 | Phát hiện trùng file trong cùng scope |
+| Scoped path | File được lưu theo vùng dữ liệu của hệ thống, tránh path traversal |
+| Job record | Mỗi upload tạo pipeline job để theo dõi stage |
+
+Trạng thái job được ánh xạ thành progress:
+
+| Stage | Progress |
+|---|---:|
+| `uploaded` | 10% |
+| `parsing` | 30% |
+| `parsed` | 55% |
+| `indexing` | 80% |
+| `indexed` | 100% |
+| `failed` | 100% |
+
+### 18.4 Parse/index pipeline chi tiết
+
+Pipeline parse/index chạy theo thứ tự:
+
+1. Kiểm tra material và job còn tồn tại.
+2. Chuyển status sang `parsing`.
+3. Route parser theo loại file.
+4. Caption figure nếu block cần caption và có vision model phù hợp.
+5. Normalize layout, reading order, block type và metadata.
+6. Detect language ở mức block/document.
+7. Ghi page/block đã parse vào metadata store.
+8. Ghi artifact đã xử lý để debug.
+9. Tạo evidence map theo block.
+10. Chunk theo layout hoặc semantic strategy.
+11. Sinh QA nội bộ cho chunk nếu cần.
+12. Contextual enrichment cho chunk nếu bật.
+13. Trích xuất entity, resolve alias, trích xuất event/relation.
+14. Chuyển status sang `indexing`.
+15. Index chunk vào MongoDB và vector vào Qdrant.
+16. Ghi entity/event/relation vào graph store.
+17. Chuyển status sang `indexed`; nếu lỗi thì ghi `failed_stage` và `error_message`.
+
+Routing parser:
+
+| Loại input | Parser chính | Ghi chú |
+|---|---|---|
+| PDF/DOCX/PPTX | Docling parser | Ưu tiên layout, table, figure, reading order |
+| CSV/XLS/XLSX | Spreadsheet parser | Sinh summary, markdown table và row-level verbalization |
+| PNG/JPG/JPEG chữ in | OCR engine | Dùng OCR quality score và bbox |
+| PNG/JPG/JPEG viết tay | Handwriting reader | Chỉ nhận evidence khi vượt quality/confidence gate |
+
+Pipeline có cơ chế kiểm tra material giữa các stage để tránh index tiếp một tài liệu đã bị xóa trong lúc job đang chạy.
+
+### 18.5 Cấu hình model và retrieval
+
+Cấu hình hiện tại ưu tiên chạy được local trên CPU nhưng vẫn giữ đường nâng cấp sang GPU/API.
+
+| Thành phần | Giá trị hiện tại | Ý nghĩa |
+|---|---|---|
+| LLM provider mặc định | `local` | Ưu tiên model local |
+| Local model | `qwen2.5:3b` trong config, Docker override `qwen3:4b` | Sinh answer, summary, rewrite |
+| OpenAI-compatible fallback | `gpt-4o-mini` | Dự phòng khi dùng API |
+| Temperature | `0.1` | Giảm sáng tạo, tăng tính ổn định |
+| Max output tokens | `1024` | Giới hạn độ dài trả lời |
+| Embedding | `BAAI/bge-m3` | Dense + sparse, đa ngôn ngữ |
+| Dense size | `1024` | Khớp Qdrant vector config |
+| Embedding batch size | `8` | Phù hợp CPU/local |
+| Reranker | `BAAI/bge-reranker-v2-m3` | Xếp lại candidate trước prompt |
+
+Thông số retrieval chính:
+
+| Tham số | Giá trị | Vai trò |
+|---|---:|---|
+| `dense_top_k` | 20 | Số candidate từ dense search |
+| `sparse_top_k` | 20 | Số candidate từ sparse search |
+| `graph_top_k` | 10 | Số candidate từ graph expansion |
+| `final_top_k` | 5 | Evidence cuối đưa vào synthesis |
+| `rrf_k` | 60 | Hằng số Reciprocal Rank Fusion |
+| `rerank_input_k` | 15 | Số candidate đưa vào reranker |
+| `graph_max_hops` | 2 | Giới hạn mở rộng graph |
+| `query_rewriter_enabled` | true | Bật rewrite/multi-query |
+
+Thông số chunking:
+
+| Tham số | Giá trị | Vai trò |
+|---|---:|---|
+| `target_token_count` | 512 | Kích thước chunk mục tiêu |
+| `overlap_token_count` | 50 | Giữ ngữ cảnh giữa chunk |
+| `max_blocks_per_chunk` | 8 | Chặn chunk gom quá nhiều block |
+| `breakpoint_percentile` | 95 | Ngưỡng semantic breakpoint nếu dùng semantic chunking |
+
+### 18.6 Data model metadata
+
+Metadata store dùng document model vì dữ liệu tài liệu có cấu trúc linh hoạt: page, block, bbox, graph, evidence, memory và query log có thể khác nhau theo loại file.
+
+Các collection lõi:
+
+| Collection | Nội dung chính |
+|---|---|
+| `materials` | Metadata tài liệu, checksum, status, version, storage path |
+| `material_pages` | Page/block đã parse, bbox, reading order, OCR confidence |
+| `chunks` | Chunk text, source block/page, model version, chunk strategy |
+| `entities` | Entity canonical, alias, type, mention evidence |
+| `events` | Event, participant, thời gian, evidence |
+| `relations` | Edge giữa entity/event/concept, confidence, conflict flag |
+| `pipeline_jobs` | Trạng thái parse/index background |
+| `query_logs` | Log câu hỏi, retrieval, answer, confidence |
+| `feedback` | Rating/comment của người dùng |
+| `chat_memory` | Memory hội thoại theo conversation/workspace |
+
+Trường trace quan trọng:
+
+| Trường | Nơi dùng | Ý nghĩa |
+|---|---|---|
+| `owner_id` | Tất cả dữ liệu scoped | Cô lập người dùng |
+| `collection_id` | Material/chunk/graph/query | Cô lập workspace |
+| `material_id` | Page/chunk/evidence | Trỏ về tài liệu gốc |
+| `page_number` / `page` | Page/evidence | Trỏ về trang |
+| `block_id` | Block/evidence/chunk | Trỏ về block nguồn |
+| `bbox` | Material block/evidence | Hiển thị vùng nguồn trên UI |
+| `source_block_ids` | Chunk | Biết chunk được ghép từ block nào |
+| `source_pages` | Chunk | Biết chunk trải trên trang nào |
+
+### 18.7 Evidence, citation và confidence
+
+Citation không được sinh tự do bởi LLM. Citation được nối từ retrieval result và evidence metadata. Một evidence tốt cần có:
+
+- tài liệu nguồn,
+- trang,
+- block id,
+- snippet gốc,
+- bbox nếu parser/OCR cung cấp,
+- confidence hoặc score từ retrieval/rerank.
+
+Luồng confidence gồm nhiều tín hiệu:
+
+| Tín hiệu | Vai trò |
+|---|---|
+| Retrieval score | Candidate có liên quan không |
+| Reranker score | Evidence có thật sự khớp query không |
+| OCR quality | Text scan có đáng tin để index không |
+| Graph confidence | Edge/entity có đủ tin cậy không |
+| Claim verifier | Claim trong answer có bám evidence không |
+| Contradiction detector | Phát hiện mâu thuẫn trong compare/multi-doc |
+
+Ngưỡng mặc định đáng chú ý:
+
+| Ngưỡng | Giá trị | Ý nghĩa |
+|---|---:|---|
+| `min_reranker_score` | 0.35 | Dưới ngưỡng này evidence yếu |
+| `min_evidence_confidence` | 0.35 | Confidence tối thiểu cho answer grounded |
+| `min_graph_confidence` | 0.45 | Confidence tối thiểu cho graph evidence |
+| `min_ocr_text_quality` | 0.35 | Dưới ngưỡng này OCR quá yếu |
+| `warn_ocr_text_quality` | 0.55 | Cảnh báo chất lượng OCR |
+| `min_handwriting_quality_score` | 0.72 | Chặn ảnh viết tay chất lượng thấp |
+| `min_handwriting_confidence` | 0.8 | Chỉ nhận handwriting khi đủ tin cậy |
+
+### 18.8 Graph layer
+
+Graph layer không thay thế vector retrieval mà bổ sung khả năng liên hệ khái niệm. Hệ thống trích xuất và lưu:
+
+| Đối tượng | Ý nghĩa |
+|---|---|
+| Entity | Khái niệm, thuật ngữ, người, tổ chức, chủ đề |
+| Alias | Các cách gọi khác nhau của cùng entity |
+| Event | Sự kiện hoặc mốc có participant/thời gian |
+| Relation | Quan hệ giữa entity/entity hoặc entity/event |
+| Evidence ref | Dẫn ngược về material/page/block/span |
+
+Graph hữu ích nhất trong các tình huống:
+
+- câu hỏi so sánh hai tài liệu,
+- câu hỏi cần nối nhiều khái niệm,
+- câu hỏi hỏi “liên quan đến gì” hoặc “vì sao”,
+- mindmap và topic exploration,
+- phát hiện relation có mâu thuẫn giữa hai nguồn.
+
+Giới hạn kỹ thuật hiện tại là graph vẫn nhẹ, chủ yếu dựa vào extraction rule/model đơn giản và evidence refs. Đây là thiết kế hợp lý cho MVP vì không làm hệ thống phụ thuộc vào một graph database riêng, nhưng nếu corpus lớn hơn thì nên cân nhắc graph index hoặc graph database chuyên dụng.
+
+### 18.8.1 Flow Graph RAG trong codebase
+
+Flow Graph RAG của hệ thống có thể chia thành ba phase: build graph khi upload, dùng graph khi query, và visualize graph trên UI.
+
+#### Phase 1: Build graph khi upload tài liệu
+
+```text
+Tài liệu đầu vào
+PDF / DOCX / PPTX / PNG / JPG / XLSX / CSV
+        |
+        v
+DoclingParser / SpreadsheetParser / EasyOCR hoặc OCR branch
+        |
+        v
+ParsedDocument
+pages + blocks + block_id + page + bbox + ocr_confidence
+        |
+        v
+LayoutNormalizer
+        |
+        v
+EvidenceMapper
+        |
+        v
+EvidenceMap
+block -> EvidenceRef(material_id, page, block_id, bbox, snippet_original)
+        |
+        v
+EntityExtractor
+        |
+        v
+EntityResolver
+        |
+        v
+EventExtractor / structural relation extraction
+        |
+        v
+QdrantMongoIndexer
+        |
+        +--> MongoDB: Entity
+        +--> MongoDB: Event
+        +--> MongoDB: Relation
+        +--> MongoDB: Chunk
+        +--> Qdrant: dense + sparse vectors
+```
+
+Entity extraction hiện theo hướng rule-based:
+
+| Nguồn tín hiệu | Entity type | Ví dụ |
+|---|---|---|
+| Regex/keyword nhóm phương pháp | `method` | Dropout, Transformer, RAG |
+| Metric pattern | `metric` | accuracy, F1, loss, recall |
+| CamelCase/ALLCAPS/technical terms | `concept` | Deep Learning, Graph RAG |
+| NER tùy chọn | `per`, `org`, `loc` | Người, tổ chức, địa điểm nếu runtime có NER |
+
+Entity sau khi extract được resolve/deduplicate:
+
+```text
+list[ExtractedEntity]
+        |
+        v
+EntityResolver
+        |
+        v
+MongoDB Entity {
+  canonical_name,
+  aliases,
+  entity_type,
+  confidence,
+  mention_refs: [
+    { material_id, page, block_id }
+  ]
+}
+```
+
+Relation hiện được lưu theo schema:
+
+```text
+MongoDB Relation {
+  source_id,
+  target_id,
+  relation_type,
+  confidence,
+  evidence_refs: [
+    { material_id, page, block_id }
+  ],
+  is_conflicting
+}
+```
+
+Điểm cần phân biệt:
+
+- Code đã có đường lưu `Relation` vào MongoDB nếu extractor trả về relation đủ confidence.
+- Relation hiện thiên về **event/structural relations** như `mentioned_in_event`, `mentioned_in_block`, `section_contains`, `has_caption`, `caption_of`.
+- Semantic relation kiểu `dropout affects overfitting` chưa phải lớp extraction mạnh/chuyên biệt; vì vậy graph retrieval có thể không tìm được quan hệ ngữ nghĩa như ví dụ nếu collection `relations` thiếu edge tương ứng.
+
+#### Phase 2: Query Graph RAG khi người dùng hỏi
+
+Ví dụ query:
+
+```text
+"dropout ảnh hưởng thế nào đến overfitting?"
+```
+
+Query flow:
+
+```text
+User query
+        |
+        v
+QueryRouter.route()
+RouteType.GRAPH_RELATION nếu query có tín hiệu như:
+"ảnh hưởng", "tác động", "liên quan", "so sánh", "khác nhau"
+        |
+        +-----------------------------+
+        |                             |
+        v                             v
+HybridRetriever                  GraphRetriever
+dense + sparse + RRF             retrieve_paths()
+        |                             |
+        |                             v
+        |                      Extract terms từ query
+        |                      ví dụ: dropout, ảnh, hưởng, overfitting
+        |                             |
+        |                             v
+        |                      Entity.find()
+        |                      regex match canonical_name/aliases
+        |                             |
+        |                             v
+        |                      seed_ids:
+        |                      entity:dropout
+        |                      entity:overfitting
+        |                             |
+        |                             v
+        |                      Relation.find()
+        |                      source_id hoặc target_id nằm trong seed_ids
+        |                             |
+        |                             v
+        |                      2-hop expansion nếu bật
+        |                      graph_max_hops <= 2
+        |                             |
+        |                             v
+        |                      Hydrate EvidenceRef
+        |                      Material + page + block + snippet_original
+        |                             |
+        |                             v
+        |                      GraphPath(
+        |                        path=[source, relation, target],
+        |                        confidence,
+        |                        evidence_refs=[EvidenceBlock...]
+        |                      )
+        |
+        +-------------+---------------+
+                      |
+                      v
+graph_chunks + retrieved_chunks
+        |
+        v
+dedupe_retrieved_chunks()
+        |
+        v
+rerank_multilingual()
+BGE-reranker-v2-m3
+        |
+        v
+confidence_scorer.should_refuse()
+        |
+        v
+LLM synthesis
+local qwen model hoặc OpenAI-compatible fallback
+        |
+        v
+ClaimVerifier / contradiction checks
+        |
+        v
+QueryResponse
+answer + citations(page, block_id, bbox)
+```
+
+Trong GraphRetriever, các bước chính là:
+
+| Bước | Cách làm |
+|---|---|
+| Tách term | Regex lấy các token đủ dài từ query |
+| Tìm seed entity | Match `canonical_name` hoặc `aliases` bằng regex không phân biệt hoa thường |
+| Tìm relation hop 1 | Query `Relation` có `source_id` hoặc `target_id` thuộc seed ids |
+| Mở rộng hop 2 | Lấy frontier entity từ hop 1 rồi query tiếp relation liên quan |
+| Hydrate evidence | Dùng `EvidenceRef` để lookup material/page/block và tạo `EvidenceBlock` |
+| Sort path | Sắp theo confidence giảm dần |
+| Limit | Trả tối đa `graph_top_k` path |
+
+Ví dụ lý tưởng nếu relation semantic đã tồn tại:
+
+```text
+Entity("Dropout")
+Entity("Overfitting")
+Relation(
+  source_id="entity:dropout",
+  target_id="entity:overfitting",
+  relation_type="affects",
+  confidence=0.81
+)
+```
+
+Khi đó GraphRetriever có thể tạo path:
+
+```text
+GraphPath(
+  path=[
+    "entity:dropout",
+    "relation:affects",
+    "entity:overfitting"
+  ],
+  confidence=0.81,
+  evidence_refs=[...]
+)
+```
+
+Nhưng với hiện trạng extractor còn nhẹ, quan hệ dạng này không nên được xem là luôn có sẵn.
+
+#### Phase 3: Visualization Graph UI
+
+Graph visualization flow:
+
+```text
+GET/POST graph API
+        |
+        v
+Entity.find()
+        |
+        v
+GraphNode(type = entity_type)
+
+Event.find()
+        |
+        v
+GraphNode(type = "event")
+
+Relation.find()
+        |
+        v
+GraphEdge(source, target, relation_type, confidence)
+        |
+        v
+Frontend React Flow render graph/mindmap
+```
+
+Nếu không có relation đủ tốt, graph UI có thể dùng fallback co-occurrence:
+
+```text
+_entity_cooccurrence_edges()
+2 entity cùng xuất hiện trong một block
+        |
+        v
+edge relation_type = "co_occurs_in_block"
+```
+
+Fallback này giúp UI vẫn có graph để xem, nhưng cần hiểu đúng rằng `co_occurs_in_block` chỉ nói hai entity cùng xuất hiện trong cùng block, không chứng minh quan hệ nhân quả hay tác động.
+
+#### Hiện trạng Graph RAG cần biết
+
+| Thành phần | Trạng thái |
+|---|---|
+| Entity extraction | Có, chủ yếu rule-based bằng regex, keyword và pattern |
+| Underthesea NER | Optional, không nên coi là dependency luôn có sẵn |
+| EntityResolver | Có dedup và alias merge |
+| Event extraction | Có extractor nhẹ dựa trên event verbs/date pattern |
+| Relation extraction | Có structural/event relations, nhưng semantic relation chuyên sâu còn yếu |
+| Relation persistence | Có code lưu `Relation` nếu extractor sinh relation và vượt ngưỡng confidence |
+| Graph retrieval | Code đúng hướng, phụ thuộc vào `Entity` và `Relation` đã có trong MongoDB |
+| Graph UI | Có thể render entity/event/relation và fallback co-occurrence nếu relation thiếu |
+| Điểm nghẽn lớn nhất | Thiếu semantic relation extractor mạnh cho quan hệ kiểu `affects`, `causes`, `prevents`, `improves`, `reduces` |
+
+Kết luận kỹ thuật cho Graph RAG:
+
+> Graph RAG trong hệ thống đã có khung đầy đủ từ entity store, relation schema, graph retrieval, evidence hydration đến visualization. Tuy nhiên chất lượng graph reasoning hiện bị giới hạn bởi lớp relation extraction. Nếu muốn câu hỏi như “Dropout ảnh hưởng thế nào đến overfitting?” hoạt động ổn định bằng graph path, cần bổ sung extractor cho semantic relation và đảm bảo các edge đó được lưu vào `relations` collection với evidence refs rõ ràng.
+
+### 18.9 Frontend technical
+
+Frontend dùng React + Vite + TypeScript. Giao diện chính là workspace nhiều panel, phù hợp thao tác học tập và kiểm chứng evidence.
+
+Thành phần frontend chính:
+
+| Thành phần | Vai trò |
+|---|---|
+| App shell | Khung điều hướng và layout |
+| Workspace page | Màn hình thao tác chính |
+| Chat panel | Nhập câu hỏi và xem câu trả lời |
+| Sources panel | Quản lý tài liệu trong workspace |
+| Evidence panel | Xem citation/snippet/bbox |
+| Graph canvas | Hiển thị graph/mindmap bằng React Flow |
+| Studio panel | Các tab nâng cao như graph, compare, study guide |
+| Markdown renderer | Render answer có định dạng |
+| Error boundary | Chặn crash UI theo component |
+
+Các dependency UI đáng chú ý:
+
+| Package | Vai trò |
+|---|---|
+| `react` / `react-dom` | Runtime UI |
+| `react-router-dom` | Routing |
+| `reactflow` | Graph và mindmap |
+| `@dagrejs/dagre` | Layout graph |
+| `lucide-react` | Icon |
+| `tailwindcss` | Styling utility |
+| `vitest` | Test frontend |
+
+### 18.10 Container và vận hành local
+
+Docker Compose hiện có các service:
+
+| Service | Vai trò |
+|---|---|
+| `api` | FastAPI backend |
+| `worker` | Celery worker chạy parse/index |
+| `qdrant` | Vector database |
+| `redis` | Broker/result backend cho Celery |
+
+Mapping local:
+
+| Port | Service |
+|---:|---|
+| 8000 | FastAPI API |
+| 6333 | Qdrant HTTP |
+| 6334 | Qdrant gRPC |
+| 6379 | Redis |
+
+Volume quan trọng:
+
+| Volume/path | Vai trò |
+|---|---|
+| `./data:/app/data` | Raw file, processed artifact, vector local data |
+| `./config:/app/config:ro` | Config YAML read-only trong container |
+| `redis-data:/data` | Redis append-only persistence |
+
+Điểm cần chú ý khi vận hành:
+
+- Nếu dùng model local, Ollama chạy trên host và container gọi qua `host.docker.internal`.
+- Qdrant và Redis chỉ bind `127.0.0.1`, phù hợp môi trường local.
+- Production cần bổ sung auth thật, secret management, backup database/vector store và centralized logging.
+
+### 18.11 Test coverage và regression
+
+Test hiện được chia theo lớp:
+
+| Nhóm test | Nội dung |
+|---|---|
+| API | Upload material, graph endpoint, admin, connections |
+| Processing | Docling parser, OCR gate, spreadsheet parser, chunking, layout normalizer |
+| RAG | Embed/index/retrieve/rerank/query router/graph retriever |
+| Inference | Query endpoint, summary, response parser, intent classifier, verifier |
+| Integration | Retrieval end-to-end và sample corpus smoke test |
+| Evaluation | Model adaptation và benchmark scripts |
+
+Chiến lược regression nên giữ:
+
+1. Unit test cho rule và schema.
+2. Integration test cho MongoDB/Qdrant path.
+3. Corpus smoke test cho tài liệu mẫu.
+4. Evaluation benchmark cho Recall@K, MRR, nDCG và citation accuracy.
+5. Ablation suite để chứng minh từng lớp như rerank, graph, layout-aware chunking có đóng góp thật.
+
+### 18.12 Các điểm cần hardening trước production
+
+| Hạng mục | Hiện trạng | Việc cần làm |
+|---|---|---|
+| Auth | Có API key gate, chưa phải auth đầy đủ | Thêm user/session/RBAC hoặc tích hợp IdP |
+| Authorization | Scope filter theo `owner_id`/`collection_id` | Audit toàn bộ endpoint và background job |
+| Observability | Có logging và admin metrics | Thêm tracing, structured logs, latency histogram |
+| Secrets | Dựa vào `.env` | Secret manager cho production |
+| Data retention | Chưa nêu chính sách rõ | Thêm retention/delete/export policy |
+| OCR quality | Có gate nhưng scan Việt vẫn yếu | Thêm benchmark OCR và feedback loop |
+| Evaluation | Có framework và scripts | Chuẩn hóa bộ câu hỏi vàng thực tế |
+| Scaling | Phù hợp nhỏ/vừa | Tách worker pool, batch embedding, cache retrieval |
+| Backup | Chưa là phần chính của báo cáo | Backup MongoDB, Qdrant và raw artifacts |
+| Frontend robustness | Có ErrorBoundary, còn thiếu polish | Thêm skeleton, retry state, stale data handling |
+
+### 18.13 Tech stack toàn bộ
+
+Bảng dưới đây gom toàn bộ stack kỹ thuật đang dùng hoặc đã được wiring trong repo, chia theo lớp để dễ trình bày khi bảo vệ đồ án.
+
+#### 18.13.1 Nền tảng runtime và ngôn ngữ
+
+| Lớp | Công nghệ | Phiên bản/nguồn | Vai trò | Ghi chú kỹ thuật |
+|---|---|---|---|---|
+| Backend language | Python | Docker dùng `python:3.12-slim`; README ghi Python 3.11+ | Runtime chính cho API, RAG, parsing, indexing | Nên thống nhất tài liệu triển khai là Python 3.12 trong Docker, 3.11+ cho local |
+| Frontend language | TypeScript | `typescript ^5.7.2` | Type-safe frontend | Build bằng `tsc` trước Vite |
+| Frontend runtime | Node.js / npm | Theo `package-lock.json` và npm scripts | Cài dependency, dev server, build | Cần Node tương thích Vite 6 |
+| Container runtime | Docker / Docker Compose | `docker-compose.yml` | Chạy API, worker, Qdrant, Redis | Phù hợp local/dev reproducibility |
+| OS base image | Debian slim | `python:3.12-slim` | Base backend container | Cài thêm `libgl1`, `libglib2.0-0` cho OpenCV/OCR |
+
+#### 18.13.2 Backend API stack
+
+| Thành phần | Công nghệ | Phiên bản | Vai trò | Lý do dùng |
+|---|---|---:|---|---|
+| Web framework | FastAPI | `0.115.5` | REST API cho upload, query, graph, admin | Async tốt, schema rõ, hợp Pydantic |
+| ASGI server | Uvicorn | `0.32.1` | Chạy FastAPI | Nhẹ, phổ biến trong FastAPI |
+| Request/response schema | Pydantic | `2.9.2` | Validate schema API và nội bộ | Giảm lỗi dữ liệu sai kiểu |
+| Settings management | pydantic-settings | `2.6.1` | Nạp `.env`, env var và config | Tập trung cấu hình runtime |
+| Multipart upload | python-multipart | `0.0.17` | Nhận file upload | Bắt buộc cho FastAPI multipart |
+| HTTP client | httpx | `0.27.2` | Gọi LLM/Ollama/API nội bộ | Hỗ trợ async và timeout |
+| YAML config | PyYAML | `6.0.2` | Đọc model/retrieval/guardrail/logging config | Tách config khỏi code |
+| Rate limiting | slowapi | `0.1.9` | Giới hạn request query/compare | Bảo vệ endpoint tốn tài nguyên |
+| Logging | Python logging + YAML dictConfig | `config/logging_config.yaml` | Log console structured cơ bản | Dễ chuyển sang centralized logging |
+| CORS | FastAPI CORSMiddleware | Built-in | Cho frontend local gọi API | Origin lấy từ settings |
+
+#### 18.13.3 Persistence và data infrastructure
+
+| Thành phần | Công nghệ | Phiên bản | Vai trò | Dữ liệu lưu |
+|---|---|---:|---|---|
+| Metadata database | MongoDB | Atlas/local, version không cố định trong repo | Lưu metadata bán cấu trúc | materials, pages, chunks, graph, memory, logs |
+| Python Mongo driver | Motor | `3.6.0` | Async MongoDB driver | Dùng dưới Beanie |
+| ODM | Beanie | `1.26.0` | Mapping Pydantic document sang MongoDB | Index model, query document |
+| Vector database | Qdrant | Docker `qdrant/qdrant:v1.12.4` | Lưu dense/sparse vector và payload | Collection `agentbook_chunks` |
+| Qdrant client | qdrant-client | `1.12.1` | Tạo collection, upsert/search vector | Khớp Qdrant 1.12.x |
+| Queue broker | Redis | Docker `redis:7.4-alpine` | Celery broker | Queue parse/index |
+| Result backend/cache | Redis | `redis 5.2.0` client | Celery result backend và cache nhẹ | DB 0 broker, DB 1 result |
+| File storage | Local filesystem | `./data` mount vào container | Raw files, processed artifacts, cache | MVP/local-first |
+| Vector storage | Qdrant local volume | `./data/vectordb` | Qdrant persistent storage | Mount vào `/qdrant/storage` |
+
+#### 18.13.4 Async job và pipeline orchestration
+
+| Thành phần | Công nghệ | Phiên bản | Vai trò | Ghi chú |
+|---|---|---:|---|---|
+| Job queue | Celery | `5.4.0` | Chạy parse/index ngoài request | Worker command dùng pool `solo` |
+| Broker | Redis | `7.4-alpine` service | Nhận task từ API | Docker service `redis` |
+| Result backend | Redis | DB 1 | Lưu kết quả/trạng thái task | Tách khỏi broker DB 0 |
+| Pipeline state | MongoDB `pipeline_jobs` | Beanie document | Theo dõi stage, failed stage, error | UI đọc status/progress |
+| Eager mode | Celery eager config | Env `AGENTBOOK_CELERY_TASK_ALWAYS_EAGER` | Chạy đồng bộ khi local/test | Hữu ích cho smoke test |
+
+#### 18.13.5 Document processing stack
+
+| Bài toán | Công nghệ/module | Dependency | Vai trò | Ghi chú |
+|---|---|---|---|---|
+| PDF/DOCX/PPTX parsing | Docling parser | `docling` | Layout-aware parse, table, figure, reading order | Parser chính cho tài liệu văn bản |
+| PDF text fallback | pypdf | `pypdf` | Đọc text PDF khi cần fallback | Giảm phụ thuộc OCR khi PDF có text layer |
+| Spreadsheet parsing | Custom parser + openpyxl/xlrd | `openpyxl`, `xlrd` | Parse XLSX/XLS/CSV thành summary/table/row text | Phù hợp retrieval trên dữ liệu bảng |
+| OCR chính cho tiếng Việt | EasyOCR engine | `easyocr` | OCR ảnh tiếng Việt với dấu | Code hiện mô tả EasyOCR là primary cho Vietnamese images |
+| OCR/Paddle branch | PaddleOCR-compatible engine | Cần `paddleocr`, `paddlepaddle` nếu bật | OCR printed image/PDF scan theo PP-OCR config | Config có model PP-OCRv5; dependency chưa pin trong `requirements.txt` |
+| Image preprocessing | OpenCV + NumPy | `opencv-python`, `numpy` | Enhance, binarize, grayscale, blur/contrast/skew checks | Cải thiện input trước OCR |
+| Language detection | Custom language detector | Nội bộ | Detect `vi`, `en`, `unknown` theo block/document | Dùng cho routing và metadata |
+| Layout normalization | Custom normalizer | Nội bộ | Sort reading order, merge fragments, chuẩn hóa block | Nền cho evidence và chunking |
+| Evidence mapping | Custom mapper | Nội bộ | Tạo evidence refs từ page/block/bbox | Bảo toàn citation |
+| Figure captioning | VLM qua Ollama nếu có | HTTP/Ollama | Caption figure block cần mô tả | Fallback im lặng nếu không có vision model |
+| Handwriting gate | Custom quality + confidence gate | OpenCV/LLM tùy runtime | Chặn ảnh viết tay chất lượng thấp | Không index mọi ảnh viết tay một cách mù quáng |
+
+#### 18.13.6 AI, RAG và inference stack
+
+| Thành phần | Công nghệ/model | Cấu hình hiện tại | Vai trò | Ghi chú |
+|---|---|---|---|---|
+| Embedding model | BAAI BGE-M3 | `BAAI/bge-m3`, dense size 1024 | Sinh dense và sparse embeddings | Hợp multilingual/hybrid retrieval |
+| Embedding runtime | FlagEmbedding | `FlagEmbedding >=1.4.0` | Chạy BGE-M3 | Có thể dùng CPU/GPU tùy config |
+| Sentence embedding utils | sentence-transformers | `>=2.7.0` | Hỗ trợ embedding/reranking ecosystem | Dependency phụ trợ |
+| Transformer runtime | Hugging Face Transformers | `>=4.49,<4.53` | Model tokenizer/transformer backend | Pin range để tránh breaking change |
+| Vector retrieval | Qdrant dense search | `dense_top_k=20` | Semantic candidate retrieval | Cosine distance |
+| Sparse retrieval | BGE-M3 sparse + Qdrant sparse | `sparse_top_k=20` | Lexical candidate retrieval | Tốt cho thuật ngữ/tên riêng |
+| Fusion | Reciprocal Rank Fusion | `rrf_k=60` | Hợp nhất dense/sparse/graph candidates | Giảm lệch do một retriever |
+| Reranker | BGE reranker v2 M3 | `BAAI/bge-reranker-v2-m3` | Xếp lại candidate trước prompt | Tăng precision |
+| Query rewriting | LLM-based rewriter | `query_rewriter_enabled=true` | Multi-query/RAG-Fusion | Thay dictionary VI-EN cứng |
+| Graph retrieval | Custom graph retriever | `graph_top_k=10`, `graph_max_hops=2` | Mở rộng evidence theo entity/relation | Hỗ trợ multi-hop/cross-doc |
+| LLM local | Ollama-compatible local model | Config `qwen2.5:3b`, Docker override `qwen3:4b` | Answer synthesis, summary, rewrite | Local-first, ít phụ thuộc API |
+| LLM fallback | OpenAI-compatible API | `gpt-4o-mini`, base URL configurable | Dự phòng hoặc nâng chất lượng | Cần API key nếu bật |
+| Prompting | Text prompt templates | `qa_grounded`, `summarization`, `off_topic`, `chitchat` | Kiểm soát answer grounded | Tách prompt khỏi code |
+| Guardrails | Confidence scorer, claim verifier, contradiction detector | Ngưỡng trong guardrails config | Refusal và hậu kiểm | Giảm hallucination |
+| Memory | Window context + summary memory | MongoDB-backed | Giữ ngữ cảnh hội thoại | Scope theo owner/collection/conversation |
+
+#### 18.13.7 Frontend stack
+
+| Thành phần | Công nghệ | Phiên bản | Vai trò | Ghi chú |
+|---|---|---:|---|---|
+| UI framework | React | `18.3.1` | Xây giao diện workspace | Component-based |
+| DOM renderer | React DOM | `18.3.1` | Render React app | Đồng bộ React 18 |
+| Build tool/dev server | Vite | `6.0.1` | Dev server và production build | Build nhanh |
+| Vite React plugin | @vitejs/plugin-react | `4.3.4` | React Fast Refresh/build support | Nằm trong dependencies |
+| Routing | react-router-dom | `6.28.0` | Điều hướng page/workspace | Client-side routing |
+| Graph visualization | React Flow | `11.11.4` | Graph canvas, mindmap | Trực quan hóa node/edge |
+| Graph layout | @dagrejs/dagre | `3.0.0` | Auto-layout graph | Hỗ trợ mindmap/graph readable |
+| Icons | lucide-react | `0.468.0` | Icon UI | Nhẹ, consistent |
+| CSS framework | Tailwind CSS | `3.4.15` | Utility styling | Kèm PostCSS/autoprefixer |
+| CSS tooling | PostCSS | `8.4.49` | CSS processing | Dùng với Tailwind |
+| Browser compatibility | autoprefixer | `10.4.20` | Tự thêm vendor prefixes | Build CSS |
+| Markdown render | Custom renderer | Nội bộ | Render answer formatted | Có thể gắn citation/snippet |
+| Error boundary | Custom component | Nội bộ | Chặn lỗi UI component | Tăng robustness |
+
+#### 18.13.8 Testing, evaluation và tooling
+
+| Nhóm | Công nghệ | Phiên bản/nguồn | Vai trò |
+|---|---|---|---|
+| Backend unit/integration test | pytest | `8.3.4` | Test API, processing, RAG, inference |
+| Async test | pytest-asyncio | `0.24.0` | Test coroutine/service async |
+| Frontend test runner | Vitest | `4.1.5` | Test React/TS |
+| DOM test env | jsdom | `29.1.0` | Browser-like test environment |
+| React testing | Testing Library | `@testing-library/*` | Test component/user event |
+| Evaluation scripts | Custom Python evaluation | `evaluation/run_eval.py` | Recall@K, MRR, nDCG, ablation |
+| Ablation configs | YAML configs | `evaluation/ablation_configs` | So sánh hybrid/vector, rerank/no-rerank, graph/no-graph |
+| Smoke corpus | Sample documents | `data/test data` | Test pipeline thực tế với PDF/PPTX/DOCX/XLSX/ảnh |
+
+#### 18.13.9 Configuration stack
+
+| File cấu hình | Nội dung | Vai trò |
+|---|---|---|
+| `config/model_config.yaml` | LLM, embedding, reranker, OCR, PDF render | Điều khiển model/runtime |
+| `config/retrieval_config.yaml` | Qdrant collection, top-k, RRF, chunking | Điều khiển retrieval/indexing |
+| `config/guardrails_config.yaml` | Upload allowlist, refusal threshold, image quality | Điều khiển safety/gate |
+| `config/logging_config.yaml` | Format, handler, log level | Điều khiển logging |
+| `backend/.env` | MongoDB URI, API key, runtime env | Secret và environment-specific config |
+| `docker-compose.yml` | API, worker, Qdrant, Redis | Local orchestration |
+| `frontend/package.json` | Dependency và scripts frontend | Build/dev/test frontend |
+| `backend/requirements.txt` | Dependency backend | Reproducible Python install |
+
+#### 18.13.10 Deployment và vận hành
+
+| Thành phần | Công nghệ | Cấu hình hiện tại | Vai trò |
+|---|---|---|---|
+| API container | Docker build từ `backend/Dockerfile` | Expose `127.0.0.1:8000` | Chạy FastAPI |
+| Worker container | Cùng image backend | Celery worker `--pool=solo` | Parse/index nền |
+| Vector DB container | Qdrant | Expose `127.0.0.1:6333/6334` | Vector search |
+| Broker container | Redis | Expose `127.0.0.1:6379`, appendonly yes | Queue/cache |
+| Healthcheck | Python urllib call `/health` | 30s interval, 5s timeout | Kiểm tra API alive |
+| Data mount | `./data:/app/data` | Shared API/worker | Raw + processed data |
+| Config mount | `./config:/app/config:ro` | Read-only config | Tránh sửa config trong container |
+| Local LLM bridge | `host.docker.internal:11434` | Ollama trên host | Cho container gọi model local |
+
+#### 18.13.11 Stack theo luồng xử lý
+
+| Luồng | Stack tham gia | Kết quả |
+|---|---|---|
+| Upload tài liệu | FastAPI, python-multipart, security validator, MongoDB, Celery, Redis | File hợp lệ, material record, pipeline job |
+| Parse PDF/DOCX/PPTX | Celery, Docling, pypdf fallback, layout normalizer, MongoDB | Page/block/evidence metadata |
+| Parse ảnh scan | OpenCV, EasyOCR/PaddleOCR branch, OCR quality gate, language detector | OCR blocks có bbox/confidence |
+| Parse bảng tính | Spreadsheet parser, openpyxl/xlrd, Markdown/table verbalization | Sheet/table chunks dễ retrieve |
+| Chunk và enrich | Layout-aware/semantic chunker, BGE-M3 embedder, contextual enricher | Chunk giàu ngữ cảnh |
+| Index | Beanie/MongoDB, Qdrant client, BGE-M3 dense/sparse | Chunk metadata + vector points |
+| Hỏi đáp | FastAPI, query router, hybrid retriever, graph retriever, reranker, LLM, verifier | Answer grounded có citation |
+| Graph/mindmap | Entity/event/relation extractor, MongoDB graph store, React Flow | Knowledge graph trực quan |
+| Frontend workspace | React, Vite, Router, React Flow, Tailwind, API client | UI chat/source/evidence/graph |
+
+Kết luận technical của phụ lục: hệ thống đã có kiến trúc module đủ rõ để bảo trì và mở rộng. Rủi ro lớn nhất không nằm ở thiếu thành phần RAG lõi, mà nằm ở hardening production: auth, observability, eval chuẩn hóa, backup và tối ưu vận hành cho corpus lớn.

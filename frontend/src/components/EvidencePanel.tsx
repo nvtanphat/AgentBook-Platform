@@ -77,13 +77,19 @@ function BlockTypeBadge({ type }: { type: string }) {
 
 function ConfidenceBar({ value }: { value: number }) {
   const pct = Math.round(value * 100);
-  const color = pct >= 70 ? "bg-emerald-400" : pct >= 40 ? "bg-yellow-400" : "bg-red-400";
+  const { barColor, textColor, tier } =
+    pct >= 70
+      ? { barColor: "bg-emerald-400", textColor: "text-emerald-600", tier: "High" }
+      : pct >= 40
+      ? { barColor: "bg-yellow-400",  textColor: "text-yellow-600",  tier: "Med"  }
+      : { barColor: "bg-red-400",     textColor: "text-red-500",     tier: "Low"  };
   return (
     <div className="flex items-center gap-1.5">
-      <div className="h-1.5 w-16 overflow-hidden rounded-full bg-slate-200">
-        <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
+      <div className="h-1.5 w-14 overflow-hidden rounded-full bg-slate-200">
+        <div className={`h-full rounded-full ${barColor}`} style={{ width: `${pct}%` }} />
       </div>
-      <span className="text-[10px] font-semibold text-muted">{pct}%</span>
+      <span className={`text-[10px] font-bold tabular-nums ${textColor}`}>{pct}%</span>
+      <span className="text-[9px] font-semibold uppercase tracking-wide text-muted/70">{tier}</span>
     </div>
   );
 }
@@ -121,30 +127,42 @@ function MatchedSnippet({ citation }: { citation: Citation }) {
     ? lines.slice(0, SNIPPET_COLLAPSE_LINES).join("\n") + "…"
     : citation.snippet_original;
 
+  const rolePill = citation.role === "primary"
+    ? <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-primary">Primary</span>
+    : citation.role === "supporting"
+    ? <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-muted">Supporting</span>
+    : null;
+
   return (
     <div className="shrink-0 border-b border-outline bg-slate-50 px-4 py-3">
-      <div className="mb-1.5 flex items-center justify-between">
-        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted">Matched snippet</p>
-        <CopyButton text={citation.snippet_original} />
+      <div className="mb-2 flex items-center gap-2">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted">Grounded evidence</p>
+        {rolePill}
+        <div className="ml-auto">
+          <CopyButton text={citation.snippet_original} />
+        </div>
       </div>
-      <div className="border-l-2 border-secondary pl-3">
-        <SnippetRenderer
-          text={text}
-          blockType={citation.block_type ?? undefined}
-          maxRows={SNIPPET_COLLAPSE_LINES}
-          textClassName="text-xs leading-5 text-text"
-        />
+      <div className="rounded-md border border-secondary/30 bg-white px-3 py-2">
+        <div className="border-l-2 border-secondary pl-2">
+          <SnippetRenderer
+            text={text}
+            blockType={citation.block_type ?? undefined}
+            maxRows={SNIPPET_COLLAPSE_LINES}
+            textClassName="text-xs leading-5 text-text"
+          />
+        </div>
+        {isLong && (
+          <button
+            onClick={() => setExpanded((v) => !v)}
+            className="mt-1.5 flex items-center gap-1 text-[11px] font-semibold text-primary hover:opacity-70"
+          >
+            {expanded ? <><ChevronUp size={12} /> Show less</> : <><ChevronDown size={12} /> Show more</>}
+          </button>
+        )}
       </div>
-      {isLong && (
-        <button
-          onClick={() => setExpanded((v) => !v)}
-          className="mt-1.5 flex items-center gap-1 text-[11px] font-semibold text-primary hover:opacity-70"
-        >
-          {expanded ? <><ChevronUp size={12} /> Show less</> : <><ChevronDown size={12} /> Show more</>}
-        </button>
-      )}
       {citation.snippet_translated && (
-        <div className="mt-2 rounded bg-white p-2 text-xs italic text-muted leading-5">
+        <div className="mt-2 rounded border border-dashed border-outline bg-white px-3 py-2 text-xs italic leading-5 text-muted">
+          <span className="mr-1.5 not-italic text-[9px] font-bold uppercase tracking-wide text-muted/60">VI</span>
           {citation.snippet_translated}
         </div>
       )}
@@ -360,27 +378,33 @@ function CitationNav({
   onSelect: (i: number) => void;
 }) {
   if (citations.length <= 1) return null;
+  const cur = citations[currentIndex];
   return (
-    <div className="flex shrink-0 items-center justify-between border-b border-outline bg-white px-4 py-2">
-      <span className="text-[11px] font-semibold text-muted">
-        Citation {currentIndex + 1} / {citations.length}
-      </span>
-      <div className="flex items-center gap-1">
-        <button
-          disabled={currentIndex === 0}
-          onClick={() => onSelect(currentIndex - 1)}
-          className="flex h-6 w-6 items-center justify-center rounded border border-outline text-muted hover:text-text disabled:opacity-30"
-        >
-          <ChevronLeft size={13} />
-        </button>
-        <button
-          disabled={currentIndex === citations.length - 1}
-          onClick={() => onSelect(currentIndex + 1)}
-          className="flex h-6 w-6 items-center justify-center rounded border border-outline text-muted hover:text-text disabled:opacity-30"
-        >
-          <ChevronRight size={13} />
-        </button>
+    <div className="flex shrink-0 items-center gap-2 border-b border-outline bg-white px-4 py-2">
+      <button
+        disabled={currentIndex === 0}
+        onClick={() => onSelect(currentIndex - 1)}
+        className="flex h-6 w-6 shrink-0 items-center justify-center rounded border border-outline text-muted hover:text-text disabled:opacity-30"
+      >
+        <ChevronLeft size={13} />
+      </button>
+      <div className="min-w-0 flex-1 text-center">
+        <p className="truncate text-[10px] font-semibold text-text" title={cur?.doc_name}>
+          {cur?.doc_name ?? "—"}
+        </p>
+        <p className="text-[9px] text-muted">
+          [{currentIndex + 1}/{citations.length}]
+          {cur?.page ? ` · p.${cur.page}` : ""}
+          {cur?.role ? ` · ${cur.role}` : ""}
+        </p>
       </div>
+      <button
+        disabled={currentIndex === citations.length - 1}
+        onClick={() => onSelect(currentIndex + 1)}
+        className="flex h-6 w-6 shrink-0 items-center justify-center rounded border border-outline text-muted hover:text-text disabled:opacity-30"
+      >
+        <ChevronRight size={13} />
+      </button>
     </div>
   );
 }
@@ -458,11 +482,6 @@ export default function EvidencePanel({ citation: citationProp, docId: docIdProp
   }
 
   const docName = pageData?.doc_name ?? citation?.doc_name ?? "Evidence";
-  const roleBadge = citation?.role === "primary"
-    ? <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold text-primary">Primary</span>
-    : citation?.role === "supporting"
-    ? <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-muted">Supporting</span>
-    : null;
 
   return (
     <aside className="panel flex h-full flex-col bg-surface-low">
@@ -473,14 +492,27 @@ export default function EvidencePanel({ citation: citationProp, docId: docIdProp
             <FileText size={14} className="shrink-0 text-primary" />
             <h3 className="truncate text-sm font-semibold text-text" title={docName}>{docName}</h3>
           </div>
-          <div className="mt-1 flex items-center gap-2 pl-5">
-            {targetPage && <span className="text-[11px] text-muted">Page {targetPage}</span>}
+          {/* Source chain breadcrumb */}
+          <div className="mt-1.5 flex items-center gap-1 pl-5">
             {citation?.source_language && (
-              <span className="rounded bg-slate-100 px-1 py-0.5 text-[10px] font-bold text-muted">
-                {citation.source_language.toUpperCase()}
+              <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-muted">
+                {citation.source_language}
               </span>
             )}
-            {roleBadge}
+            {targetPage && (
+              <>
+                <ChevronRight size={9} className="text-muted/40" />
+                <span className="text-[10px] font-semibold text-muted">p.{targetPage}</span>
+              </>
+            )}
+            {highlightBlockId && (
+              <>
+                <ChevronRight size={9} className="text-muted/40" />
+                <span className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[9px] text-muted">
+                  {highlightBlockId.slice(-8)}
+                </span>
+              </>
+            )}
           </div>
         </div>
         {citation && (

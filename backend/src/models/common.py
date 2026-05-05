@@ -12,6 +12,8 @@ class PipelineStatus(StrEnum):
     UPLOADED = "uploaded"
     PARSING = "parsing"
     PARSED = "parsed"
+    CHUNKING = "chunking"
+    EMBEDDING = "embedding"
     INDEXING = "indexing"
     INDEXED = "indexed"
     FAILED = "failed"

@@ -4,7 +4,7 @@ from pathlib import Path
 
 from src.core.config import Settings
 from src.processing.image_quality_checker import ImageQualityChecker
-from src.processing.ocr_engine import PaddleOCREngine
+from src.processing.ocr_engine import EasyOCREngine
 from src.processing.types import BlockType, ParsedDocument
 
 
@@ -14,11 +14,11 @@ class HandwritingReader:
         *,
         settings: Settings,
         quality_checker: ImageQualityChecker | None = None,
-        ocr_engine: PaddleOCREngine | None = None,
+        ocr_engine: EasyOCREngine | None = None,
     ) -> None:
         self.settings = settings
         self.quality_checker = quality_checker or ImageQualityChecker(settings)
-        self.ocr_engine = ocr_engine or PaddleOCREngine(lang="vi", settings=settings)
+        self.ocr_engine = ocr_engine or EasyOCREngine(lang="vi")
 
     def parse_image(self, image_path: Path, *, language: str = "vi") -> ParsedDocument:
         quality = self.quality_checker.check(image_path)

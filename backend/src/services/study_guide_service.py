@@ -3,6 +3,9 @@ from __future__ import annotations
 import logging
 import re
 
+_MD_BOLD = re.compile(r"\*{1,2}(.+?)\*{1,2}")
+_MD_CLEAN = re.compile(r"[`_~]")
+
 from src.core.base_llm import BaseLLM
 from src.core.config import Settings
 from src.core.model_factory import build_llm
@@ -59,7 +62,6 @@ class StudyGuideService:
         reranked = self.reranker.rerank(query=query, chunks=retrieved, limit=request.top_k or self.settings.final_top_k)
         confidence = self.confidence_scorer.score(reranked)
         citations = self.response_parser.citations_from_chunks(reranked)
-        concepts = self._key_concepts("\n".join(chunk.content for chunk in reranked))
         if not reranked:
             return StudyGuideResponse(
                 overview=_REFUSAL_TEXT,
@@ -98,13 +100,19 @@ class StudyGuideService:
         if not key_concepts:
             key_concepts = await self._extract_concepts_llm(evidence_text, request.owner_id)
 
+        from src.inference.response_parser import _fix_numbered_lists
         return StudyGuideResponse(
-            overview=overview or _REFUSAL_TEXT,
+            overview=_fix_numbered_lists(overview or _REFUSAL_TEXT),
             key_concepts=key_concepts[:10],
-            outline=outline[:12],
+            outline=[_fix_numbered_lists(item) for item in outline[:12]],
             citations=citations,
             confidence=confidence,
         )
+
+    @staticmethod
+    def _strip_md(text: str) -> str:
+        text = _MD_BOLD.sub(r"\1", text)
+        return _MD_CLEAN.sub("", text).strip()
 
     @staticmethod
     def _parse_guide_output(raw: str) -> tuple[str, list[str], list[str]]:
@@ -124,13 +132,13 @@ class StudyGuideService:
             elif "dàn ý" in low or "outline" in low:
                 current = "outline"
             elif current == "overview":
-                overview += (" " if overview else "") + stripped
+                overview += (" " if overview else "") + StudyGuideService._strip_md(stripped)
             elif current == "concepts" and stripped.startswith("-"):
-                val = stripped.lstrip("- ").strip()
+                val = StudyGuideService._strip_md(stripped.lstrip("- "))
                 if val:
                     key_concepts.append(val)
             elif current == "outline" and (stripped[0].isdigit() or stripped.startswith("-")):
-                val = stripped.lstrip("0123456789.- ").strip()
+                val = StudyGuideService._strip_md(stripped.lstrip("0123456789.- "))
                 if val:
                     outline.append(val)
         return overview.strip(), key_concepts, outline

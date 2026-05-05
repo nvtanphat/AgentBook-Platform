@@ -1,6 +1,6 @@
 import { DragEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, BookOpen, CheckCircle2, FileText, Image, Loader2, Plus, RefreshCw, Search, Table2, Trash2, UploadCloud, X } from "lucide-react";
-import { CollectionSummary, MaterialInfo, MaterialUploadMetadata, createCollection, deleteCollection, deleteMaterial, getMaterialStatus, listCollections, listMaterials, uploadMaterialsBatchWithProgress } from "../../api/client";
+import { CollectionSummary, MaterialInfo, MaterialUploadMetadata, createCollection, deleteCollection, deleteMaterial, getMaterialStatus, listCollections, listMaterials, retryMaterial, uploadMaterialsBatchWithProgress } from "../../api/client";
 import StatusBadge from "../StatusBadge";
 import { useWorkspace } from "../../state/workspace";
 import DebugModal from "./DebugModal";
@@ -38,6 +38,99 @@ function getFileIconInfo(filename: string, fileType = ""): FileIconInfo {
   if (name.endsWith(".pptx") || name.endsWith(".ppt") || mime.includes("presentation"))
     return { icon: <FileText size={14} />, colorClass: "text-amber-500" };
   return { icon: <FileText size={14} />, colorClass: "text-primary" };
+}
+
+// ─── Pipeline stage → progress % ─────────────────────────────────────────────
+
+const STAGE_PCT: Record<string, number> = {
+  uploaded:  8,
+  parsing:   20,
+  parsed:    38,
+  chunking:  52,
+  embedding: 66,
+  indexing:  82,
+  indexed:   100,
+  failed:    0,
+};
+
+function stagePct(status: string, stage?: string | null): number {
+  const key = (stage || status || "").toLowerCase();
+  return STAGE_PCT[key] ?? STAGE_PCT[status?.toLowerCase()] ?? 10;
+}
+
+// ─── Smooth real-time progress hook ──────────────────────────────────────────
+
+function useSmoothedProgress(status: string, stage: string | null): number {
+  const target = stagePct(status, stage);
+
+  // Find the next stage's % so we know where to stop creeping
+  const sortedStages = Object.entries(STAGE_PCT).sort((a, b) => a[1] - b[1]);
+  const ceiling = (() => {
+    const above = sortedStages.filter(([, v]) => v > target);
+    return above.length > 0 ? above[0][1] - 2 : target;
+  })();
+
+  const [displayed, setDisplayed] = useState<number>(target);
+
+  // Jump forward immediately when a real stage change arrives
+  useEffect(() => {
+    setDisplayed((prev) => Math.max(prev, target));
+  }, [target]);
+
+  // Creep slowly within stage (~0.2% per 600ms ≈ fills gap in ~1 min)
+  useEffect(() => {
+    const terminal = status === "indexed" || status === "failed";
+    if (terminal) return;
+    const id = setInterval(() => {
+      setDisplayed((prev) => (prev < ceiling ? +(prev + 0.2).toFixed(1) : prev));
+    }, 600);
+    return () => clearInterval(id);
+  }, [ceiling, status]);
+
+  return Math.min(Math.round(displayed), 99); // never show 100 until truly indexed
+}
+
+// ─── Circular progress ring ───────────────────────────────────────────────────
+
+function CircularProgress({ status, stage }: { status: string; stage?: string | null }) {
+  const SIZE   = 32;
+  const STROKE = 3.2;
+  const r      = (SIZE - STROKE) / 2;
+  const circ   = 2 * Math.PI * r;
+
+  const pct  = useSmoothedProgress(status, stage ?? null);
+  const dash = (pct / 100) * circ;
+
+  const isTerminal = status === "indexed" || status === "failed";
+  const realPct    = isTerminal ? stagePct(status, stage ?? null) : pct;
+  const color      = realPct === 0 ? "#ef4444" : realPct >= 100 ? "#10b981" : "#f59e0b";
+  const label      = stage || status || "";
+
+  return (
+    <div
+      className="relative shrink-0 mt-0.5"
+      style={{ width: SIZE, height: SIZE }}
+      title={`${label} — ${realPct}%`}
+    >
+      <svg width={SIZE} height={SIZE} style={{ transform: "rotate(-90deg)" }}>
+        <circle cx={SIZE / 2} cy={SIZE / 2} r={r} fill="none" stroke="#e2e8f0" strokeWidth={STROKE} />
+        <circle
+          cx={SIZE / 2} cy={SIZE / 2} r={r}
+          fill="none"
+          stroke={color}
+          strokeWidth={STROKE}
+          strokeDasharray={`${(realPct / 100) * circ} ${circ}`}
+          strokeLinecap="round"
+        />
+      </svg>
+      <span
+        className="absolute inset-0 flex items-center justify-center font-bold tabular-nums"
+        style={{ fontSize: 7, color, letterSpacing: "-0.02em" }}
+      >
+        {realPct}%
+      </span>
+    </div>
+  );
 }
 
 function detectLanguage(filename: string): string {
@@ -82,6 +175,7 @@ export default function SourcesPanel({ onCloseMobile }: { onCloseMobile?: () => 
   const [deletingMaterial, setDeletingMaterial] = useState<string | null>(null);
   const [confirmDeleteMaterial, setConfirmDeleteMaterial] = useState<string | null>(null);
   const [debugMaterial, setDebugMaterial] = useState<MaterialInfo | null>(null);
+  const [retryingMaterial, setRetryingMaterial] = useState<string | null>(null);
 
   const loadCollections = useCallback(async () => {
     setLoadingCollections(true);
@@ -90,8 +184,12 @@ export default function SourcesPanel({ onCloseMobile }: { onCloseMobile?: () => 
       setCollections(items);
       const currentStillExists = items.some((c) => c.collection_id === workspace.collectionId);
       if (workspace.collectionId && !currentStillExists) {
-        // Stale collectionId (e.g. deleted) — clear it so uploads create a new collection
         updateWorkspace({ collectionId: "", collectionName: "" });
+      } else if (workspace.collectionId && !workspace.collectionName) {
+        const current = items.find((c) => c.collection_id === workspace.collectionId);
+        if (current) {
+          updateWorkspace({ collectionName: current.name, subject: current.subject ?? workspace.subject });
+        }
       } else if (!workspace.collectionId && !didAutoSelectCollectionRef.current) {
         const best = [...items]
           .filter((c) => c.retrievable_chunk_count > 0)
@@ -334,6 +432,20 @@ export default function SourcesPanel({ onCloseMobile }: { onCloseMobile?: () => 
     }
   }
 
+  async function handleRetryMaterial(materialId: string) {
+    setRetryingMaterial(materialId);
+    setError(null);
+    try {
+      await retryMaterial(materialId, workspace.ownerId);
+      setSuccess("Pipeline retry queued.");
+      await loadMaterialsFromServer(workspace.collectionId || null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Retry failed.");
+    } finally {
+      setRetryingMaterial(null);
+    }
+  }
+
   const selectedCollection = collections.find((c) => c.collection_id === workspace.collectionId);
 
   const displayMaterials = [...serverMaterials, ...sessionOnlyMaterials.map((m) => ({
@@ -572,7 +684,7 @@ export default function SourcesPanel({ onCloseMobile }: { onCloseMobile?: () => 
               return (
               <div key={item.material_id} className={`flex items-start gap-2 p-2 rounded-lg hover:bg-black/5 bg-white border transition group ${isPending ? "border-amber-200 bg-amber-50/50" : "border-transparent hover:border-outline"}`}>
                 {isPending
-                  ? <Loader2 size={14} className="mt-0.5 shrink-0 animate-spin text-amber-500" />
+                  ? <CircularProgress status={item.status} stage={(item as any).stage ?? null} />
                   : (() => { const fi = getFileIconInfo(item.original_name, item.file_type); return <span className={`mt-0.5 shrink-0 ${fi.colorClass}`}>{fi.icon}</span>; })()}
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-xs font-semibold text-text" title={item.original_name}>{item.original_name}</p>
@@ -591,6 +703,18 @@ export default function SourcesPanel({ onCloseMobile }: { onCloseMobile?: () => 
                       className="rounded p-1 text-muted hover:bg-primary/10 hover:text-primary"
                     >
                       <Search size={11} />
+                    </button>
+                  )}
+                  {(item.status === "failed" || item.status === "parsed" || item.status === "parsing" || item.status === "chunking" || item.status === "embedding") && (
+                    <button
+                      type="button"
+                      onClick={() => handleRetryMaterial(item.material_id)}
+                      disabled={retryingMaterial === item.material_id}
+                      title="Retry pipeline"
+                      aria-label={`Thử lại pipeline cho ${item.original_name}`}
+                      className="rounded p-1 text-muted hover:bg-amber-50 hover:text-amber-600 disabled:opacity-50"
+                    >
+                      {retryingMaterial === item.material_id ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
                     </button>
                   )}
                   {confirmDeleteMaterial === item.material_id ? (

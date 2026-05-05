@@ -103,23 +103,42 @@ class BGEM3Embedder:
     def encode(self, texts: list[str]) -> list[EmbeddedText]:
         if not texts:
             return []
+        batch_size = max(1, self.settings.embedding_batch_size)
+        max_length = max(1, self.settings.embedding_max_length)
         logger.info(
             "Encoding chunks with BGE-M3",
             extra={
                 "text_count": len(texts),
-                "batch_size": self.settings.embedding_batch_size,
-                "max_length": self.settings.embedding_max_length,
+                "batch_size": batch_size,
+                "max_length": max_length,
                 "device": self.settings.embedding_device,
             },
         )
-        output = self.model.encode(
-            texts,
-            batch_size=max(1, self.settings.embedding_batch_size),
-            max_length=max(1, self.settings.embedding_max_length),
-            return_dense=True,
-            return_sparse=True,
-            return_colbert_vecs=False,
-        )
+        # Retry with halved batch size on OOM to survive low-RAM environments
+        for attempt in range(4):
+            try:
+                output = self.model.encode(
+                    texts,
+                    batch_size=batch_size,
+                    max_length=max_length,
+                    return_dense=True,
+                    return_sparse=True,
+                    return_colbert_vecs=False,
+                )
+                break
+            except (MemoryError, RuntimeError) as exc:
+                if batch_size <= 1:
+                    logger.error(
+                        "BGE-M3 encode OOM at batch_size=1 — cannot reduce further",
+                        extra={"error": str(exc)},
+                    )
+                    raise
+                batch_size = max(1, batch_size // 2)
+                logger.warning(
+                    "BGE-M3 encode OOM, retrying with batch_size=%d", batch_size,
+                    extra={"attempt": attempt + 1, "error": str(exc)},
+                )
+
         dense_vectors = output.get("dense_vecs", [])
         sparse_vectors = output.get("lexical_weights", [])
         embeddings: list[EmbeddedText] = []

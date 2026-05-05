@@ -156,6 +156,14 @@ export type QueryRequest = {
   answer_language?: string | null;
 };
 
+export type ReasoningStep = {
+  step_type: 'retrieve' | 'traverse' | 'synthesize';
+  entities: string[];
+  relations: string[];
+  confidence: number;
+  description: string;
+};
+
 export type QueryResponse = {
   answer: string;
   answer_language: string;
@@ -166,6 +174,7 @@ export type QueryResponse = {
   confidence: number;
   was_refused: boolean;
   refusal_reason: string | null;
+  reasoning_path: ReasoningStep[];
 };
 
 export type CompareRequest = {
@@ -217,9 +226,11 @@ export type EvidencePageResponse = {
 export type MindmapNode = {
   id: string;
   label: string;
+  entity_type?: string;  // NEW: Explicit type for better clustering
   summary: string | null;
   children: MindmapNode[];
   citations: Array<Record<string, string | number>>;
+  collapsed?: boolean;  // NEW: For collapsible branches
 };
 
 export type MindmapResponse = {
@@ -232,6 +243,9 @@ export type GraphNode = {
   label: string;
   type: string;
   confidence: number | null;
+  mention_count?: number;
+  source_docs?: string[];
+  evidence_refs?: Array<Record<string, string | number>>;
 };
 
 export type GraphEdge = {
@@ -362,6 +376,14 @@ export function deleteMaterial(materialId: string, ownerId: string) {
   return request<Record<string, number>>(`/materials/${encodeURIComponent(materialId)}?${params.toString()}`, { method: "DELETE" });
 }
 
+export function retryMaterial(materialId: string, ownerId: string) {
+  const params = new URLSearchParams({ owner_id: ownerId });
+  return request<{ material_id: string; job_id: string; status: string }>(
+    `/materials/${encodeURIComponent(materialId)}/retry?${params.toString()}`,
+    { method: "POST" },
+  );
+}
+
 export function listMaterials(ownerId: string, collectionId?: string | null) {
   const params = new URLSearchParams({ owner_id: ownerId });
   if (collectionId) params.set("collection_id", collectionId);
@@ -481,6 +503,71 @@ export function uploadMaterialsBatchWithProgress(
 
 export function askQuestion(payload: QueryRequest) {
   return apiPost<QueryResponse>("/query/ask", payload);
+}
+
+export async function askQuestionStream(
+  payload: QueryRequest,
+  callbacks: {
+    onToken: (token: string) => void;
+    onDone: (response: QueryResponse) => void;
+    onError: (message: string) => void;
+  },
+): Promise<void> {
+  const response = await fetch(`${API_V1_BASE_URL}/query/ask-stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok || !response.body) {
+    callbacks.onError(`HTTP ${response.status}`);
+    return;
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let eventType = "";
+  let dataStr = "";
+
+  const dispatchEvent = () => {
+    if (!eventType || !dataStr) return;
+    try {
+      if (eventType === "token") {
+        const parsed = JSON.parse(dataStr) as { token: string };
+        callbacks.onToken(parsed.token);
+      } else if (eventType === "done") {
+        callbacks.onDone(JSON.parse(dataStr) as QueryResponse);
+      } else if (eventType === "error") {
+        const parsed = JSON.parse(dataStr) as { message: string };
+        callbacks.onError(parsed.message);
+      }
+    } catch {
+      // malformed event — ignore
+    }
+    eventType = "";
+    dataStr = "";
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (line.startsWith("event: ")) {
+        eventType = line.slice(7).trim();
+      } else if (line.startsWith("data: ")) {
+        dataStr = line.slice(6).trim();
+      } else if (line === "") {
+        dispatchEvent();
+      }
+    }
+  }
+  // flush remaining
+  if (buffer) {
+    if (buffer.startsWith("data: ")) dataStr = buffer.slice(6).trim();
+    dispatchEvent();
+  }
 }
 
 export function compareDocuments(payload: CompareRequest) {

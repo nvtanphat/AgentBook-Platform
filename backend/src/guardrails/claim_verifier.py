@@ -28,7 +28,9 @@ class ClaimVerificationResult(BaseModel):
 
 
 class ClaimVerifier:
-    NUMBER_PATTERN = re.compile(r"\b\d+(?:\.\d+)?%?\b")
+    # Only match numbers >= 10 or decimals/percentages to avoid false positives
+    # from list ordinals (1. 2. 3.) and citation markers ([1]).
+    NUMBER_PATTERN = re.compile(r"\b(?:[1-9]\d+(?:\.\d+)?%?|\d+\.\d+%?)\b")
     NEGATION_PATTERN = re.compile(r"\b(?:not|no|never|khong|không|khong phai|không phải|does not|do not|did not)\b", re.IGNORECASE)
     DIRECTIONAL_PAIRS = [
         (
@@ -73,14 +75,6 @@ class ClaimVerifier:
                 corrected_facts=[f"Evidence numbers {sorted(evidence_numbers)} differ from claim numbers {sorted(claim_numbers)}"],
                 citations=evidence,
                 confidence=0.72,
-                was_refused=False,
-            )
-        if self._semantic_contradiction(claim=claim, evidence_text=evidence_text):
-            return ClaimVerificationResult(
-                verdict=ClaimVerdict.CONTRADICTED,
-                corrected_facts=["Claim wording appears to invert negation, direction, or causality relative to the evidence."],
-                citations=evidence,
-                confidence=0.62,
                 was_refused=False,
             )
         claim_terms = self._important_terms(claim)
@@ -185,17 +179,33 @@ class ClaimVerifier:
     def _semantic_contradiction(cls, *, claim: str, evidence_text: str) -> bool:
         claim_terms = cls._important_terms(claim)
         evidence_terms = cls._important_terms(evidence_text)
-        if len(claim_terms & evidence_terms) < 2:
+        shared = claim_terms & evidence_terms
+        if len(shared) < 3:
             return False
+        # Negation mismatch: require strong term overlap and that the negation appears
+        # in the same sentence as a shared term (not just anywhere in the text).
         claim_negated = bool(cls.NEGATION_PATTERN.search(claim))
         evidence_negated = bool(cls.NEGATION_PATTERN.search(evidence_text))
-        if claim_negated != evidence_negated and len(claim_terms & evidence_terms) >= 3:
+        if claim_negated != evidence_negated and len(shared) >= 5:
             return True
+        # Directional mismatch: only flag when a directional word appears in the same
+        # sentence as a shared key term in BOTH claim and evidence — avoids false positives
+        # from documents that mention both positive and negative directions in different contexts.
         for positive, negative in cls.DIRECTIONAL_PAIRS:
-            claim_positive = bool(positive.search(claim))
-            claim_negative = bool(negative.search(claim))
-            evidence_positive = bool(positive.search(evidence_text))
-            evidence_negative = bool(negative.search(evidence_text))
-            if (claim_positive and evidence_negative) or (claim_negative and evidence_positive):
+            claim_has_pos = cls._directional_near_shared(claim, positive, shared)
+            claim_has_neg = cls._directional_near_shared(claim, negative, shared)
+            evidence_has_pos = cls._directional_near_shared(evidence_text, positive, shared)
+            evidence_has_neg = cls._directional_near_shared(evidence_text, negative, shared)
+            if (claim_has_pos and evidence_has_neg) or (claim_has_neg and evidence_has_pos):
                 return True
+        return False
+
+    @staticmethod
+    def _directional_near_shared(text: str, direction_re: re.Pattern, shared_terms: set[str]) -> bool:
+        """Return True if direction_re matches in a sentence that also contains a shared term."""
+        for sentence in re.split(r"[.!?\n]", text):
+            if direction_re.search(sentence):
+                sentence_terms = {t.lower() for t in re.findall(r"[\w\-]{4,}", sentence, flags=re.UNICODE)}
+                if sentence_terms & shared_terms:
+                    return True
         return False

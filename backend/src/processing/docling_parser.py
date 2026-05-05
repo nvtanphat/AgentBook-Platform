@@ -99,7 +99,7 @@ class DoclingParser:
     def _pdf_text_native_document(self, file_path: Path, *, language: str) -> ParsedDocument:
         pages_by_number: dict[int, list[ParsedBlock]] = {}
         self._add_pdf_text_fallback_pages(pages_by_number, file_path=file_path, language=language)
-        self._add_pdf_paddleocr_pages(pages_by_number, file_path=file_path, language=language)
+        self._add_easyocr_pages(pages_by_number, file_path=file_path, language=language)
         pages = [
             ParsedPage(page_number=page_number, blocks=sorted(page_blocks, key=lambda block: block.reading_order))
             for page_number, page_blocks in sorted(pages_by_number.items())
@@ -128,7 +128,8 @@ class DoclingParser:
             ocr_batch_size=1,
             layout_batch_size=1,
             table_batch_size=1,
-            queue_max_size=8,
+            queue_max_size=2,   # reduced to limit memory pressure from large PDFs
+            images_scale=1.0,   # default; can lower to 0.5 to further reduce RAM
         )
         return DocumentConverter(format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pdf_options)})
 
@@ -157,7 +158,7 @@ class DoclingParser:
             pages_by_number.setdefault(block.page_number, []).append(block)
         if extension == "pdf":
             self._add_pdf_text_fallback_pages(pages_by_number, file_path=file_path, language=language)
-            self._add_pdf_paddleocr_pages(pages_by_number, file_path=file_path, language=language)
+            self._add_easyocr_pages(pages_by_number, file_path=file_path, language=language)
         if not pages_by_number:
             return [ParsedPage(page_number=1, blocks=[])]
         return [
@@ -168,7 +169,7 @@ class DoclingParser:
     def _pdf_text_fallback_document(self, file_path: Path, *, language: str, parser_error: Exception) -> ParsedDocument:
         pages_by_number: dict[int, list[ParsedBlock]] = {}
         self._add_pdf_text_fallback_pages(pages_by_number, file_path=file_path, language=language)
-        self._add_pdf_paddleocr_pages(pages_by_number, file_path=file_path, language=language)
+        self._add_easyocr_pages(pages_by_number, file_path=file_path, language=language)
         pages = [
             ParsedPage(page_number=page_number, blocks=sorted(page_blocks, key=lambda block: block.reading_order))
             for page_number, page_blocks in sorted(pages_by_number.items())
@@ -280,7 +281,7 @@ class DoclingParser:
             return BlockType.HEADING.value
         return BlockType.PARAGRAPH.value
 
-    def _add_pdf_paddleocr_pages(
+    def _add_easyocr_pages(
         self,
         pages_by_number: dict[int, list[ParsedBlock]],
         *,
@@ -292,16 +293,16 @@ class DoclingParser:
         try:
             import pypdfium2 as pdfium
         except ImportError as exc:
-            raise DependencyUnavailableError("pypdfium2 is required to render scanned PDF pages for PaddleOCR") from exc
+            raise DependencyUnavailableError("pypdfium2 is required to render scanned PDF pages for OCR") from exc
 
         from src.core.config import get_settings
-        from src.processing.ocr_engine import PaddleOCREngine
+        from src.processing.ocr_engine import EasyOCREngine
 
         settings = get_settings()
         ocr_language = "vi" if language == "vi" else "en"
         output_dir = _workspace_cache_dir("pdf_page_images")
         output_dir.mkdir(parents=True, exist_ok=True)
-        engine = PaddleOCREngine(lang=ocr_language, settings=settings)
+        engine = EasyOCREngine(lang=ocr_language)
         render_scale = settings.pdf_render_scale
 
         pdf = pdfium.PdfDocument(str(file_path))

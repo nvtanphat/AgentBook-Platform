@@ -1,3 +1,4 @@
+# Python
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -5,15 +6,52 @@ __pycache__/
 .ruff_cache/
 .venv/
 venv/
+*.egg-info/
+.ipynb_checkpoints/
 
+# Node.js
+node_modules/
+dist/
+build/
+.npm
+.eslintcache
+
+# Environment
 backend/.env
 .env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
 
+# Logs
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
+# Data & Cache
 data/raw/*
 data/processed/*
 data/cache/*
 data/embeddings/*
 data/vectordb/*
+data/vectordb_local/*
 evaluation/results/*
+
+# Markdown files
+# Ignore top-level markdown files except README.md
+/*.md
+!/README.md
+# But allow markdown files in docs/
+!docs/*.md
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

@@ -6,12 +6,32 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 def project_root() -> Path:
     return Path(__file__).resolve().parents[3]
+
+
+def _load_dotenv_into_environ() -> None:
+    env_path = project_root() / "backend" / ".env"
+    if not env_path.exists():
+        env_path = project_root() / ".env"
+    if env_path.exists():
+        with env_path.open(encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, val = line.partition("=")
+                key = key.strip()
+                val = val.strip().strip('"').strip("'")
+                if key and key not in os.environ:
+                    os.environ[key] = val
+
+
+_load_dotenv_into_environ()
 
 
 def load_yaml_config(name: str) -> dict[str, Any]:
@@ -115,6 +135,7 @@ class Settings(BaseSettings):
     contextual_retrieval_enabled: bool = True
     contextual_retrieval_concurrency: int = 4
     chunk_target_token_count: int = 512
+    chunk_min_token_count: int = 100
     chunk_overlap_token_count: int = 50
     chunk_max_blocks_per_chunk: int = 8
     semantic_chunk_breakpoint_percentile: float = 95.0
@@ -140,6 +161,37 @@ class Settings(BaseSettings):
     @property
     def max_upload_size_bytes(self) -> int:
         return self.max_upload_size_mb * 1024 * 1024
+
+    @model_validator(mode="after")
+    def validate_chunking_config(self) -> "Settings":
+        """Validate chunking configuration constraints."""
+        if self.chunk_min_token_count >= self.chunk_target_token_count:
+            raise ValueError(
+                f"chunk_min_token_count ({self.chunk_min_token_count}) must be less than "
+                f"chunk_target_token_count ({self.chunk_target_token_count})"
+            )
+        if self.chunk_target_token_count > self.embedding_max_length:
+            raise ValueError(
+                f"chunk_target_token_count ({self.chunk_target_token_count}) must not exceed "
+                f"embedding_max_length ({self.embedding_max_length})"
+            )
+        if self.chunk_overlap_token_count >= self.chunk_min_token_count:
+            raise ValueError(
+                f"chunk_overlap_token_count ({self.chunk_overlap_token_count}) must be less than "
+                f"chunk_min_token_count ({self.chunk_min_token_count})"
+            )
+        if self.chunk_overlap_token_count < 0:
+            raise ValueError(f"chunk_overlap_token_count ({self.chunk_overlap_token_count}) must be non-negative")
+        if self.chunk_min_token_count < 1:
+            raise ValueError(f"chunk_min_token_count ({self.chunk_min_token_count}) must be at least 1")
+        if self.chunk_max_blocks_per_chunk < 1:
+            raise ValueError(f"chunk_max_blocks_per_chunk ({self.chunk_max_blocks_per_chunk}) must be at least 1")
+        if not 0 < self.semantic_chunk_breakpoint_percentile <= 100:
+            raise ValueError(
+                f"semantic_chunk_breakpoint_percentile ({self.semantic_chunk_breakpoint_percentile}) "
+                f"must be between 0 and 100"
+            )
+        return self
 
 
 @lru_cache(maxsize=1)
@@ -168,10 +220,10 @@ def get_settings() -> Settings:
         ),
         embedding_model=embedding_config.get("model_name", "BAAI/bge-m3"),
         embedding_dense_size=embedding_config.get("dense_size", 1024),
-        embedding_device=embedding_config.get("device", "cpu"),
-        embedding_batch_size=embedding_config.get("batch_size", 8),
+        embedding_device=env_value("EMBEDDING_DEVICE", embedding_config.get("device", "cpu")),
+        embedding_batch_size=int(env_value("EMBEDDING_BATCH_SIZE", embedding_config.get("batch_size", 8))),
         embedding_max_length=embedding_config.get("max_length", 1024),
-        embedding_use_fp16=embedding_config.get("use_fp16", False),
+        embedding_use_fp16=env_bool("EMBEDDING_USE_FP16", embedding_config.get("use_fp16", False)),
         normalize_embeddings=embedding_config.get("normalize_embeddings", True),
         embedding_version=embedding_config.get("embedding_version", "bge-m3-v1"),
         qdrant_collection_name=qdrant_config.get("collection_name", "agentbook_chunks"),
@@ -210,6 +262,7 @@ def get_settings() -> Settings:
         contextual_retrieval_enabled=env_bool("CONTEXTUAL_RETRIEVAL_ENABLED", chunking_config.get("contextual_retrieval_enabled", True)),
         contextual_retrieval_concurrency=int(chunking_config.get("contextual_retrieval_concurrency", 4)),
         chunk_target_token_count=chunking_config.get("target_token_count", 512),
+        chunk_min_token_count=chunking_config.get("min_token_count", 100),
         chunk_overlap_token_count=chunking_config.get("overlap_token_count", 50),
         chunk_max_blocks_per_chunk=chunking_config.get("max_blocks_per_chunk", 8),
         semantic_chunk_breakpoint_percentile=float(chunking_config.get("breakpoint_percentile", 95.0)),

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from time import perf_counter
+from typing import AsyncGenerator
 
 from beanie import PydanticObjectId
 
@@ -65,38 +67,55 @@ class QueryService:
         await self.memory_service.update_after_query(scope=scope, conversation_id=conversation_id)
         return response
 
+    async def ask_stream(self, request: QueryRequest) -> AsyncGenerator[str, None]:
+        scope = RetrievalScope(owner_id=request.owner_id, collection_id=request.collection_id, material_ids=request.material_ids)
+        scope.ensure_scoped()
+        conversation_id = self._conversation_id(request.conversation_id)
+        memory_context = await self.memory_service.build_context(scope=scope, conversation_id=conversation_id)
+        async for chunk in self.inference_engine.answer_stream(
+            query=request.query,
+            scope=scope,
+            top_k=request.top_k,
+            answer_language=request.answer_language,
+            memory_context=memory_context,
+        ):
+            yield chunk
+        await self.memory_service.update_after_query(scope=scope, conversation_id=conversation_id)
+
     async def compare(self, request: CompareRequest) -> CompareResponse:
         scope = RetrievalScope(owner_id=request.owner_id, collection_id=request.collection_id, material_ids=request.material_ids)
         scope.ensure_scoped()
-        cells: list[ComparisonCell] = []
-        all_citations = []
-        all_evidence = []
-        for dimension in request.dimensions:
+
+        async def _process_dimension(dimension: str) -> tuple[ComparisonCell, list, list]:
             query = f"{request.topic} — {dimension}"
             retrieved = await self.retriever.retrieve(query=query, scope=scope, limit=self.settings.rerank_input_k)
             reranked = self.reranker.rerank(query=query, chunks=retrieved, limit=request.top_k or self.settings.final_top_k)
             confidence = self.confidence_scorer.score(reranked)
             citations = self.response_parser.citations_from_chunks(reranked)
-            all_citations.extend(citations)
-            for chunk in reranked:
-                all_evidence.extend(chunk.evidence)
+            evidence = [ev for chunk in reranked for ev in chunk.evidence]
             if not reranked or not citations:
-                cells.append(ComparisonCell(
-                    dimension=dimension, value="Không tìm thấy evidence cho chiều này.",
-                    source="—", citation=None, confidence=0.0,
-                ))
-                continue
+                return (
+                    ComparisonCell(dimension=dimension, value="Không tìm thấy evidence cho chiều này.", source="—", citation=None, confidence=0.0),
+                    [],
+                    evidence,
+                )
             value = await self._synthesize_dimension(
                 topic=request.topic, dimension=dimension, chunks=reranked,
                 answer_language=request.answer_language,
             )
-            cells.append(ComparisonCell(
-                dimension=dimension,
-                value=value,
-                source=reranked[0].document_name,
-                citation=citations[0],
-                confidence=confidence,
-            ))
+            cell = ComparisonCell(dimension=dimension, value=value, source=reranked[0].document_name, citation=citations[0], confidence=confidence)
+            return cell, citations, evidence
+
+        results = await asyncio.gather(*[_process_dimension(dim) for dim in request.dimensions])
+
+        cells: list[ComparisonCell] = []
+        all_citations: list = []
+        all_evidence: list = []
+        for cell, citations, evidence in results:
+            cells.append(cell)
+            all_citations.extend(citations)
+            all_evidence.extend(evidence)
+
         deduped = {f"{c.doc_id}:{c.page}:{c.block_id}": c for c in all_citations}
         contradictions = ContradictionDetector().detect(all_evidence)
         conflicts = [c.description for c in contradictions]

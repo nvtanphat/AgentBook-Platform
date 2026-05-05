@@ -1,0 +1,151 @@
+================================================================================
+REASONING PATH FEATURE - VISUAL EXAMPLE
+================================================================================
+
+BEFORE (Old version - No reasoning path):
+--------------------------------------------------------------------------------
+User: "Dropout la gi?"
+
+AI Response:
+  Dropout la ky thuat regularization duoc su dung trong deep learning
+  de giam overfitting[1][2]. Ky thuat nay hoat dong bang cach ngau nhien
+  tat mot so neurons trong qua trinh training[3].
+
+  Sources:
+  [1] ML_Techniques.pdf p.5
+  [2] Deep_Learning.pdf p.12
+  [3] Neural_Networks.pdf p.8
+
+  Confidence: 85%
+
+[User khong biet AI tim thay answer nhu the nao]
+
+
+AFTER (New version - With reasoning path):
+--------------------------------------------------------------------------------
+User: "Dropout la gi?"
+
+AI Response:
+  Dropout la ky thuat regularization duoc su dung trong deep learning
+  de giam overfitting[1][2]. Ky thuat nay hoat dong bang cach ngau nhien
+  tat mot so neurons trong qua trinh training[3].
+
+  +------------------------------------------------------------------+
+  | How I found this answer:                                         |
+  |                                                                  |
+  | 1. Retrieved 15 relevant chunks from 3 documents (90%)           |
+  |    Entities: [Dropout] [Regularization]                         |
+  |    Documents: ML_Techniques.pdf, Deep_Learning.pdf,             |
+  |               Neural_Networks.pdf                                |
+  |                                                                  |
+  | 2. Traversed knowledge graph (78%)                               |
+  |    Path: Dropout --prevents--> Overfitting                      |
+  |    Entities: [Dropout] [Overfitting] [Regularization]           |
+  |    Relations: [prevents] [is_type_of]                           |
+  |                                                                  |
+  | 3. Synthesized answer from top 5 chunks (92%)                    |
+  |    Entities: [Dropout] [Neural Networks] [Training]             |
+  +------------------------------------------------------------------+
+
+  Sources:
+  [1] ML_Techniques.pdf p.5
+  [2] Deep_Learning.pdf p.12
+  [3] Neural_Networks.pdf p.8
+
+  Confidence: 85%
+
+[User hieu ro AI da lam gi de tim ra answer]
+
+
+================================================================================
+WHERE TO LOOK IN FRONTEND
+================================================================================
+
+Location: Below the AI answer, above the "Sources" section
+
+Visual appearance:
+- Light blue/purple/amber background for each step
+- Icons: 📈 (retrieve), ✨ (traverse), 💡 (synthesize)
+- Entity badges with white background
+- Confidence percentage in green/yellow/red
+
+Hover effect:
+- Step background becomes darker
+- Entity badges highlight
+- (Future: Graph nodes will highlight)
+
+
+================================================================================
+TROUBLESHOOTING - IF YOU DON'T SEE IT
+================================================================================
+
+Step 1: Check if you have documents uploaded
+  - Feature only shows when there are actual retrieval results
+  - Upload at least 1 PDF/DOCX file first
+
+Step 2: Check browser console (F12)
+  - Look for JavaScript errors
+  - Should see: "Hover entities: [...]" when you hover over steps
+
+Step 3: Check Network tab (F12 -> Network)
+  - Ask a question
+  - Click on the "ask" request
+  - Look at Response
+  - Should see: "reasoning_path": [...]
+
+Step 4: Hard refresh
+  - Press Ctrl+Shift+R
+  - Or clear browser cache
+
+Step 5: Check if ReasoningTrace component is imported
+  - File exists: frontend/src/components/ReasoningTrace.tsx ✓
+  - Imported in ChatPanel.tsx ✓
+
+
+================================================================================
+EXAMPLE API RESPONSE (What backend returns)
+================================================================================
+
+{
+  "answer": "Dropout la ky thuat...",
+  "citations": [...],
+  "confidence": 0.85,
+  "reasoning_path": [
+    {
+      "step_type": "retrieve",
+      "entities": ["Dropout", "Regularization"],
+      "relations": [],
+      "confidence": 0.90,
+      "description": "Retrieved 15 chunks from 3 documents..."
+    },
+    {
+      "step_type": "traverse",
+      "entities": ["Dropout", "Overfitting"],
+      "relations": ["prevents"],
+      "confidence": 0.78,
+      "description": "Traversed knowledge graph..."
+    },
+    {
+      "step_type": "synthesize",
+      "entities": ["Dropout", "Neural Networks"],
+      "relations": [],
+      "confidence": 0.92,
+      "description": "Synthesized answer from top 5 chunks"
+    }
+  ]
+}
+
+
+================================================================================
+NEXT STEPS
+================================================================================
+
+1. Upload a document if you haven't
+2. Ask ANY question
+3. Look below the answer
+4. You should see the reasoning trace
+
+If still not working, send me:
+- Screenshot of the response
+- Browser console errors (F12)
+- Network tab showing the API response

@@ -1,5 +1,5 @@
 import { ReactNode, createContext, useContext, useEffect, useMemo, useState } from "react";
-import { Citation, MaterialUploadResponse } from "../api/client";
+import { Citation, MaterialUploadResponse, QueryResponse } from "../api/client";
 
 const WORKSPACE_STORAGE_KEY = "prism.workspace.v1";
 const LEGACY_WORKSPACE_STORAGE_KEY = "agentbook.workspace.v2";
@@ -29,6 +29,12 @@ export type UploadedMaterial = {
   uploadedAt: string;
 };
 
+export type ActiveQueryContext = {
+  question: string;
+  response: QueryResponse;
+  createdAt: string;
+};
+
 type WorkspaceContextValue = {
   workspace: WorkspaceSettings;
   updateWorkspace: (settings: Partial<WorkspaceSettings>) => void;
@@ -41,6 +47,10 @@ type WorkspaceContextValue = {
   setSelectedCitation: (citation: Citation) => void;
   activeCitations: Citation[];
   setActiveCitations: (citations: Citation[]) => void;
+  activeQueryContext: ActiveQueryContext | null;
+  setActiveQueryContext: (context: ActiveQueryContext | null) => void;
+  chatDraft: string | null;
+  setChatDraft: (draft: string | null) => void;
   scopedMaterialIds: string[];
 };
 
@@ -86,6 +96,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [materials, setMaterials] = useState<UploadedMaterial[]>(() => readStorage(MATERIALS_STORAGE_KEY, []));
   const [selectedCitation, setSelectedCitation] = useState<Citation | null>(null);
   const [activeCitations, setActiveCitations] = useState<Citation[]>([]);
+  const [activeQueryContext, setActiveQueryContext] = useState<ActiveQueryContext | null>(null);
+  const [chatDraft, setChatDraft] = useState<string | null>(null);
 
   useEffect(() => {
     localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(workspace));
@@ -147,12 +159,16 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       setSelectedCitation,
       activeCitations,
       setActiveCitations,
+      activeQueryContext,
+      setActiveQueryContext,
+      chatDraft,
+      setChatDraft,
       scopedMaterialIds: materials
         .filter((item) => item.status.toLowerCase() === "indexed")
         .filter((item) => !workspace.collectionId || item.collectionId === workspace.collectionId)
         .map((item) => item.materialId)
     };
-  }, [materials, selectedCitation, activeCitations, workspace]);
+  }, [activeCitations, activeQueryContext, chatDraft, materials, selectedCitation, workspace]);
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;
 }

@@ -4,7 +4,7 @@ import math
 import re
 
 from src.rag.types import RetrievedChunk
-from src.schemas.evidence import BoundingBoxSchema, CitationSchema
+from src.schemas.evidence import BoundingBoxSchema, CitationSchema, EvidenceBlockSchema
 
 # Vietnamese + Latin word pattern covering all Vietnamese diacritics
 _WORD_RE = re.compile(r"[\wÀ-ɏḀ-ỿ]{3,}", re.UNICODE)
@@ -25,8 +25,39 @@ def _citation_confidence(chunk: RetrievedChunk) -> float:
     return min(1.0, max(0.0, float(value)))
 
 
+_ORDERED_LIST_RE = re.compile(r"^(\s*)(\d+)\.\s", re.MULTILINE)
+
+
+def _fix_numbered_lists(text: str) -> str:
+    """Renumber ordered list items when the LLM repeats '1.' for every item."""
+    lines = text.split("\n")
+    result: list[str] = []
+    counter: dict[str, int] = {}  # indent -> current counter
+    prev_indent: str | None = None
+
+    for line in lines:
+        m = _ORDERED_LIST_RE.match(line)
+        if m:
+            indent = m.group(1)
+            # Reset child counters when indent changes up
+            if prev_indent is not None and len(indent) < len(prev_indent):
+                keys_to_remove = [k for k in counter if len(k) > len(indent)]
+                for k in keys_to_remove:
+                    del counter[k]
+            counter[indent] = counter.get(indent, 0) + 1
+            line = indent + str(counter[indent]) + ". " + line[m.end():]
+            prev_indent = indent
+        else:
+            if not line.strip():
+                # blank line resets list context
+                counter.clear()
+                prev_indent = None
+        result.append(line)
+    return "\n".join(result)
+
+
 class ResponseParser:
-    _MIN_CITATION_OVERLAP = 1
+    _MIN_CITATION_OVERLAP = 3  # require ≥3 content-word overlaps to suppress spurious citations
     _REFUSAL_RE = re.compile(
         r"(kh[oô]ng\s+t[iì]m\s+th[aấ]y|kh[oô]ng\s+[dđ][uủ]|not\s+enough\s+evidence|cannot\s+answer|can't\s+answer)",
         re.IGNORECASE,
@@ -45,31 +76,56 @@ class ResponseParser:
         return "\n\n".join(lines)
 
     def citations_from_chunks(self, chunks: list[RetrievedChunk]) -> list[CitationSchema]:
-        """One citation per chunk — index N in this list matches [N] in the LLM answer."""
+        """One citation per chunk — index N in this list matches [N] in the LLM answer.
+
+        Chunk order must match the order used in format_evidence_for_prompt so that
+        [1]…[N] markers in the LLM answer map to citations[0]…[N-1].
+        """
         citations: list[CitationSchema] = []
         for i, chunk in enumerate(chunks):
-            first_ev = chunk.evidence[0] if chunk.evidence else None
-            pages = sorted({e.page for e in chunk.evidence}) if chunk.evidence else sorted(set(chunk.source_pages))
+            evs = chunk.evidence
+            pages = sorted({e.page for e in evs}) if evs else sorted(set(chunk.source_pages))
             page = pages[0] if pages else None
+            primary_ev = evs[0] if evs else None
+
+            # All contributing blocks exposed for downstream spatial rendering
+            evidence_blocks = [
+                EvidenceBlockSchema(
+                    block_id=e.block_id,
+                    block_type=e.block_type,
+                    page=e.page,
+                    snippet_original=e.snippet_original,
+                    source_language=e.source_language,
+                    bbox=BoundingBoxSchema.model_validate(e.bbox.model_dump()) if e.bbox else None,
+                    confidence=e.confidence,
+                    material_id=e.material_id,
+                    doc_name=e.document_name,
+                )
+                for e in evs
+            ]
+
             citations.append(
                 CitationSchema(
-                    doc_id=first_ev.material_id if first_ev else chunk.material_id,
-                    doc_name=first_ev.document_name if first_ev else chunk.document_name,
+                    doc_id=primary_ev.material_id if primary_ev else chunk.material_id,
+                    doc_name=primary_ev.document_name if primary_ev else chunk.document_name,
                     page=page,
                     pages=pages,
-                    block_id=first_ev.block_id if first_ev else None,
-                    block_type=first_ev.block_type if first_ev else None,
-                    snippet_original=chunk.content,
-                    bbox=BoundingBoxSchema.model_validate(first_ev.bbox.model_dump()) if first_ev and first_ev.bbox else None,
+                    block_id=primary_ev.block_id if primary_ev else None,
+                    block_type=primary_ev.block_type if primary_ev else None,
+                    # Block-level snippet is more precise than full chunk content (500-token cap as fallback)
+                    snippet_original=primary_ev.snippet_original if primary_ev else chunk.content[:500],
+                    bbox=BoundingBoxSchema.model_validate(primary_ev.bbox.model_dump()) if primary_ev and primary_ev.bbox else None,
                     role="primary" if i == 0 else "supporting",
                     source_language=chunk.language,
                     confidence=_citation_confidence(chunk),
+                    evidence_blocks=evidence_blocks,
                 )
             )
         return citations
 
     def inject_citations(self, answer: str, chunks: list[RetrievedChunk]) -> str:
         """Append best-matching [N] citation to each sentence if LLM didn't add any."""
+        answer = _fix_numbered_lists(answer)
         if not chunks:
             return answer
         if self._REFUSAL_RE.search(answer):
@@ -78,10 +134,15 @@ class ResponseParser:
         if re.search(r"\[\d+\]", answer):
             return answer
 
-        # Token sets per chunk for overlap scoring
-        chunk_tokens: list[set[str]] = [
-            set(_WORD_RE.findall(chunk.content.lower())) for chunk in chunks
-        ]
+        # Token sets per chunk — use evidence block snippets when available because they are
+        # block-level text and far more specific than the full multi-block chunk content.
+        chunk_tokens: list[set[str]] = []
+        for chunk in chunks:
+            if chunk.evidence:
+                combined = " ".join(e.snippet_original for e in chunk.evidence)
+            else:
+                combined = chunk.content
+            chunk_tokens.append(set(_WORD_RE.findall(combined.lower())))
 
         # Split answer into paragraphs first (preserve paragraph breaks)
         paragraphs = answer.split("\n\n")

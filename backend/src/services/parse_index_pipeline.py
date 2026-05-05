@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import json
 import asyncio
 import logging
@@ -16,10 +17,12 @@ from src.models.pipeline_job import PipelineJob
 from src.processing.chunking import LayoutAwareChunker, SemanticChunker, build_chunker
 from src.processing.contextual_enricher import ContextualEnricher
 from src.processing.docling_parser import DoclingParser, SUPPORTED_DOCLING_EXTENSIONS
+from src.processing.cross_modal_linker import CrossModalLinker
 from src.processing.entity_extractor import EntityExtractor
 from src.processing.entity_resolution import EntityResolver
 from src.processing.event_extractor import EventExtractor
 from src.processing.evidence_mapper import EvidenceMapper
+from src.processing.graph_quality_gate import GraphQualityGate
 from src.processing.handwriting_reader import HandwritingReader
 from src.processing.layout_normalizer import LayoutNormalizer
 from src.processing.language_detector import detect_block_language, detect_document_language
@@ -49,6 +52,8 @@ class ParseIndexPipeline:
         entity_extractor: EntityExtractor | None = None,
         entity_resolver: EntityResolver | None = None,
         event_extractor: EventExtractor | None = None,
+        cross_modal_linker: CrossModalLinker | None = None,
+        graph_quality_gate: GraphQualityGate | None = None,
         chunker: LayoutAwareChunker | SemanticChunker | None = None,
         indexer: QdrantMongoIndexer | None = None,
     ) -> None:
@@ -63,6 +68,12 @@ class ParseIndexPipeline:
         self.entity_extractor = entity_extractor or EntityExtractor()
         self.entity_resolver = entity_resolver or EntityResolver()
         self.event_extractor = event_extractor or EventExtractor()
+        self.cross_modal_linker = cross_modal_linker or CrossModalLinker()
+        self.graph_quality_gate = graph_quality_gate or GraphQualityGate(
+            min_entity_confidence=settings.min_graph_confidence,
+            min_relation_confidence=settings.min_graph_confidence,
+            min_mention_count=1,
+        )
         self._chunker_override = chunker
         self.indexer = indexer
 
@@ -91,6 +102,7 @@ class ParseIndexPipeline:
             material.page_count = len(material_pages)
             await self._write_processed_artifacts(material, normalized)
             await self._mark(material=material, job=job, status=PipelineStatus.PARSED.value, stage=PipelineStatus.PARSED.value)
+            gc.collect()  # free docling/OCR memory before loading embedding model
 
             await self._ensure_material_exists(material_id)
             # Initialise indexer early so SemanticChunker can reuse its embedder
@@ -99,6 +111,7 @@ class ParseIndexPipeline:
 
                 self.indexer = QdrantMongoIndexer(settings=self.settings, qdrant_client=get_qdrant_client())
 
+            await self._mark(material=material, job=job, status=PipelineStatus.CHUNKING.value, stage=PipelineStatus.CHUNKING.value)
             evidence_map = self.evidence_mapper.build(
                 parsed=normalized,
                 owner_id=material.owner_id,
@@ -109,9 +122,42 @@ class ParseIndexPipeline:
             chunker = self._resolve_chunker()
             chunks = chunker.build_chunks(evidence_map)
             run_chunk_qa(chunks, material_id=str(material.id))
-            chunks = await self._contextual_enrich(chunks, evidence_map)
             entities = self.entity_resolver.resolve(self.entity_extractor.extract(evidence_map))
             events, relations = self.event_extractor.extract(evidence_map, entities)
+            cm_entities, cm_relations = self.cross_modal_linker.link(evidence_map, entities)
+            entities = list(entities) + cm_entities
+            relations = list(relations) + cm_relations
+
+            # Apply graph quality gates
+            entities = self.graph_quality_gate.prune_entities(entities)
+            entities = self.graph_quality_gate.resolve_entities(entities)
+
+            # Build valid entity ID set for relation pruning
+            valid_entity_ids = {
+                f"entity:{self.graph_quality_gate._slug(e.canonical_name)}"
+                for e in entities
+            }
+            # Also include event IDs and block IDs
+            for event in events:
+                valid_entity_ids.add(f"event:{self.graph_quality_gate._slug(event.event_name)}")
+            for block in evidence_map.blocks:
+                valid_entity_ids.add(f"block:{block.block_id}")
+
+            relations = self.graph_quality_gate.prune_relations(relations, valid_entity_ids)
+
+            logger.info(
+                "Graph extraction completed",
+                extra={
+                    "entities": len(entities),
+                    "events": len(events),
+                    "relations": len(relations),
+                    "material_id": str(material.id),
+                },
+            )
+
+            await self._ensure_material_exists(material_id)
+            await self._mark(material=material, job=job, status=PipelineStatus.EMBEDDING.value, stage=PipelineStatus.EMBEDDING.value)
+            chunks = await self._contextual_enrich(chunks, evidence_map)
 
             await self._ensure_material_exists(material_id)
             await self._mark(material=material, job=job, status=PipelineStatus.INDEXING.value, stage=PipelineStatus.INDEXING.value)
@@ -131,6 +177,13 @@ class ParseIndexPipeline:
                 stage=PipelineStatus.INDEXED.value,
                 finished=True,
             )
+        except MemoryError as exc:
+            logger.critical(
+                "Pipeline OOM — process may be unstable; reduce batch sizes or free RAM",
+                extra={"material_id": material_id, "job_id": job_id, "stage": job.stage},
+            )
+            await self._fail(material=material, job=job, failed_stage=job.stage, error="Out of memory — retry after freeing RAM")
+            raise
         except Exception as exc:
             failed_stage = getattr(exc, "failed_stage", None) or job.stage
             await self._fail(material=material, job=job, failed_stage=failed_stage, error=str(exc))
@@ -150,7 +203,9 @@ class ParseIndexPipeline:
         chunks: list,
         evidence_map,
     ) -> list:
-        if not self.settings.contextual_retrieval_enabled or not chunks:
+        from src.core.runtime_config import get_override
+        enabled = get_override("contextual_retrieval_enabled", self.settings.contextual_retrieval_enabled)
+        if not enabled or not chunks:
             return chunks
         try:
             from src.core.model_factory import build_llm

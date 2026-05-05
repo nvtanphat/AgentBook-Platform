@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import math
 import logging
 from collections import defaultdict
+from dataclasses import dataclass, field
+from typing import AsyncGenerator
 
 from src.core.base_llm import BaseLLM
 from src.core.config import Settings, project_root
@@ -12,6 +15,7 @@ from src.guardrails.claim_verifier import ClaimVerdict, ClaimVerifier
 from src.inference.chitchat_detector import get_instant_reply
 from src.inference.confidence_scorer import ConfidenceScorer
 from src.inference.intent_classifier import IntentClassifier, QueryIntent
+from src.inference.reasoning_path_builder import build_reasoning_path
 from src.inference.response_parser import ResponseParser
 from src.rag.graph_retriever import GraphRetriever
 from src.rag.query_processor import QueryProcessor
@@ -207,6 +211,15 @@ class InferenceEngine:
             if refusal_reason == "partial_confidence":
                 answer = answer + "\n\n> ⚠️ Câu trả lời dựa trên bằng chứng có độ tin cậy hạn chế. Vui lòng kiểm tra lại nguồn gốc."
 
+        # Build reasoning path for transparency
+        reasoning_path = build_reasoning_path(
+            query=query,
+            retrieved_chunks=retrieved,
+            graph_chunks=graph_chunks,
+            reranked_chunks=reranked,
+            use_graph=route_decision.use_graph,
+        )
+
         return QueryResponse(
             answer=answer,
             answer_language=processed.answer_language,
@@ -217,7 +230,156 @@ class InferenceEngine:
             confidence=confidence,
             was_refused=should_refuse,
             refusal_reason=refusal_reason,
+            reasoning_path=reasoning_path,
         )
+
+    async def answer_stream(
+        self,
+        *,
+        query: str,
+        scope: RetrievalScope,
+        top_k: int | None = None,
+        answer_language: str | None = None,
+        memory_context: str | None = None,
+    ) -> AsyncGenerator[str, None]:
+        """
+        Yield SSE-formatted lines.  Events:
+          token  – {"token": "..."}  for each LLM output token
+          done   – full QueryResponse JSON on completion
+          error  – {"message": "..."} on failure
+        """
+        # Fast paths that don't need streaming
+        intent = await self.intent_classifier.classify(query)
+        if intent == QueryIntent.CHITCHAT:
+            response = await self._answer_chitchat(query)
+            yield f"event: done\ndata: {response.model_dump_json()}\n\n"
+            return
+        if intent == QueryIntent.OFF_TOPIC:
+            response = self._refuse_off_topic()
+            yield f"event: done\ndata: {response.model_dump_json()}\n\n"
+            return
+
+        route_decision = self.query_router.route(query)
+        retrieval_limit = self._scaled_limit(self.settings.rerank_input_k, route_decision)
+        final_limit = self._scaled_limit(top_k or self.settings.final_top_k, route_decision)
+        query_rewriter = self.query_rewriter if route_decision.use_multi_query else None
+
+        processed = await self.query_processor.process_async(
+            query, answer_language=answer_language, rewriter=query_rewriter
+        )
+
+        # ── Retrieval ────────────────────────────────────────────────────────
+        try:
+            retrieval_tasks = [
+                self.retriever.retrieve(query=rq, scope=scope, limit=retrieval_limit)
+                for rq in processed.retrieval_queries
+            ]
+            graph_task = (
+                self.graph_retriever.retrieve_paths(query=query, scope=scope)
+                if route_decision.use_graph else None
+            )
+            tasks = [*retrieval_tasks, graph_task] if graph_task is not None else retrieval_tasks
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            retrieved: list[RetrievedChunk] = []
+            retrieval_results = results[:-1] if graph_task is not None else results
+            for result in retrieval_results:
+                if isinstance(result, Exception):
+                    logger.warning("Retrieval query failed", extra={"error": str(result)})
+                    continue
+                retrieved.extend(result)
+            graph_chunks = []
+            if graph_task is not None:
+                graph_result = results[-1]
+                if not isinstance(graph_result, Exception):
+                    graph_chunks = self._chunks_from_graph_paths(graph_result, scope=scope, priority=route_decision.graph_priority)
+        except Exception as exc:
+            err = json.dumps({"message": f"Retrieval failed: {type(exc).__name__}"})
+            yield f"event: error\ndata: {err}\n\n"
+            return
+
+        candidates = dedupe_retrieved_chunks(
+            (graph_chunks + retrieved) if route_decision.graph_priority else (retrieved + graph_chunks)
+        )
+        if hasattr(self.reranker, "rerank_multilingual"):
+            reranked = self.reranker.rerank_multilingual(
+                queries=processed.retrieval_queries,
+                chunks=candidates,
+                limit=final_limit,
+                use_mmr=route_decision.use_mmr,
+            )
+        else:
+            reranked = self.reranker.rerank(query=query, chunks=candidates, limit=final_limit)
+
+        context_chunks = self._pack_context_chunks(reranked)
+        confidence = self.confidence_scorer.score(reranked)
+        should_refuse, refusal_reason = self.confidence_scorer.should_refuse(chunks=reranked, confidence=confidence)
+        if route_decision.route_type == RouteType.SUMMARIZATION and reranked:
+            should_refuse = False
+            if refusal_reason not in (None, "partial_confidence"):
+                refusal_reason = None
+
+        citations = self.response_parser.citations_from_chunks(context_chunks)
+
+        if should_refuse:
+            response = QueryResponse(
+                answer=REFUSAL_ANSWER,
+                answer_language=processed.answer_language,
+                query_language=processed.query_language,
+                translated_query=processed.translated_query,
+                source_languages=sorted({c.source_language for c in citations}),
+                citations=citations,
+                confidence=confidence,
+                was_refused=True,
+                refusal_reason=refusal_reason,
+            )
+            yield f"event: done\ndata: {response.model_dump_json()}\n\n"
+            return
+
+        # ── Stream LLM tokens ────────────────────────────────────────────────
+        prompt = self._build_prompt(
+            query=query,
+            chunks=context_chunks,
+            answer_language=processed.answer_language,
+            memory_context=memory_context or "",
+            route_type=route_decision.route_type,
+        )
+        accumulated = ""
+        try:
+            async for token in self.llm.stream(prompt=prompt):
+                if token:
+                    accumulated += token
+                    yield f"event: token\ndata: {json.dumps({'token': token}, ensure_ascii=False)}\n\n"
+        except Exception as exc:
+            logger.error("LLM stream failed", exc_info=True, extra={"owner_id": scope.owner_id})
+            err = json.dumps({"message": f"LLM generation failed: {type(exc).__name__}"})
+            yield f"event: error\ndata: {err}\n\n"
+            return
+
+        # ── Post-process and send done ────────────────────────────────────────
+        answer = accumulated.strip() or REFUSAL_ANSWER
+        if accumulated.strip():
+            answer = self.response_parser.inject_citations(answer, context_chunks)
+            verification = self.claim_verifier.verify(
+                claim=answer,
+                evidence=[ev for chunk in context_chunks for ev in chunk.evidence],
+            )
+            if verification.verdict == ClaimVerdict.CONTRADICTED:
+                answer += "\n\n> Canh bao: Phat hien mau thuan giua cau tra loi va bang chung goc."
+            if refusal_reason == "partial_confidence":
+                answer += "\n\n> ⚠️ Câu trả lời dựa trên bằng chứng có độ tin cậy hạn chế. Vui lòng kiểm tra lại nguồn gốc."
+
+        response = QueryResponse(
+            answer=answer,
+            answer_language=processed.answer_language,
+            query_language=processed.query_language,
+            translated_query=processed.translated_query,
+            source_languages=sorted({c.source_language for c in citations}),
+            citations=citations,
+            confidence=confidence,
+            was_refused=not accumulated.strip(),
+            refusal_reason=refusal_reason if not accumulated.strip() else None,
+        )
+        yield f"event: done\ndata: {response.model_dump_json()}\n\n"
 
     async def _answer_chitchat(self, query: str) -> QueryResponse:
         # Fast path: pre-written reply for common unambiguous patterns (no LLM cost)

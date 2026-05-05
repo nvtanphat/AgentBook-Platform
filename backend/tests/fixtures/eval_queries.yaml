@@ -1,0 +1,96 @@
+# Ground truth dataset for retrieval evaluation
+# Format: query → relevant chunk IDs
+
+queries:
+  - query: "Dropout giúp giảm overfitting như thế nào?"
+    query_en: "How does dropout reduce overfitting?"
+    relevant_chunks:
+      - "chunk_dropout_definition"
+      - "chunk_dropout_mechanism"
+      - "chunk_regularization_techniques"
+    expected_keywords:
+      - "dropout"
+      - "overfitting"
+      - "regularization"
+      - "random"
+      - "neurons"
+
+  - query: "So sánh L1 và L2 regularization"
+    query_en: "Compare L1 and L2 regularization"
+    relevant_chunks:
+      - "chunk_l1_regularization"
+      - "chunk_l2_regularization"
+      - "chunk_regularization_comparison"
+    expected_keywords:
+      - "L1"
+      - "L2"
+      - "sparse"
+      - "weight decay"
+      - "lasso"
+      - "ridge"
+
+  - query: "Gradient descent là gì?"
+    query_en: "What is gradient descent?"
+    relevant_chunks:
+      - "chunk_gradient_descent_definition"
+      - "chunk_optimization_algorithms"
+    expected_keywords:
+      - "gradient"
+      - "descent"
+      - "optimization"
+      - "learning rate"
+
+  - query: "Backpropagation hoạt động như thế nào?"
+    query_en: "How does backpropagation work?"
+    relevant_chunks:
+      - "chunk_backpropagation_algorithm"
+      - "chunk_chain_rule"
+      - "chunk_neural_network_training"
+    expected_keywords:
+      - "backpropagation"
+      - "chain rule"
+      - "gradient"
+      - "weights"
+
+  - query: "Phân biệt supervised và unsupervised learning"
+    query_en: "Differentiate supervised and unsupervised learning"
+    relevant_chunks:
+      - "chunk_supervised_learning"
+      - "chunk_unsupervised_learning"
+      - "chunk_learning_paradigms"
+    expected_keywords:
+      - "supervised"
+      - "unsupervised"
+      - "labels"
+      - "clustering"
+
+# Test cases for specific features
+cross_lingual_queries:
+  - query_vi: "Transformer architecture có những thành phần nào?"
+    query_en: "What are the components of transformer architecture?"
+    relevant_chunks:
+      - "chunk_transformer_architecture"
+      - "chunk_attention_mechanism"
+      - "chunk_encoder_decoder"
+
+graph_relation_queries:
+  - query: "Quan hệ giữa learning rate và convergence"
+    query_en: "Relationship between learning rate and convergence"
+    relevant_chunks:
+      - "chunk_learning_rate"
+      - "chunk_convergence"
+      - "chunk_hyperparameter_tuning"
+    expected_relations:
+      - source: "learning_rate"
+        target: "convergence"
+        relation_type: "affects"
+
+summarization_queries:
+  - query: "Tóm tắt các kỹ thuật regularization"
+    query_en: "Summarize regularization techniques"
+    relevant_chunks:
+      - "chunk_l1_regularization"
+      - "chunk_l2_regularization"
+      - "chunk_dropout"
+      - "chunk_early_stopping"
+      - "chunk_data_augmentation"

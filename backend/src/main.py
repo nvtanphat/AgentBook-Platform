@@ -81,6 +81,65 @@ def _ensure_qdrant_payload_indexes(client, collection_name: str) -> None:
         )
 
 
+async def _recover_stuck_materials() -> None:
+    """Reset materials left in intermediate states by a previous crash."""
+    from src.models.material import Material
+    from src.models.common import PipelineStatus, utc_now
+
+    stuck_statuses = [
+        PipelineStatus.PARSING.value,
+        PipelineStatus.PARSED.value,
+        PipelineStatus.CHUNKING.value,
+        PipelineStatus.EMBEDDING.value,
+        PipelineStatus.INDEXING.value,
+    ]
+    logger = logging.getLogger(__name__)
+    stuck = await Material.find({"status": {"$in": stuck_statuses}}).to_list()
+    if not stuck:
+        return
+    logger.warning(
+        "Recovering %d materials stuck in intermediate pipeline states",
+        len(stuck),
+        extra={"material_ids": [str(m.id) for m in stuck]},
+    )
+    for material in stuck:
+        material.status = PipelineStatus.FAILED.value
+        material.failed_stage = material.status
+        material.error_message = "Process crashed mid-pipeline; retry to re-process."
+        material.updated_at = utc_now()
+        await material.save()
+    logger.info("Marked %d stuck materials as failed — use retry endpoint to re-process.", len(stuck))
+
+
+async def _reenqueue_uploaded_materials(settings) -> None:
+    """Re-enqueue materials stuck in 'uploaded' state (asyncio.create_task lost on restart)."""
+    from src.models.material import Material
+    from src.models.common import PipelineStatus
+    from src.services.material_service import MaterialService
+
+    logger = logging.getLogger(__name__)
+    uploaded = await Material.find({"status": PipelineStatus.UPLOADED.value}).to_list()
+    if not uploaded:
+        return
+    logger.info(
+        "Re-enqueueing %d uploaded materials whose pipeline task was lost on restart",
+        len(uploaded),
+        extra={"material_ids": [str(m.id) for m in uploaded]},
+    )
+    service = MaterialService(settings=settings)
+    ok = 0
+    for material in uploaded:
+        try:
+            await service.retry_material(material_id=str(material.id), owner_id=material.owner_id)
+            ok += 1
+        except Exception as exc:
+            logger.warning(
+                "Failed to re-enqueue uploaded material",
+                extra={"material_id": str(material.id), "error": str(exc)},
+            )
+    logger.info("Re-enqueued %d/%d uploaded materials", ok, len(uploaded))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _configure_logging()
@@ -92,6 +151,8 @@ async def lifespan(app: FastAPI):
         logger.critical("API auth is enabled but AGENTBOOK_API_KEY is not configured; scoped API requests will fail closed")
     await init_database(settings)
     _ensure_qdrant_collection(settings)
+    await _recover_stuck_materials()
+    await _reenqueue_uploaded_materials(settings)
     yield
     await close_query_service()
     close_cached_qdrant_client()

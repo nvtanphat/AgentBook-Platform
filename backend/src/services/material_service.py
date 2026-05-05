@@ -299,6 +299,37 @@ class MaterialService:
                 extra={"material_id": material_id, "job_id": job_id, "error": str(exc)},
             )
 
+    async def retry_material(self, *, material_id: str, owner_id: str) -> dict:
+        try:
+            mid = PydanticObjectId(material_id)
+        except Exception as exc:
+            raise ValueError("material_id must be a valid ObjectId") from exc
+
+        material = await Material.get(mid)
+        if material is None or material.owner_id != owner_id:
+            raise LookupError("Material not found for this owner")
+
+        non_retryable = {PipelineStatus.INDEXED.value}
+        if material.status in non_retryable:
+            raise ValueError(f"Cannot retry material in status '{material.status}'")
+
+        material.status = PipelineStatus.UPLOADED.value
+        material.failed_stage = None
+        material.error_message = None
+        material.updated_at = utc_now()
+        await material.save()
+
+        job = PipelineJob(
+            material_id=material.id,
+            job_id=str(uuid4()),
+            job_type=JobType.PARSE_INDEX.value,
+            status=PipelineStatus.UPLOADED.value,
+            stage=PipelineStatus.UPLOADED.value,
+        )
+        await job.insert()
+        await self._enqueue_parse_index(material_id=str(material.id), job_id=job.job_id)
+        return {"material_id": material_id, "job_id": job.job_id, "status": material.status}
+
     async def delete_material(self, *, material_id: str, owner_id: str) -> dict[str, int]:
         """Delete a single material and all its associated chunks, vectors, and jobs."""
         try:

@@ -1,4 +1,7 @@
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
 
 from src.core.rate_limit import limiter
 from src.dependencies import get_query_service, get_study_guide_service, get_summary_service, verify_owner_access
@@ -38,6 +41,31 @@ async def ask(
             detail=f"Query pipeline error ({type(exc).__name__}): {exc}",
         ) from exc
     return APIResponse(success=True, message="Query answered successfully", data=result, error=None)
+
+
+@router.post("/ask-stream")
+@limiter.limit("15/minute")
+async def ask_stream(
+    request: Request,
+    body: QueryRequest,
+    query_service: QueryService = Depends(get_query_service),
+) -> StreamingResponse:
+    verify_owner_access(request, body.owner_id)
+
+    async def generate():
+        try:
+            async for line in query_service.ask_stream(body):
+                yield line
+        except ValueError as exc:
+            yield f"event: error\ndata: {json.dumps({'message': str(exc)})}\n\n"
+        except Exception as exc:
+            yield f"event: error\ndata: {json.dumps({'message': f'Server error: {type(exc).__name__}'})}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.post("/compare", response_model=APIResponse[CompareResponse])

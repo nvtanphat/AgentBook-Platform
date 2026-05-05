@@ -10,6 +10,18 @@ class BoundingBoxSchema(BaseModel):
     y2: float
 
 
+class EvidenceBlockSchema(BaseModel):
+    block_id: str
+    block_type: str
+    page: int
+    snippet_original: str
+    source_language: str
+    bbox: BoundingBoxSchema | None = None
+    confidence: float | None = None
+    material_id: str | None = None
+    doc_name: str | None = None
+
+
 class CitationSchema(BaseModel):
     doc_id: str
     doc_name: str
@@ -23,23 +35,13 @@ class CitationSchema(BaseModel):
     role: str = "primary"
     source_language: str
     confidence: float = Field(ge=0.0, le=1.0)
+    # All contributing evidence blocks — exposes spatial/page data for every block in this chunk
+    evidence_blocks: list[EvidenceBlockSchema] = Field(default_factory=list)
 
     @field_validator("confidence", mode="before")
     @classmethod
     def clamp_confidence(cls, v: float) -> float:
         return min(1.0, max(0.0, float(v)))
-
-
-class EvidenceBlockSchema(BaseModel):
-    block_id: str
-    block_type: str
-    page: int
-    snippet_original: str
-    source_language: str
-    bbox: BoundingBoxSchema | None = None
-    confidence: float | None = None
-    material_id: str | None = None
-    doc_name: str | None = None
 
 
 class EvidencePageResponse(BaseModel):
