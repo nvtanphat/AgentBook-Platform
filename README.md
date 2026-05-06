@@ -1,5 +1,4 @@
 <div align="center">
-  <img src="docs/assets/agentbook_concept_art.png" alt="Noelys Concept Art" width="100%" style="max-width: 800px; border-radius: 10px; margin-bottom: 20px;">
   
   <h1>🌟 Noelys (AgentBook Platform)</h1>
   <p><strong>Next-Generation Agentic Document Intelligence Platform</strong></p>
@@ -67,10 +66,6 @@ graph TB
   API --> MONGO
   GRAPH --> MONGO
 ```
-
-<div align="center">
-  <img src="docs/assets/agentbook_pipeline_paper.png" alt="Architecture Pipeline" width="100%" style="max-width: 800px; border-radius: 8px;">
-</div>
 
 ## 🚀 Getting Started
 
