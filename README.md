@@ -1,4 +1,5 @@
 <div align="center">
+  <img src="docs/assets/logo.png" alt="Noelys Logo" width="200" style="margin-bottom: 20px;">
   
   <h1>🌟 Noelys (AgentBook Platform)</h1>
   <p><strong>Next-Generation Agentic Document Intelligence Platform</strong></p>
