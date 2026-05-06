@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import logging
 import re
@@ -74,7 +74,7 @@ class StudyGuideService:
         lang_name = _LANG_NAMES.get(request.answer_language, request.answer_language)
         evidence_text = self.response_parser.format_evidence_for_prompt(reranked)
         guide_prompt = (
-            f"Bạn là Prism — trợ lý tri thức học tập của AgentBook.\n"
+            f"Bạn là Noelys, trợ lý tri thức học tập của Noelys.\n"
             f"Tạo Study Guide bằng {lang_name}, CHỈ từ BẰNG CHỨNG bên dưới. Không thêm kiến thức ngoài tài liệu.\n\n"
             f"Trả lời theo đúng cấu trúc sau (giữ nguyên các tiêu đề):\n\n"
             f"TỔNG QUAN:\n3 đến 5 câu tóm tắt nội dung chính của tài liệu.\n\n"
@@ -145,8 +145,8 @@ class StudyGuideService:
 
     async def _extract_concepts_llm(self, evidence_text: str, owner_id: str) -> list[str]:
         prompt = (
-            "Từ đoạn văn dưới đây, liệt kê 5–8 khái niệm quan trọng nhất.\n"
-            "Yêu cầu: mỗi khái niệm 1–3 từ, mỗi dòng một khái niệm, bắt đầu bằng dấu gạch ngang (-).\n"
+            "Từ đoạn văn dưới đây, liệt kê 5-8 khái niệm quan trọng nhất.\n"
+            "Yêu cầu: mỗi khái niệm 1-3 từ, mỗi dòng một khái niệm, bắt đầu bằng dấu gạch ngang (-).\n"
             "Chỉ liệt kê khái niệm, không giải thích.\n\n"
             f"Văn bản:\n{evidence_text[:2000]}"
         )
@@ -156,3 +156,4 @@ class StudyGuideService:
         except Exception as exc:
             logger.warning("Concept extraction failed", exc_info=True, extra={"owner_id": owner_id, "error": str(exc)})
             return []
+

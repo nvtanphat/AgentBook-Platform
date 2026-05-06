@@ -8,7 +8,7 @@
 
 body {
   margin: 0;
-  background: #f8f9ff;
+  background: #f0f2f8;
   color: #0b1c30;
   font-family: Inter, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -23,12 +23,12 @@ body {
 /* Thin scrollbar for evidence/chat panes */
 .overflow-y-auto, .overflow-x-auto {
   scrollbar-width: thin;
-  scrollbar-color: #bec8d2 transparent;
+  scrollbar-color: #c5cdd8 transparent;
 }
 .overflow-y-auto::-webkit-scrollbar,
 .overflow-x-auto::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
+  width: 5px;
+  height: 5px;
 }
 .overflow-y-auto::-webkit-scrollbar-track,
 .overflow-x-auto::-webkit-scrollbar-track {
@@ -36,8 +36,12 @@ body {
 }
 .overflow-y-auto::-webkit-scrollbar-thumb,
 .overflow-x-auto::-webkit-scrollbar-thumb {
-  background-color: #bec8d2;
+  background-color: #c5cdd8;
   border-radius: 99px;
+}
+.overflow-y-auto::-webkit-scrollbar-thumb:hover,
+.overflow-x-auto::-webkit-scrollbar-thumb:hover {
+  background-color: #9aa5b4;
 }
 
 /* Hide scrollbar but keep scrollability (suggestion chips) */
@@ -116,3 +120,173 @@ body {
 .prose-paper li { margin-bottom: 0.25rem; }
 .prose-paper code { font-family: ui-monospace, monospace; font-size: 0.8125rem; background: #f1f5f9; border-radius: 3px; padding: 0 3px; }
 .prose-paper pre { background: #0f172a; color: #e2e8f0; border-radius: 8px; padding: 1rem; overflow-x: auto; font-size: 0.75rem; line-height: 1.5; }
+
+/* ── Premium header gradient ── */
+.app-header {
+  background: linear-gradient(135deg, #ffffff 0%, #f8faff 50%, #f0f4ff 100%);
+  border-bottom: 1px solid rgba(190, 200, 210, 0.5);
+  box-shadow: 0 1px 3px rgba(15, 38, 70, 0.04), 0 4px 12px rgba(15, 38, 70, 0.02);
+}
+
+/* ── Glassmorphism panel surfaces ── */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* ── Smooth resize handle ── */
+.resize-handle {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  width: 6px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  outline: none;
+  transition: background-color 0.2s ease;
+}
+.resize-handle:hover {
+  background: linear-gradient(180deg, rgba(0, 101, 145, 0.05) 0%, rgba(0, 101, 145, 0.1) 50%, rgba(0, 101, 145, 0.05) 100%);
+}
+.resize-handle:active {
+  background: rgba(0, 101, 145, 0.12);
+}
+.resize-handle-bar {
+  width: 3px;
+  height: 32px;
+  border-radius: 99px;
+  background: rgba(190, 200, 210, 0.6);
+  transition: all 0.2s ease;
+}
+.resize-handle:hover .resize-handle-bar {
+  background: rgba(0, 101, 145, 0.4);
+  height: 48px;
+}
+.resize-handle:active .resize-handle-bar {
+  background: rgba(0, 101, 145, 0.7);
+}
+
+/* ── Chat message animations ── */
+@keyframes messageSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.chat-message-animate {
+  animation: messageSlideIn 0.3s ease-out;
+}
+
+/* ── Suggestion chip hover glow ── */
+.suggestion-chip {
+  transition: all 0.2s ease;
+}
+.suggestion-chip:hover {
+  box-shadow: 0 2px 8px rgba(0, 101, 145, 0.12);
+  transform: translateY(-1px);
+}
+
+/* ── Studio tab active indicator ── */
+.studio-tab {
+  position: relative;
+  transition: all 0.2s ease;
+}
+.studio-tab::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%) scaleX(0);
+  width: 60%;
+  height: 2px;
+  background: #006591;
+  border-radius: 1px;
+  transition: transform 0.25s ease;
+}
+.studio-tab.active::after {
+  transform: translateX(-50%) scaleX(1);
+}
+
+/* ── Source item hover ── */
+.source-item {
+  transition: all 0.15s ease;
+}
+.source-item:hover {
+  transform: translateX(2px);
+}
+
+/* ── Loading pulse ── */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.shimmer-bg {
+  background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+/* ── Chat input focus glow ── */
+.chat-input-wrapper {
+  transition: all 0.2s ease;
+}
+.chat-input-wrapper:focus-within {
+  box-shadow: 0 0 0 3px rgba(0, 101, 145, 0.1), 0 4px 16px rgba(0, 101, 145, 0.06);
+  border-color: #006591;
+}
+
+/* ── Citation chip hover ── */
+.citation-pill {
+  transition: all 0.15s ease;
+}
+.citation-pill:hover {
+  transform: scale(1.03);
+  box-shadow: 0 2px 6px rgba(0, 101, 145, 0.1);
+}
+
+/* ── Confidence badge ── */
+.confidence-badge {
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+/* ── User avatar ring ── */
+.user-avatar-ring {
+  background: linear-gradient(135deg, #006591, #0ea5e9);
+  padding: 1.5px;
+  border-radius: 9999px;
+}
+.user-avatar-ring > * {
+  border-radius: 9999px;
+}
+
+/* ── Panel section headers ── */
+.section-divider {
+  position: relative;
+}
+.section-divider::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 16px;
+  right: 16px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(190, 200, 210, 0.5), transparent);
+}
+
+/* ── Empty state icon ── */
+.empty-state-icon {
+  opacity: 0.15;
+  transition: opacity 0.3s ease;
+}
+.empty-state-icon:hover {
+  opacity: 0.3;
+}

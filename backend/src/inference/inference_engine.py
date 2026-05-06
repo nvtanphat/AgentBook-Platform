@@ -207,7 +207,7 @@ class InferenceEngine:
                 evidence=[evidence for chunk in context_chunks for evidence in chunk.evidence],
             )
             if verification.verdict == ClaimVerdict.CONTRADICTED:
-                answer = answer + "\n\n> Canh bao: Phat hien mau thuan giua cau tra loi va bang chung goc."
+                answer = answer + "\n\n> Cảnh báo: Phát hiện mâu thuẫn giữa câu trả lời và bằng chứng gốc."
             if refusal_reason == "partial_confidence":
                 answer = answer + "\n\n> ⚠️ Câu trả lời dựa trên bằng chứng có độ tin cậy hạn chế. Vui lòng kiểm tra lại nguồn gốc."
 
@@ -364,7 +364,7 @@ class InferenceEngine:
                 evidence=[ev for chunk in context_chunks for ev in chunk.evidence],
             )
             if verification.verdict == ClaimVerdict.CONTRADICTED:
-                answer += "\n\n> Canh bao: Phat hien mau thuan giua cau tra loi va bang chung goc."
+                answer += "\n\n> Cảnh báo: Phát hiện mâu thuẫn giữa câu trả lời và bằng chứng gốc."
             if refusal_reason == "partial_confidence":
                 answer += "\n\n> ⚠️ Câu trả lời dựa trên bằng chứng có độ tin cậy hạn chế. Vui lòng kiểm tra lại nguồn gốc."
 

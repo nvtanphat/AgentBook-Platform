@@ -1,191 +1,220 @@
-<div align="center">
-  <img src="docs/assets/logo.png" width="200" alt="AgentBook Logo">
-  <h1>🚀 AgentBook-Platform</h1>
-  <p><b>Graph RAG Document Intelligence for Advanced Cross-Document Reasoning</b></p>
+# Noelys
 
-  [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
-  [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-05998b.svg?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-  [![React](https://img.shields.io/badge/React-18+-61dafb.svg?style=flat-square&logo=react&logoColor=black)](https://reactjs.org/)
-  [![Qdrant](https://img.shields.io/badge/VectorDB-Qdrant-ff4b4b.svg?style=flat-square&logo=qdrant&logoColor=white)](https://qdrant.tech/)
-  [![MongoDB](https://img.shields.io/badge/Database-MongoDB-47A248.svg?style=flat-square&logo=mongodb&logoColor=white)](https://www.mongodb.com/)
-  [![License](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
-</div>
+Noelys là nền tảng Document Intelligence dùng Hybrid RAG, Graph RAG và agentic orchestration để hỏi đáp trên tài liệu học tập. Dự án hiện chạy theo mô hình local-first: frontend Vite, backend FastAPI, Qdrant qua Docker, MongoDB Atlas và LLM local qua Ollama.
 
----
+## Tính năng chính
 
-## 🌟 Overview
+- Hỏi đáp có căn cứ trên PDF, DOCX, PPTX, ảnh, CSV/XLSX.
+- Agentic RAG bật mặc định: lập kế hoạch truy xuất, multi-query retrieval, truy xuất theo từng nguồn, kiểm tra độ phủ, repair retrieval, rerank, tổng hợp và kiểm chứng claim.
+- Citation đầy đủ: tên tài liệu, trang, block, bounding box và confidence.
+- Hybrid retrieval: BGE-M3 dense + sparse vectors, RRF fusion, reranker BGE-reranker-v2-m3.
+- Knowledge Graph và mindmap: entity/relation extraction, graph traversal, React Flow visualization.
+- Tóm tắt, study guide, bảng so sánh nhiều nguồn và phát hiện mâu thuẫn cơ bản.
+- Hỗ trợ tiếng Việt/English, OCR cho ảnh/scanned PDF và pipeline xử lý multimodal.
 
-**AgentBook** is a state-of-the-art Document Intelligence platform that goes beyond simple keyword search. By leveraging **Graph RAG** technology, it transforms static documents (PDFs, PPTXs, Images) into a dynamic Knowledge Graph. This allows users to perform **Cross-Document Reasoning**, trace evidence with pinpoint accuracy, and explore complex topics through interactive mindmaps.
-
-Designed specifically for the Vietnamese academic and research context, AgentBook handles bilingual (EN-VI) sources, scanned documents, and even clear handwritten notes.
-
-## ✨ Key Features
-
-- **🔍 Hybrid & Graph Retrieval**: 
-  - BGE-M3 Dense + Sparse vectors with RRF fusion
-  - Lexical fallback for robustness
-  - Knowledge Graph traversal for multi-hop reasoning
-  - Redis-backed embedding cache for 2-3x throughput
-- **📄 Multimodal Document Parsing**: 
-  - Layout-aware parsing with Docling
-  - EasyOCR for printed text and clear handwritten notes
-  - Multi-variant preprocessing (grayscale, contrast enhancement) for low-quality scans
-  - Table, figure, and equation extraction
-  - Semantic chunking with tokenizer-accurate counting
-- **🖇️ Evidence Tracing & Citations**: 
-  - Every response includes verifiable citations with document names, page numbers, block IDs, and bounding boxes
-  - Complete evidence trace preserved through entire pipeline
-  - Confidence scoring and refusal when evidence insufficient
-- **⚖️ Cross-Document Comparison**: 
-  - Automatically generate comparison tables between multiple sources
-  - Detect contradictions using NLI-based claim verification
-  - Cross-lingual support (Vietnamese query → English documents)
-- **🧠 Interactive Mindmaps**: 
-  - Visualize knowledge base as dynamic mindmap powered by React Flow
-  - Entity and relation extraction with evidence references
-  - Click nodes to view supporting evidence
-- **🛡️ Guardrails & Safe Refusal**: 
-  - Confidence-based refusal (min reranker score, min evidence confidence)
-  - Claim verification to detect contradictions
-  - Image quality gates for handwriting OCR
-  - No hallucinations - strictly grounded in uploaded documents
-
-## 🏗️ System Architecture
+## Kiến trúc hiện tại
 
 ```mermaid
 graph TB
-    subgraph "Application Layer"
-        CLIENT["React Dashboard / CLI"]
-        API["FastAPI Gateway"]
-    end
-    
-    subgraph "AI & RAG Service Layer"
-        INGEST["Ingestion Pipeline"]
-        PARSER["Docling/OCR Engine"]
-        GRAPH["Knowledge Graph Builder"]
-        RETRIEVER["Hybrid Retriever (Dense+Sparse)"]
-        RERANKER["Cross-Encoder Reranker"]
-        LLM["Grounded QA Engine (Qwen/Llama)"]
-    end
-    
-    subgraph "Data Persistence"
-        MONGO["MongoDB Atlas (Metadata)"]
-        QDRANT["Qdrant (Vector Embeddings)"]
-        REDIS["Redis (Task Queue)"]
-    end
-    
-    CLIENT --> API
-    API --> INGEST --> PARSER --> MONGO
-    PARSER --> GRAPH --> MONGO
-    API --> RETRIEVER --> RERANKER --> LLM
-    LLM --> API
-    RETRIEVER --> QDRANT
+  UI["Frontend: Vite + React + TypeScript"]
+  API["Backend: FastAPI"]
+  AGENT["Agentic RAG Service"]
+  RETRIEVAL["Hybrid Retriever + Reranker"]
+  GRAPH["Knowledge Graph Retriever"]
+  LLM["Ollama local LLM / OpenAI-compatible fallback"]
+  MONGO["MongoDB Atlas"]
+  QDRANT["Qdrant Docker"]
+
+  UI --> API
+  API --> AGENT
+  AGENT --> RETRIEVAL
+  AGENT --> GRAPH
+  AGENT --> LLM
+  RETRIEVAL --> QDRANT
+  API --> MONGO
+  GRAPH --> MONGO
 ```
 
-## 🛠️ Tech Stack
+## Yêu cầu
 
-### Backend
-- **Framework**: FastAPI (Python 3.12+)
-- **Task Management**: Celery + Redis
-- **RAG Core**: 
-  - **Embedding**: BGE-M3 (Dense + Sparse vectors)
-  - **Reranking**: BGE-reranker-v2-m3 (CrossEncoder)
-  - **Retrieval**: Hybrid (Dense + Sparse + Lexical) with RRF fusion
-  - **Chunking**: Semantic chunking (Kamradt 2023) with tokenizer-accurate counting
-  - **Query Processing**: LLM-based Multi-Query rewriting + Dictionary fallback
-- **LLM**: Qwen2.5 3B (Local via Ollama) with OpenAI API fallback
-- **Parsing**: IBM Docling, EasyOCR (for printed text and handwriting)
-- **Graph**: MongoDB edge collections for knowledge graph
-
-### Databases
-- **Vector DB**: Qdrant (Docker / Cloud) with dense + sparse vectors
-- **Metadata DB**: MongoDB Atlas + Beanie ODM
-- **Cache**: Redis (embedding cache + task queue)
-
-### Frontend
-- **Framework**: Vite + React + TypeScript
-- **State**: Zustand + TanStack Query
-- **Visualization**: React Flow (for Graphs & Mindmaps)
-- **UI**: Tailwind CSS + shadcn/ui
-
-## 🚀 Getting Started
-
-### Prerequisites
-- Docker & Docker Compose
+- Windows PowerShell
 - Python 3.11+
-- MongoDB Atlas account (or local MongoDB)
+- Node.js 18+
+- Docker Desktop
+- MongoDB Atlas URI trong `backend/.env`
+- Ollama đang chạy với model trong `config/model_config.yaml`
 
-### Installation
+Model local mặc định trong config hiện tại:
 
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/nvtanphat/AgentBook-Platform.git
-   cd AgentBook-Platform
-   ```
-
-2. **Configure Environment**:
-   Create a `.env` file in the `backend/` directory based on `.env.example`.
-   ```bash
-   cp backend/.env.example backend/.env
-   # Edit backend/.env with your MONGODB_URI and API keys
-   ```
-
-3. **Spin up Infrastructure**:
-   ```bash
-   docker compose up -d
-   ```
-
-4. **Start the Backend**:
-   ```bash
-   cd backend
-   pip install -r requirements.txt
-   uvicorn src.main:app --reload
-   ```
-
-5. **Start the Frontend**:
-   ```bash
-   cd frontend
-   npm install
-   npm run dev
-   ```
-
-## 📊 Evaluation & Benchmarking
-
-AgentBook includes a comprehensive evaluation suite to ensure retrieval accuracy and answer quality:
-
-### Retrieval Metrics
-- **Recall@k**: Proportion of relevant documents in top-k results
-- **MRR (Mean Reciprocal Rank)**: Rank of first relevant document
-- **nDCG@k**: Normalized Discounted Cumulative Gain
-- **MAP (Mean Average Precision)**: Average precision across queries
-
-Run evaluation:
-```bash
-cd backend
-pytest tests/test_evaluation/test_retrieval_metrics.py -v
+```text
+qwen2.5:3b
 ```
 
-### RAG Quality
-- **Faithfulness**: Answers grounded in evidence
-- **Relevancy**: Answers address the query
-- **Citation Accuracy**: Citations point to correct sources
-- **Cross-lingual Quality**: Vietnamese query → English document retrieval
+Cài model nếu chưa có:
 
-### Performance Benchmarks
-- **Indexing**: ~2-5 documents/minute (with contextual enrichment)
-- **Query Latency**: 2-8 seconds (local LLM), 1-3 seconds (API fallback)
-- **Retrieval Recall@5**: >80% on test corpus
-- **Cache Hit Rate**: 70-80% with Redis cache
+```powershell
+ollama pull qwen2.5:3b
+ollama serve
+```
 
-## 🤝 Contributing
+## Cấu hình môi trường
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Tạo file env backend từ mẫu:
 
-## 📜 License
+```powershell
+Copy-Item backend\.env.example backend\.env
+```
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+Các biến quan trọng:
 
----
-<div align="center">
-  Built with ❤️ by the AgentBook Team
-</div>
+```env
+MONGODB_URI=mongodb+srv://...
+AGENTBOOK_MONGODB_DATABASE=agentbook
+AGENTBOOK_QDRANT_URL=http://localhost:6333
+AGENTBOOK_AGENTIC_RAG_ENABLED=true
+AGENTBOOK_LLM_DEFAULT_PROVIDER=local
+AGENTBOOK_LLM_LOCAL_MODEL=qwen2.5:3b
+AGENTBOOK_OLLAMA_BASE_URL=http://localhost:11434
+```
+
+`start_all.ps1` sẽ kiểm tra Qdrant Docker và patch `.env` sang `http://localhost:6333` nếu đang trỏ nhầm local path.
+
+## Chạy dự án
+
+Cách khuyến nghị:
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File .\start_all.ps1
+```
+
+Script sẽ:
+
+- Dừng process cũ trên port `8000` và `5173`.
+- Khởi động Qdrant bằng `docker compose up -d qdrant`.
+- Chờ Qdrant sẵn sàng ở `http://localhost:6333/readyz`.
+- Chạy backend ở `http://localhost:8000`.
+- Chạy frontend ở `http://localhost:5173`.
+- Ghi log vào `backend.out.log`, `backend.err.log`, `frontend.out.log`, `frontend.err.log`.
+
+URL sau khi chạy:
+
+- Frontend: http://localhost:5173
+- Backend: http://localhost:8000
+- API docs: http://localhost:8000/docs
+- Qdrant dashboard: http://localhost:6333/dashboard
+
+## Chạy thủ công
+
+Backend:
+
+```powershell
+cd backend
+pip install -r requirements.txt
+python -m uvicorn src.main:app --port 8000
+```
+
+Frontend:
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+Qdrant:
+
+```powershell
+docker compose up -d qdrant
+```
+
+## API chính
+
+- `GET /health`: kiểm tra backend.
+- `POST /api/v1/materials/upload`: upload một tài liệu.
+- `POST /api/v1/materials/batch_upload`: upload nhiều tài liệu.
+- `GET /api/v1/materials`: danh sách tài liệu.
+- `POST /api/v1/query/ask`: hỏi đáp RAG.
+- `POST /api/v1/query/ask-stream`: SSE stream, có `agent_step` và `done`.
+- `POST /api/v1/query/compare`: so sánh theo khía cạnh.
+- `POST /api/v1/query/summarize`: tóm tắt.
+- `POST /api/v1/query/study-guide`: tạo study guide.
+- `POST /api/v1/graph`: graph view.
+- `POST /api/v1/graph/mindmap`: mindmap.
+
+## Agentic RAG
+
+Agentic RAG hiện nằm trong `backend/src/agentic/` và được gọi từ `QueryService` khi `AGENTBOOK_AGENTIC_RAG_ENABLED=true`.
+
+Luồng xử lý chính:
+
+- `plan_query`: chọn route và kế hoạch.
+- `retrieve_multi_query` hoặc `retrieve_text`: tìm bằng chứng.
+- `retrieve_per_source`: đảm bảo nhiều nguồn đều được xét.
+- `trace_graph`: dùng Knowledge Graph cho câu hỏi quan hệ.
+- `verify_coverage`: kiểm tra nguồn nào đã có bằng chứng.
+- `repair_retrieval`: truy xuất bổ sung cho nguồn còn thiếu.
+- `rerank_evidence`: chọn context cuối.
+- `synthesize_answer`: gọi LLM để tổng hợp.
+- `verify_claims`: kiểm chứng claim bằng evidence.
+
+Frontend hiển thị agent status, coverage badge, verification badge, reasoning trace và citation footer trong chat.
+
+## Test và build
+
+Backend tests đã dùng để kiểm tra trạng thái hiện tại:
+
+```powershell
+python -m pytest backend\tests\test_agentic backend\tests\test_inference\test_query_endpoint.py -q
+python -m pytest backend\tests\test_inference backend\tests\test_rag -q
+```
+
+Frontend build:
+
+```powershell
+npm.cmd --prefix frontend run build
+```
+
+Lưu ý: Vite hiện có warning chunk lớn hơn 500 kB sau minification; build vẫn thành công.
+
+## Troubleshooting
+
+Backend không lên:
+
+```powershell
+Get-Content backend.err.log -Tail 80
+Invoke-WebRequest http://127.0.0.1:8000/health -UseBasicParsing
+```
+
+Frontend không lên:
+
+```powershell
+Get-Content frontend.err.log -Tail 80
+Invoke-WebRequest http://localhost:5173 -UseBasicParsing
+```
+
+Qdrant không sẵn sàng:
+
+```powershell
+docker compose ps
+Invoke-WebRequest http://localhost:6333/readyz -UseBasicParsing
+```
+
+Ollama/model lỗi:
+
+```powershell
+ollama list
+ollama pull qwen2.5:3b
+```
+
+Port bị chiếm:
+
+```powershell
+Get-NetTCPConnection -LocalPort 8000,5173,6333 -State Listen | Select-Object LocalPort,OwningProcess
+```
+
+## Ghi chú phát triển
+
+- Không cần chạy Redis/Celery worker riêng cho workflow local hiện tại nếu task eager mode được bật trong môi trường chạy.
+- Qdrant hiện chạy qua Docker theo `start_all.ps1`.
+- MongoDB metadata dùng Atlas qua `MONGODB_URI`.
+- Prompt tiếng Việt và các UI text đã được chuẩn hóa UTF-8; nếu thấy mojibake kiểu `Báº...` hoặc `Ã...`, cần sửa file ở encoding UTF-8.

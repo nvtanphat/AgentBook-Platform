@@ -5,6 +5,7 @@ import AppShell from "./components/AppShell";
 import WorkspacePage from "./pages/WorkspacePage";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { WorkspaceProvider } from "./state/workspace";
+import { ToastProvider } from "./components/Toast";
 import "./styles.css";
 
 function EvidenceRedirect() {
@@ -36,7 +37,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <ErrorBoundary>
       <WorkspaceProvider>
-        <RouterProvider router={router} />
+        <ToastProvider>
+          <RouterProvider router={router} />
+        </ToastProvider>
       </WorkspaceProvider>
     </ErrorBoundary>
   </React.StrictMode>

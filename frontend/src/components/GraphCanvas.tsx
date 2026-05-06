@@ -38,6 +38,11 @@ export type CanvasEdge = {
   source: string;
   target: string;
   label: string;
+  confidence?: number | null;
+  evidence_count?: number;
+  evidence_refs?: Array<Record<string, string | number>>;
+  source_label?: string | null;
+  target_label?: string | null;
   focused?: boolean;
   branchColor?: string;
 };
@@ -82,12 +87,14 @@ function typeColor(type: string) {
   return TYPE_COLORS[key] ?? { bg: "#f8fafc", border: "#94a3b8", text: "#475569" };
 }
 
-type CircleNodeData = { label: string; entityType: string; confidence: number | null; degree: number; focused?: boolean };
+type CircleNodeData = { label: string; entityType: string; confidence: number | null; degree: number; focused?: boolean; dimmed?: boolean; searchMatch?: boolean };
 
 function CircleNode({ data, selected }: NodeProps<CircleNodeData>) {
   const color = typeColor(data.entityType);
   const deg = Math.min(data.degree || 1, 12);
   const isFocused = Boolean(data.focused);
+  const isSearchMatch = Boolean(data.searchMatch);
+  const isDimmed = Boolean(data.dimmed);
   const size = 76 + Math.min(deg, 8) * 4;
 
   const centerHandle: React.CSSProperties = {
@@ -111,20 +118,23 @@ function CircleNode({ data, selected }: NodeProps<CircleNodeData>) {
         height: size,
         borderRadius: "50%",
         background: selected ? color.border : color.bg,
-        border: `${selected || isFocused ? 3 : 2}px solid ${color.border}`,
+        border: `${selected || isFocused || isSearchMatch ? 3 : 2}px solid ${isSearchMatch ? "#f59e0b" : color.border}`,
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
         gap: 4,
         padding: 8,
-        boxShadow: selected
-          ? `0 0 0 3px ${color.border}24, 0 8px 18px rgba(15, 23, 42, .18)`
-          : isFocused
-            ? `0 0 0 3px ${color.border}18, 0 5px 14px rgba(15, 23, 42, .12)`
-            : "0 2px 8px rgba(15, 23, 42, .08)",
+        opacity: isDimmed ? 0.18 : 1,
+        boxShadow: isSearchMatch
+          ? `0 0 0 4px #fbbf2440, 0 6px 18px rgba(245,158,11,.22)`
+          : selected
+            ? `0 0 0 3px ${color.border}28, 0 8px 18px rgba(15, 23, 42, .18)`
+            : isFocused
+              ? `0 0 0 5px ${color.border}30, 0 6px 16px rgba(15, 23, 42, .15)`
+              : "0 2px 8px rgba(15, 23, 42, .08)",
         cursor: "pointer",
-        transition: "all .12s",
+        transition: "all .15s",
       }}
     >
       <Handle type="target" position={Position.Left} style={centerHandle} />
@@ -281,11 +291,11 @@ function computeForceLayout(
     });
   });
 
-  const REPEL = 36000;
-  const IDEAL = 170;
-  const SPRING = 0.035;
-  const GRAVITY = 0.018;
-  const ITERS = 160;
+  const REPEL = 54000;
+  const IDEAL = 210;
+  const SPRING = 0.032;
+  const GRAVITY = 0.012;
+  const ITERS = 220;
 
   for (let iter = 0; iter < ITERS; iter++) {
     const cool = Math.pow(0.978, iter);
@@ -442,28 +452,38 @@ function applyMindmapTreeLayout(nodes: Node[], edges: Edge[]): Node[] {
 
 export type GraphCanvasProps = {
   onSelect: (nodeId: string, label: string) => void;
+  onEdgeSelect?: (edge: CanvasEdge) => void;
   mode: "graph" | "mindmap";
   canvasNodes?: CanvasNode[];
   canvasEdges?: CanvasEdge[];
   onOpenEvidence?: (target: { docId: string; page: number; blockId?: string | null }) => void;
   onDraftQuestion?: (draft: string) => void;
   onFindRelated?: (draft: string) => void;
+  searchQuery?: string;
 };
 
 function FlowInner({
   onSelect,
+  onEdgeSelect,
   mode,
   canvasNodes = [],
   canvasEdges = [],
   onOpenEvidence,
   onDraftQuestion,
   onFindRelated,
+  searchQuery,
 }: GraphCanvasProps) {
   const [collapsedNodes, setCollapsedNodes] = useState<Set<string>>(() => new Set());
   const [prunedNodes, setPrunedNodes] = useState<Set<string>>(() => new Set());
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const lastMindmapSignature = useRef<string>("");
+
+  const matchingNodeIds = useMemo<Set<string> | null>(() => {
+    const q = searchQuery?.trim().toLowerCase();
+    if (!q || mode !== "graph") return null;
+    return new Set(canvasNodes.filter((n) => n.label.toLowerCase().includes(q)).map((n) => n.id));
+  }, [searchQuery, canvasNodes, mode]);
 
   const handleToggleNode = useCallback((nodeId: string) => {
     setCollapsedNodes((prev) => {
@@ -563,6 +583,8 @@ function FlowInner({
         .map((node) => {
           const hasChildren = mode === "mindmap" ? (childrenMap.get(node.id)?.length ?? 0) > 0 : false;
           const evidenceRefs = node.evidence_refs ?? [];
+          const isSearchMatch = matchingNodeIds !== null && matchingNodeIds.has(node.id);
+          const isDimmedBySearch = matchingNodeIds !== null && !matchingNodeIds.has(node.id);
           const data =
             mode === "graph"
               ? {
@@ -572,6 +594,8 @@ function FlowInner({
                   degree: node.degree ?? 1,
                   evidenceRefs,
                   focused: node.focused,
+                  dimmed: isDimmedBySearch,
+                  searchMatch: isSearchMatch,
                 }
               : {
                   label: node.label,
@@ -593,7 +617,7 @@ function FlowInner({
             data,
           };
         }),
-    [canvasNodes, childrenMap, collapsedNodes, handleToggleNode, hiddenNodes, mode]
+    [canvasNodes, childrenMap, collapsedNodes, handleToggleNode, hiddenNodes, matchingNodeIds, mode]
   );
 
   const rfEdges = useMemo<Edge[]>(
@@ -603,7 +627,11 @@ function FlowInner({
         .map((edge, index) => {
           const selectedRelated =
             selectedNodeId !== null && (edge.source === selectedNodeId || edge.target === selectedNodeId);
-          const dimmed = mode === "graph" && selectedNodeId !== null && !selectedRelated;
+          const dimmedBySelection = mode === "graph" && selectedNodeId !== null && !selectedRelated;
+          const searchEndpointMatch = matchingNodeIds !== null &&
+            (matchingNodeIds.has(edge.source) || matchingNodeIds.has(edge.target));
+          const dimmedBySearch = matchingNodeIds !== null && !searchEndpointMatch;
+          const dimmed = dimmedBySelection || dimmedBySearch;
           const semanticLabel =
             mode === "graph" &&
             edge.label &&
@@ -618,19 +646,20 @@ function FlowInner({
             source: edge.source,
             target: edge.target,
             type: mode === "mindmap" ? "smoothstep" : "bezier",
+            data: { canvasEdge: edge },
             label: selectedRelated ? semanticLabel : undefined,
             animated: false,
             style: {
-              opacity: dimmed ? 0.12 : selectedRelated ? 0.95 : mode === "graph" ? 0.38 : 0.75,
+              opacity: dimmed ? 0.1 : selectedRelated ? 0.95 : mode === "graph" ? 0.52 : 0.75,
               stroke: selectedRelated || edge.focused ? "#0f766e" : mode === "graph" ? "#64748b" : branchColor,
-              strokeWidth: selectedRelated ? 2.8 : edge.focused ? 2 : mode === "graph" ? 1.05 : 1.75,
+              strokeWidth: selectedRelated ? 2.8 : edge.focused ? 2.2 : mode === "graph" ? 1.2 : 1.75,
             },
             labelStyle: { fill: "#0f766e", fontSize: 9, fontWeight: 700 },
             labelBgStyle: { fill: "#ffffff", fillOpacity: 0.94 },
             labelBgPadding: [3, 4] as [number, number],
           };
         }),
-    [canvasEdges, hiddenNodes, mode, selectedNodeId]
+    [canvasEdges, hiddenNodes, matchingNodeIds, mode, selectedNodeId]
   );
 
   const layoutedNodes = useMemo(() => {
@@ -663,6 +692,16 @@ function FlowInner({
     [onSelect]
   );
 
+  const handleEdgeClick = useCallback(
+    (_: unknown, edge: Edge) => {
+      const canvasEdge = (edge.data as { canvasEdge?: CanvasEdge } | undefined)?.canvasEdge;
+      if (!canvasEdge) return;
+      setSelectedNodeId(null);
+      onEdgeSelect?.(canvasEdge);
+    },
+    [onEdgeSelect]
+  );
+
   const openEvidenceFromRefs = useCallback(
     (refs: Array<Record<string, string | number>>) => {
       if (!onOpenEvidence) {
@@ -689,9 +728,6 @@ function FlowInner({
 
   const handleNodeContextMenu = useCallback(
     (event: React.MouseEvent, node: Node) => {
-      if (mode !== "mindmap") {
-        return;
-      }
       event.preventDefault();
       setContextMenu({
         nodeId: node.id,
@@ -700,7 +736,7 @@ function FlowInner({
         evidenceRefs: ((node.data as MindmapNodeData).evidenceRefs ?? []),
       });
     },
-    [mode]
+    []
   );
 
   const handleDeleteNode = useCallback(
@@ -756,6 +792,7 @@ function FlowInner({
       onNodesChange={onNodesChange}
       onEdgesChange={onEdgesChange}
       onNodeClick={handleNodeClick}
+      onEdgeClick={handleEdgeClick}
       onNodeContextMenu={handleNodeContextMenu}
       onPaneClick={() => setSelectedNodeId(null)}
       fitView
@@ -800,9 +837,9 @@ function FlowInner({
           nodeId={contextMenu.nodeId}
           nodeLabel={contextMenu.nodeLabel}
           position={contextMenu.position}
+          subtitle={mode === "graph" ? "Knowledge Graph" : "Mindmap"}
           onClose={() => setContextMenu(null)}
           onAskAI={(label) => {
-            onDraftQuestion?.(`Hãy giải thích về ${label} dựa trên tài liệu hiện có.`);
             onDraftQuestion?.(`Hãy giải thích về ${label} dựa trên tài liệu hiện có.`);
           }}
           onViewSources={() => {
@@ -811,16 +848,13 @@ function FlowInner({
             }
           }}
           onFindRelated={(nodeId) => {
-            onFindRelated?.(`Các khái niệm liên quan đến ${contextMenu.nodeLabel} là gì?`);
-            if (!onFindRelated) {
-              onSelect(nodeId, contextMenu.nodeLabel);
-            }
-            onFindRelated?.(`Các khái niệm liên quan đến ${contextMenu.nodeLabel} là gì?`);
-            if (!onFindRelated) {
+            if (onFindRelated) {
+              onFindRelated(`Các khái niệm liên quan đến ${contextMenu.nodeLabel} là gì?`);
+            } else {
               onSelect(nodeId, contextMenu.nodeLabel);
             }
           }}
-          onDelete={contextMenu.nodeId !== "root-topic" ? handleDeleteNode : undefined}
+          onDelete={mode === "mindmap" && contextMenu.nodeId !== "root-topic" ? handleDeleteNode : undefined}
         />
       )}
     </ReactFlow>

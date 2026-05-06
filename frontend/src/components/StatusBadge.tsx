@@ -14,27 +14,27 @@ const STAGE_CONFIG: Record<string, StageConfig> = {
   },
   parsing: {
     style: "bg-sky-50 text-sky-700 border-sky-200",
-    label: "Parsing…",
+    label: "Reading",
     icon: <ScanText size={9} className="animate-pulse" />,
   },
   parsed: {
     style: "bg-indigo-50 text-indigo-700 border-indigo-200",
-    label: "Parsed",
+    label: "Read",
     icon: <Layers size={9} />,
   },
   chunking: {
     style: "bg-violet-50 text-violet-700 border-violet-200",
-    label: "Chunking…",
+    label: "Analyzing",
     icon: <Layers size={9} className="animate-pulse" />,
   },
   embedding: {
     style: "bg-blue-50 text-blue-700 border-blue-200",
-    label: "Embedding…",
+    label: "Preparing",
     icon: <Cpu size={9} className="animate-pulse" />,
   },
   indexing: {
     style: "bg-amber-50 text-amber-700 border-amber-200",
-    label: "Indexing…",
+    label: "Preparing",
     icon: <Cpu size={9} className="animate-pulse" />,
   },
   indexed: {
@@ -44,7 +44,7 @@ const STAGE_CONFIG: Record<string, StageConfig> = {
   },
   failed: {
     style: "bg-red-50 text-red-700 border-red-200",
-    label: "Failed",
+    label: "Needs retry",
     icon: <AlertCircle size={9} />,
   },
 };

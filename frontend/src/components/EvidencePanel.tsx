@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  AlignLeft, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp,
+  AlignLeft, Check, ChevronDown, ChevronRight, ChevronUp,
   Copy, FileText, Heading, Image, Loader2, Table2, Sigma,
 } from "lucide-react";
 import { Citation, EvidenceBlock, EvidencePageResponse, loadEvidencePage } from "../api/client";
 import SnippetRenderer from "./SnippetRenderer";
-import MarkdownRenderer from "./MarkdownRenderer";
 import { useWorkspace } from "../state/workspace";
 
 // ─── Keyword highlight ────────────────────────────────────────────────────────
@@ -96,6 +95,50 @@ function ConfidenceBar({ value }: { value: number }) {
 
 // ─── Copy button ──────────────────────────────────────────────────────────────
 
+function getEvidenceQuality(confidence?: number | null, blockType?: string | null) {
+  const type = (blockType ?? "").toLowerCase();
+  if (type === "image" || type === "figure") {
+    return { label: "OCR/image", className: "border-orange-200 bg-orange-50 text-orange-700" };
+  }
+  if (confidence == null) {
+    return { label: "Review", className: "border-slate-200 bg-slate-50 text-slate-600" };
+  }
+  if (confidence >= 0.75) {
+    return { label: "Strong evidence", className: "border-emerald-200 bg-emerald-50 text-emerald-700" };
+  }
+  if (confidence >= 0.45) {
+    return { label: "Partial evidence", className: "border-amber-200 bg-amber-50 text-amber-700" };
+  }
+  return { label: "Needs review", className: "border-red-200 bg-red-50 text-red-700" };
+}
+
+function EvidenceQualityBadge({ confidence, blockType }: { confidence?: number | null; blockType?: string | null }) {
+  const quality = getEvidenceQuality(confidence, blockType);
+  return (
+    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold ${quality.className}`}>
+      {quality.label}
+    </span>
+  );
+}
+
+function EvidenceRoleBadge({ role }: { role?: string | null }) {
+  if (role === "primary") {
+    return (
+      <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-primary">
+        Primary
+      </span>
+    );
+  }
+  if (role === "supporting") {
+    return (
+      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-muted">
+        Supporting
+      </span>
+    );
+  }
+  return null;
+}
+
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   const handle = useCallback(async () => {
@@ -127,23 +170,18 @@ function MatchedSnippet({ citation }: { citation: Citation }) {
     ? lines.slice(0, SNIPPET_COLLAPSE_LINES).join("\n") + "…"
     : citation.snippet_original;
 
-  const rolePill = citation.role === "primary"
-    ? <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-primary">Primary</span>
-    : citation.role === "supporting"
-    ? <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-muted">Supporting</span>
-    : null;
-
   return (
     <div className="shrink-0 border-b border-outline bg-slate-50 px-4 py-3">
-      <div className="mb-2 flex items-center gap-2">
+      <div className="mb-2 flex items-center gap-2 flex-wrap">
         <p className="text-[10px] font-semibold uppercase tracking-wider text-muted">Grounded evidence</p>
-        {rolePill}
+        <EvidenceRoleBadge role={citation.role} />
+        <EvidenceQualityBadge confidence={citation.confidence} blockType={citation.block_type} />
         <div className="ml-auto">
           <CopyButton text={citation.snippet_original} />
         </div>
       </div>
-      <div className="rounded-md border border-secondary/30 bg-white px-3 py-2">
-        <div className="border-l-2 border-secondary pl-2">
+      <div className="rounded-md border border-primary/30 bg-white px-3 py-2 shadow-sm">
+        <div className="border-l-4 border-primary pl-2">
           <SnippetRenderer
             text={text}
             blockType={citation.block_type ?? undefined}
@@ -223,7 +261,14 @@ import { API_BASE_URL } from "../api/client";
 
 type BBoxOverlay = { x1: number; y1: number; x2: number; y2: number } | null;
 
-function SourceImageViewer({ url, alt, highlightBbox }: { url: string; alt: string; highlightBbox: BBoxOverlay }) {
+function SourceImageViewer({
+  url, alt, highlightBbox, citationIndex,
+}: {
+  url: string;
+  alt: string;
+  highlightBbox: BBoxOverlay;
+  citationIndex?: number | null;
+}) {
   const [imgSize, setImgSize] = useState<{ w: number; h: number } | null>(null);
   const [containerWidth, setContainerWidth] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -264,15 +309,26 @@ function SourceImageViewer({ url, alt, highlightBbox }: { url: string; alt: stri
         />
         {/* Highlight bounding box overlay */}
         {highlightBbox && imgSize && (
-          <div
-            className="pointer-events-none absolute rounded border-2 border-yellow-400 bg-yellow-300/20"
-            style={{
-              left: `${highlightBbox.x1 * scale}px`,
-              top: `${highlightBbox.y1 * scale}px`,
-              width: `${(highlightBbox.x2 - highlightBbox.x1) * scale}px`,
-              height: `${(highlightBbox.y2 - highlightBbox.y1) * scale}px`,
-            }}
-          />
+          <>
+            <div
+              className="pointer-events-none absolute rounded border-2 border-yellow-300 bg-yellow-300/25 shadow-[0_0_0_9999px_rgba(15,23,42,0.25)]"
+              style={{
+                left: `${highlightBbox.x1 * scale}px`,
+                top: `${highlightBbox.y1 * scale}px`,
+                width: `${(highlightBbox.x2 - highlightBbox.x1) * scale}px`,
+                height: `${(highlightBbox.y2 - highlightBbox.y1) * scale}px`,
+              }}
+            />
+            <span
+              className="pointer-events-none absolute rounded bg-yellow-300 px-1.5 py-0.5 text-[10px] font-bold text-slate-900 shadow"
+              style={{
+                left: `${highlightBbox.x1 * scale}px`,
+                top: `${Math.max(0, highlightBbox.y1 * scale - 20)}px`,
+              }}
+            >
+              Evidence{citationIndex ? ` [${citationIndex}]` : ""}
+            </span>
+          </>
         )}
       </div>
     </div>
@@ -306,7 +362,7 @@ function BlockCard({
       ref={ref}
       className={`rounded-lg border p-3 transition-all ${
         highlighted
-          ? "border-secondary bg-teal-50 shadow-sm ring-1 ring-secondary/30"
+          ? "border-primary bg-primary/5 shadow-md ring-2 ring-primary/20"
           : "border-outline bg-white hover:border-slate-300"
       }`}
     >
@@ -314,6 +370,12 @@ function BlockCard({
       <div className="mb-2 flex items-center gap-2 flex-wrap">
         <BlockTypeBadge type={block.block_type} />
         <span className="text-[10px] text-muted">p.{block.page}</span>
+        {highlighted && (
+          <span className="rounded-full bg-primary px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
+            Selected evidence
+          </span>
+        )}
+        <EvidenceQualityBadge confidence={block.confidence} blockType={block.block_type} />
         {block.confidence != null && (
           <div className="ml-auto">
             <ConfidenceBar value={block.confidence} />
@@ -386,7 +448,7 @@ function CitationNav({
         onClick={() => onSelect(currentIndex - 1)}
         className="flex h-6 w-6 shrink-0 items-center justify-center rounded border border-outline text-muted hover:text-text disabled:opacity-30"
       >
-        <ChevronLeft size={13} />
+        <ChevronRight size={13} className="rotate-180" />
       </button>
       <div className="min-w-0 flex-1 text-center">
         <p className="truncate text-[10px] font-semibold text-text" title={cur?.doc_name}>
@@ -411,6 +473,63 @@ function CitationNav({
 
 // ─── Main panel ───────────────────────────────────────────────────────────────
 
+function ActiveEvidenceStrip({
+  citations, currentIndex, onSelect,
+}: {
+  citations: Citation[];
+  currentIndex: number;
+  onSelect: (i: number) => void;
+}) {
+  if (citations.length === 0) return null;
+  const sourceCount = new Set(citations.map((citation) => citation.doc_id)).size;
+  const primaryCount = citations.filter((citation) => citation.role === "primary").length;
+  return (
+    <div className="shrink-0 border-b border-outline bg-white px-4 py-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted">Answer evidence</p>
+          <p className="text-[11px] text-muted">
+            {sourceCount} sources · {primaryCount || citations.length} primary refs · click to inspect exact blocks.
+          </p>
+        </div>
+        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-muted">
+          {citations.length} refs
+        </span>
+      </div>
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        {citations.map((item, index) => {
+          const active = index === currentIndex;
+          return (
+            <button
+              key={`${item.doc_id}-${item.block_id ?? item.page ?? index}-${index}`}
+              onClick={() => onSelect(index)}
+              className={`min-w-[150px] max-w-[190px] rounded-md border px-2.5 py-2 text-left transition ${
+                active
+                  ? "border-primary bg-primary/5 ring-1 ring-primary/25"
+                  : "border-outline bg-slate-50 hover:border-slate-300 hover:bg-white"
+              }`}
+            >
+              <div className="mb-1 flex items-center gap-1.5">
+                <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${active ? "bg-primary text-white" : "bg-white text-muted"}`}>
+                  [{index + 1}]
+                </span>
+                <EvidenceRoleBadge role={item.role} />
+              </div>
+              <p className="truncate text-[11px] font-semibold text-text" title={item.doc_name}>
+                {item.doc_name}
+              </p>
+              <div className="mt-1 flex items-center justify-between gap-2">
+                <span className="text-[10px] text-muted">{item.page ? `p.${item.page}` : "no page"}</span>
+                <span className="text-[10px] font-bold tabular-nums text-muted">{Math.round(item.confidence * 100)}%</span>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 type EvidencePanelProps = {
   citation?: Citation | null;
   docId?: string | null;
@@ -427,7 +546,6 @@ export default function EvidencePanel({ citation: citationProp, docId: docIdProp
   const currentIndex = activeCitations.findIndex(
     (c) => c.doc_id === citation?.doc_id && c.block_id === citation?.block_id
   );
-  const navIndex = currentIndex >= 0 ? currentIndex : 0;
 
   function navigateTo(i: number) {
     const c = activeCitations[i];
@@ -482,6 +600,7 @@ export default function EvidencePanel({ citation: citationProp, docId: docIdProp
   }
 
   const docName = pageData?.doc_name ?? citation?.doc_name ?? "Evidence";
+  const citationNumber = currentIndex >= 0 ? currentIndex + 1 : null;
 
   return (
     <aside className="panel flex h-full flex-col bg-surface-low">
@@ -518,12 +637,13 @@ export default function EvidencePanel({ citation: citationProp, docId: docIdProp
         {citation && (
           <div className="ml-3 shrink-0 flex flex-col items-end gap-1">
             <ConfidenceBar value={citation.confidence} />
+            <EvidenceQualityBadge confidence={citation.confidence} blockType={citation.block_type} />
           </div>
         )}
       </div>
 
       {/* ── Citation navigation ── */}
-      <CitationNav citations={activeCitations} currentIndex={navIndex} onSelect={navigateTo} />
+      <ActiveEvidenceStrip citations={activeCitations} currentIndex={currentIndex} onSelect={navigateTo} />
 
       {/* ── Matched snippet ── */}
       {citation && <MatchedSnippet citation={citation} />}
@@ -549,6 +669,7 @@ export default function EvidencePanel({ citation: citationProp, docId: docIdProp
                 url={pageData.raw_image_url}
                 alt={pageData.doc_name}
                 highlightBbox={citation?.bbox ?? null}
+                citationIndex={citationNumber}
               />
             )}
 

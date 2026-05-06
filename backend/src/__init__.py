@@ -1,1 +1,1 @@
-"""Prism backend package."""
+"""Noelys backend package."""

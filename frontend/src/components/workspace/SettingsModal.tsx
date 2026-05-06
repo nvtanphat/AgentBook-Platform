@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { AlertCircle, CheckCircle2, Loader2, X, Zap } from "lucide-react";
 import { API_BASE_URL, CollectionSummary, checkHealth, getAdminMetrics, listCollections } from "../../api/client";
 import { useWorkspace } from "../../state/workspace";
@@ -51,6 +51,7 @@ export default function SettingsModal() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const isOpen = searchParams.get("settings") === "open";
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   const [draft, setDraft] = useState(workspace);
   const [status, setStatus] = useState<string | null>(null);
@@ -85,6 +86,18 @@ export default function SettingsModal() {
     params.delete("settings");
     navigate({ search: params.toString() });
   }
+
+  // Focus modal + Escape to close
+  useEffect(() => {
+    if (!isOpen) return;
+    dialogRef.current?.focus();
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === "Escape") close();
+    }
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
 
   function handleCollectionSelect(collectionId: string) {
     if (!collectionId) {
@@ -137,8 +150,16 @@ export default function SettingsModal() {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <div className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-xl bg-white shadow-2xl">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={close}>
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Workspace Settings"
+        tabIndex={-1}
+        className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-xl bg-white shadow-2xl outline-none"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="flex items-center justify-between border-b border-outline px-6 py-4 sticky top-0 bg-white z-10">
           <h2 className="font-heading text-lg font-bold">Workspace Settings</h2>
           <button onClick={close} className="text-muted hover:text-text p-1"><X size={20} /></button>

@@ -164,6 +164,29 @@ export type ReasoningStep = {
   description: string;
 };
 
+export type AgentTraceStep = {
+  name: string;
+  status: "pending" | "running" | "completed" | "skipped" | "failed";
+  query?: string | null;
+  sources_requested?: number | null;
+  sources_covered?: number | null;
+  evidence_count?: number | null;
+  warning?: string | null;
+};
+
+export type AgentVerification = {
+  verdict: string;
+  confidence: number;
+  warning?: string | null;
+};
+
+export type AgentTrace = {
+  plan_type: string;
+  steps: AgentTraceStep[];
+  repair_attempted: boolean;
+  verification?: AgentVerification | null;
+};
+
 export type QueryResponse = {
   answer: string;
   answer_language: string;
@@ -175,6 +198,8 @@ export type QueryResponse = {
   was_refused: boolean;
   refusal_reason: string | null;
   reasoning_path: ReasoningStep[];
+  coverage?: CoverageReport | null;
+  agent_trace?: AgentTrace | null;
 };
 
 export type CompareRequest = {
@@ -194,11 +219,24 @@ export type ComparisonCell = {
   confidence: number;
 };
 
+export type CoverageSource = {
+  material_id: string;
+  name: string;
+  covered: boolean;
+};
+
+export type CoverageReport = {
+  requested_count: number;
+  covered_count: number;
+  sources: CoverageSource[];
+};
+
 export type CompareResponse = {
   topic: string;
   comparison_table: ComparisonCell[];
   conflicts: string[];
   citations: Citation[];
+  coverage?: CoverageReport | null;
 };
 
 export type EvidenceBlock = {
@@ -252,7 +290,10 @@ export type GraphEdge = {
   source: string;
   target: string;
   relation_type: string;
+  source_label?: string | null;
+  target_label?: string | null;
   confidence: number | null;
+  evidence_count?: number;
   evidence_refs: Array<Record<string, string | number>>;
 };
 
@@ -298,8 +339,14 @@ export type CollectionSummary = {
   updated_at: string;
 };
 
+export type CollectionDashboard = CollectionSummary & {
+  entity_count: number;
+  status_counts: Record<string, number>;
+  language_counts: Record<string, number>;
+};
+
 async function parseError(response: Response) {
-  const fallback = `Prism API request failed: ${response.status}`;
+  const fallback = `Noelys API request failed: ${response.status}`;
   try {
     const payload = (await response.json()) as { detail?: unknown; message?: string; error?: string };
     if (typeof payload.detail === "string") return payload.detail;
@@ -357,6 +404,11 @@ export function listCollections(ownerId: string) {
   return apiGet<CollectionSummary[]>(`/collections?${params.toString()}`);
 }
 
+export function getCollectionDashboard(ownerId: string, collectionId: string) {
+  const params = new URLSearchParams({ owner_id: ownerId });
+  return apiGet<CollectionDashboard>(`/collections/${encodeURIComponent(collectionId)}/dashboard?${params.toString()}`);
+}
+
 export function createCollection(payload: {
   owner_id: string;
   name: string;
@@ -364,6 +416,19 @@ export function createCollection(payload: {
   description?: string | null;
 }) {
   return apiPost<CollectionSummary>("/collections", payload);
+}
+
+export function updateCollection(collectionId: string, payload: {
+  owner_id: string;
+  name?: string | null;
+  subject?: string | null;
+  description?: string | null;
+}) {
+  return request<CollectionSummary>(`/collections/${encodeURIComponent(collectionId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
 }
 
 export function deleteCollection(collectionId: string, ownerId: string) {
@@ -511,6 +576,7 @@ export async function askQuestionStream(
     onToken: (token: string) => void;
     onDone: (response: QueryResponse) => void;
     onError: (message: string) => void;
+    onAgentStep?: (step: AgentTraceStep) => void;
   },
 ): Promise<void> {
   const response = await fetch(`${API_V1_BASE_URL}/query/ask-stream`, {
@@ -534,6 +600,8 @@ export async function askQuestionStream(
       if (eventType === "token") {
         const parsed = JSON.parse(dataStr) as { token: string };
         callbacks.onToken(parsed.token);
+      } else if (eventType === "agent_step") {
+        callbacks.onAgentStep?.(JSON.parse(dataStr) as AgentTraceStep);
       } else if (eventType === "done") {
         callbacks.onDone(JSON.parse(dataStr) as QueryResponse);
       } else if (eventType === "error") {
@@ -585,6 +653,8 @@ export function loadMindmap(payload: {
   collection_id?: string | null;
   material_ids?: string[];
   root_topic?: string | null;
+  detail_level?: "overview" | "detailed";
+  use_llm?: boolean;
 }) {
   return apiPost<MindmapResponse>("/graph/mindmap", payload);
 }
@@ -602,6 +672,7 @@ export type SummaryRequest = {
   owner_id: string;
   collection_id?: string | null;
   material_id?: string | null;
+  material_ids?: string[];
   scope?: string;
   top_k?: number | null;
 };
@@ -612,6 +683,7 @@ export type SummaryResponse = {
   confidence: number;
   was_refused?: boolean;
   refusal_reason?: string | null;
+  coverage?: CoverageReport | null;
 };
 
 export type StudyGuideRequest = {

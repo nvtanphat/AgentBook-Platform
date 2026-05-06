@@ -1,9 +1,10 @@
-import { DragEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, BookOpen, CheckCircle2, FileText, Image, Loader2, Plus, RefreshCw, Search, Table2, Trash2, UploadCloud, X } from "lucide-react";
-import { CollectionSummary, MaterialInfo, MaterialUploadMetadata, createCollection, deleteCollection, deleteMaterial, getMaterialStatus, listCollections, listMaterials, retryMaterial, uploadMaterialsBatchWithProgress } from "../../api/client";
+import { DragEvent, useCallback, useEffect, useMemo, useRef, useState, useId } from "react";
+import { AlertCircle, BookOpen, Check, FileText, Image, Loader2, Pencil, Plus, RefreshCw, Search, Table2, Trash2, UploadCloud, X } from "lucide-react";
+import { CollectionSummary, MaterialInfo, MaterialUploadMetadata, createCollection, deleteCollection, deleteMaterial, getMaterialStatus, listCollections, listMaterials, retryMaterial, updateCollection, uploadMaterialsBatchWithProgress } from "../../api/client";
 import StatusBadge from "../StatusBadge";
 import { useWorkspace } from "../../state/workspace";
 import DebugModal from "./DebugModal";
+import { useToast } from "../Toast";
 
 const ACCEPTED_TYPES = ".pdf,.docx,.pptx,.png,.jpg,.jpeg,.csv,.xlsx";
 const ACCEPTED_MIME = new Set([
@@ -152,9 +153,16 @@ export default function SourcesPanel({ onCloseMobile }: { onCloseMobile?: () => 
     updateMaterialStatus,
     removeUploadedMaterial,
     clearUploadedMaterialsForCollection,
+    sourceScopeMode,
+    selectedSourceIds,
+    setSourceScopeMode,
+    setSelectedSourceIds,
+    setReadySources,
   } = useWorkspace();
+  const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const didAutoSelectCollectionRef = useRef(false);
+  const checkboxIdPrefix = useId();
 
   const [collections, setCollections] = useState<CollectionSummary[]>([]);
   const [loadingCollections, setLoadingCollections] = useState(false);
@@ -168,14 +176,17 @@ export default function SourcesPanel({ onCloseMobile }: { onCloseMobile?: () => 
   const [uploadingName, setUploadingName] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
   const [deletingCollection, setDeletingCollection] = useState(false);
   const [creatingCollection, setCreatingCollection] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [renamingCollection, setRenamingCollection] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
+  const [savingRename, setSavingRename] = useState(false);
   const [deletingMaterial, setDeletingMaterial] = useState<string | null>(null);
   const [confirmDeleteMaterial, setConfirmDeleteMaterial] = useState<string | null>(null);
   const [debugMaterial, setDebugMaterial] = useState<MaterialInfo | null>(null);
   const [retryingMaterial, setRetryingMaterial] = useState<string | null>(null);
+  const prevPendingCountRef = useRef<number>(0);
 
   const loadCollections = useCallback(async () => {
     setLoadingCollections(true);
@@ -234,6 +245,19 @@ export default function SourcesPanel({ onCloseMobile }: { onCloseMobile?: () => 
     loadMaterialsFromServer(workspace.collectionId || null);
   }, [loadMaterialsFromServer, workspace.collectionId]);
 
+  useEffect(() => {
+    setRenamingCollection(false);
+    setRenameValue(workspace.collectionName);
+  }, [workspace.collectionId, workspace.collectionName]);
+
+  // Notify when all pending materials finish processing
+  useEffect(() => {
+    if (prevPendingCountRef.current > 0 && pendingCount === 0 && workspace.collectionId) {
+      toast(`Tài liệu trong "${workspace.collectionName || "collection"}" đã sẵn sàng để hỏi đáp!`, "success");
+    }
+    prevPendingCountRef.current = pendingCount;
+  }, [pendingCount, workspace.collectionId, workspace.collectionName, toast]);
+
   // Auto-poll while any material is still processing
   useEffect(() => {
     if (!workspace.collectionId || pendingCount === 0) return;
@@ -281,7 +305,6 @@ export default function SourcesPanel({ onCloseMobile }: { onCloseMobile?: () => 
       return [...prev, ...valid.filter((f) => !names.has(f.name))];
     });
     setError(null);
-    setSuccess(null);
   }
 
   function handleDrop(event: DragEvent<HTMLDivElement>) {
@@ -296,7 +319,6 @@ export default function SourcesPanel({ onCloseMobile }: { onCloseMobile?: () => 
     
     setUploading(true);
     setError(null);
-    setSuccess(null);
 
     let latestCollectionId: string | null = workspace.collectionId || null;
     const uploadErrors: string[] = [];
@@ -342,7 +364,7 @@ export default function SourcesPanel({ onCloseMobile }: { onCloseMobile?: () => 
     if (uploadErrors.length) setError(uploadErrors.join("\n"));
 
     if (count > 0) {
-      setSuccess(`${count} file(s) uploaded successfully!`);
+      toast(`${count} file${count > 1 ? "s" : ""} đã upload thành công!`, "success");
       setFiles([]);
       setHandwritingFiles(new Set());
       await Promise.all([
@@ -365,10 +387,10 @@ export default function SourcesPanel({ onCloseMobile }: { onCloseMobile?: () => 
       clearUploadedMaterialsForCollection(workspace.collectionId);
       updateWorkspace({ collectionId: "", collectionName: "" });
       setServerMaterials([]);
-      setSuccess("Collection deleted.");
+      toast("Collection đã xóa.", "success");
       await loadCollections();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Delete failed.");
+      toast(err instanceof Error ? err.message : "Xóa collection thất bại.", "error");
     } finally {
       setDeletingCollection(false);
     }
@@ -379,7 +401,6 @@ export default function SourcesPanel({ onCloseMobile }: { onCloseMobile?: () => 
     if (!name || creatingCollection) return;
     setCreatingCollection(true);
     setError(null);
-    setSuccess(null);
     try {
       const collection = await createCollection({
         owner_id: workspace.ownerId,
@@ -394,12 +415,36 @@ export default function SourcesPanel({ onCloseMobile }: { onCloseMobile?: () => 
       });
       setCollections((current) => [collection, ...current.filter((item) => item.collection_id !== collection.collection_id)]);
       setServerMaterials([]);
-      setSuccess("Collection created.");
+      toast(`Collection "${collection.name}" đã tạo.`, "success");
       await loadCollections();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Create collection failed.");
+      toast(err instanceof Error ? err.message : "Tạo collection thất bại.", "error");
     } finally {
       setCreatingCollection(false);
+    }
+  }
+
+  async function handleRenameCollection() {
+    const name = renameValue.trim();
+    if (!workspace.collectionId || !name || savingRename) return;
+    setSavingRename(true);
+    setError(null);
+    try {
+      const updated = await updateCollection(workspace.collectionId, {
+        owner_id: workspace.ownerId,
+        name,
+        subject: selectedCollection?.subject ?? (workspace.subject || null),
+        description: selectedCollection?.description ?? null,
+      });
+      updateWorkspace({ collectionName: updated.name, subject: updated.subject ?? workspace.subject });
+      setCollections((current) => current.map((item) => item.collection_id === updated.collection_id ? { ...item, ...updated } : item));
+      setRenamingCollection(false);
+      toast(`Đổi tên thành "${updated.name}".`, "success");
+      await loadCollections();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Đổi tên thất bại.", "error");
+    } finally {
+      setSavingRename(false);
     }
   }
 
@@ -411,7 +456,7 @@ export default function SourcesPanel({ onCloseMobile }: { onCloseMobile?: () => 
     try {
       await deleteMaterial(materialId, workspace.ownerId);
       removeUploadedMaterial(materialId);
-      setSuccess("Source deleted.");
+      toast("Đã xóa tài liệu.", "success");
       await Promise.all([
         loadCollections(),
         loadMaterialsFromServer(workspace.collectionId || null),
@@ -419,14 +464,14 @@ export default function SourcesPanel({ onCloseMobile }: { onCloseMobile?: () => 
     } catch (err) {
       if (isNotFoundError(err)) {
         removeUploadedMaterial(materialId);
-        setSuccess("Source was already removed.");
+        toast("Tài liệu đã bị xóa trước đó.", "info");
         await Promise.all([
           loadCollections(),
           loadMaterialsFromServer(workspace.collectionId || null),
         ]);
         return;
       }
-      setError(err instanceof Error ? err.message : "Delete failed.");
+      toast(err instanceof Error ? err.message : "Xóa tài liệu thất bại.", "error");
     } finally {
       setDeletingMaterial(null);
     }
@@ -437,10 +482,10 @@ export default function SourcesPanel({ onCloseMobile }: { onCloseMobile?: () => 
     setError(null);
     try {
       await retryMaterial(materialId, workspace.ownerId);
-      setSuccess("Pipeline retry queued.");
+      toast("Pipeline retry đã được xếp hàng.", "info");
       await loadMaterialsFromServer(workspace.collectionId || null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Retry failed.");
+      toast(err instanceof Error ? err.message : "Retry thất bại.", "error");
     } finally {
       setRetryingMaterial(null);
     }
@@ -448,22 +493,71 @@ export default function SourcesPanel({ onCloseMobile }: { onCloseMobile?: () => 
 
   const selectedCollection = collections.find((c) => c.collection_id === workspace.collectionId);
 
-  const displayMaterials = [...serverMaterials, ...sessionOnlyMaterials.map((m) => ({
-    material_id: m.materialId,
-    collection_id: m.collectionId,
-    owner_id: workspace.ownerId,
-    filename: m.filename,
-    original_name: m.originalName,
-    file_type: "",
-    status: m.status,
-    subject: null,
-    topic: m.topic || null,
-    page_count: null,
-    version: "v1.0",
-  } satisfies MaterialInfo))];
+  function selectCollection(collectionId: string) {
+    setConfirmDelete(false);
+    if (!collectionId) {
+      didAutoSelectCollectionRef.current = true;
+      updateWorkspace({ collectionId: "", collectionName: "" });
+      setSourceScopeMode("all");
+      return;
+    }
+    const col = collections.find((c) => c.collection_id === collectionId);
+    updateWorkspace({ collectionId: collectionId, collectionName: col?.name ?? "", subject: col?.subject ?? workspace.subject });
+    setSourceScopeMode("all");
+  }
+
+  const displayMaterials = useMemo(() => [
+    ...serverMaterials,
+    ...sessionOnlyMaterials.map((m) => ({
+      material_id: m.materialId,
+      collection_id: m.collectionId,
+      owner_id: workspace.ownerId,
+      filename: m.filename,
+      original_name: m.originalName,
+      file_type: "",
+      status: m.status,
+      subject: null,
+      topic: m.topic || null,
+      page_count: null,
+      version: "v1.0",
+    } satisfies MaterialInfo)),
+  // sessionOnlyMaterials already derived from materials + serverIds
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], [serverMaterials, sessionOnlyMaterials]);
+  const indexedMaterialIds = displayMaterials
+    .filter((item) => item.status.toLowerCase() === "indexed")
+    .map((item) => item.material_id);
+  const activeSourceIds = sourceScopeMode === "selected"
+    ? new Set(selectedSourceIds)
+    : new Set(indexedMaterialIds);
+  const activeCount = indexedMaterialIds.filter((id) => activeSourceIds.has(id)).length;
+
+  useEffect(() => {
+    setReadySources(
+      displayMaterials
+        .filter((item) => item.status.toLowerCase() === "indexed")
+        .map((item) => ({
+          materialId: item.material_id,
+          name: item.original_name,
+          topic: item.topic,
+        }))
+    );
+  }, [displayMaterials, setReadySources]);
+
+  function toggleSource(materialId: string, enabled: boolean) {
+    const base = sourceScopeMode === "selected" ? selectedSourceIds : indexedMaterialIds;
+    const next = enabled
+      ? Array.from(new Set([...base, materialId]))
+      : base.filter((id) => id !== materialId);
+    if (next.length === indexedMaterialIds.length && indexedMaterialIds.every((id) => next.includes(id))) {
+      setSourceScopeMode("all");
+    } else {
+      setSelectedSourceIds(next);
+    }
+  }
 
   return (
-    <div className="flex flex-col h-full bg-slate-50 relative">
+    <div className="flex flex-col h-full bg-slate-50/80 relative">
       {/* Mobile header */}
       <div className="lg:hidden flex items-center justify-between p-4 border-b border-outline bg-white">
         <h2 className="font-heading font-semibold flex items-center gap-2">
@@ -479,11 +573,11 @@ export default function SourcesPanel({ onCloseMobile }: { onCloseMobile?: () => 
         </button>
       </div>
 
-      {/* Collection Selector */}
-      <div className="p-4 border-b border-outline bg-white shrink-0">
-        <div className="flex flex-col gap-2">
+      {/* Collection Manager */}
+      <div className="p-4 bg-white/90 shrink-0 section-divider" style={{ backdropFilter: 'blur(8px)' }}>
+        <div className="flex flex-col gap-2.5">
           <div className="flex items-center justify-between">
-            <span className="label-caps">Active Collection</span>
+            <span className="label-caps">Bộ tài liệu</span>
             <div className="flex items-center gap-2">
               {workspace.collectionId && (
                 confirmDelete ? (
@@ -495,58 +589,75 @@ export default function SourcesPanel({ onCloseMobile }: { onCloseMobile?: () => 
                     <button type="button" onClick={() => setConfirmDelete(false)} className="text-[10px] text-muted hover:text-text">No</button>
                   </div>
                 ) : (
-                  <button
-                    type="button"
-                    onClick={handleDeleteCollection}
-                    title="Delete collection"
-                    aria-label="Xóa collection hiện tại"
-                    className="rounded p-1 text-muted hover:bg-red-50 hover:text-red-500 disabled:opacity-50"
-                    disabled={deletingCollection}
-                  >
-                    <Trash2 size={12} />
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => { setRenameValue(workspace.collectionName); setRenamingCollection(true); }}
+                      title="Rename collection"
+                      aria-label="Rename collection"
+                      className="rounded p-1 text-muted hover:bg-slate-100 hover:text-primary disabled:opacity-50"
+                      disabled={deletingCollection}
+                    >
+                      <Pencil size={12} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleDeleteCollection}
+                      title="Delete collection"
+                      aria-label="Delete collection"
+                      className="rounded p-1 text-muted hover:bg-red-50 hover:text-red-500 disabled:opacity-50"
+                      disabled={deletingCollection}
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
                 )
               )}
               <button
                 type="button"
                 onClick={loadCollections}
                 disabled={loadingCollections}
-                aria-label="Tải lại danh sách collection"
+                aria-label="Tải lại danh sách bộ tài liệu"
                 className="rounded p-1 text-muted hover:bg-slate-100 hover:text-primary disabled:opacity-50"
               >
                 <RefreshCw size={12} className={loadingCollections ? "animate-spin" : ""} />
               </button>
             </div>
           </div>
-          <select
-            className="w-full rounded-md border border-outline bg-slate-50 px-2 py-1.5 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-primary"
-            value={workspace.collectionId}
-            onChange={(e) => {
-              const id = e.target.value;
-              setConfirmDelete(false);
-              if (!id) {
-                didAutoSelectCollectionRef.current = true;
-                updateWorkspace({ collectionId: "", collectionName: "" });
-                return;
-              }
-              const col = collections.find((c) => c.collection_id === id);
-              updateWorkspace({ collectionId: id, collectionName: col?.name ?? "" });
-            }}
-          >
-            <option value="">+ New Collection</option>
-            {collections.map((c) => (
-              <option key={c.collection_id} value={c.collection_id}>{c.name}</option>
-            ))}
-          </select>
-          
+
+          <div className="flex gap-2">
+            <select
+              className="min-w-0 flex-1 rounded-md border border-outline bg-slate-50 px-2 py-1.5 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-primary"
+              value={workspace.collectionId}
+              onChange={(e) => selectCollection(e.target.value)}
+              disabled={loadingCollections}
+            >
+              <option value="">{loadingCollections ? "Loading..." : "+ Tạo bộ tài liệu"}</option>
+              {collections.map((collection) => (
+                <option key={collection.collection_id} value={collection.collection_id}>
+                  {collection.name}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => selectCollection("")}
+              title="Tạo bộ tài liệu"
+              aria-label="Tạo bộ tài liệu"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary text-white hover:bg-primary-bright"
+            >
+              <Plus size={14} />
+            </button>
+          </div>
+
           {!workspace.collectionId && (
             <div className="flex gap-2">
-             <input
-               className="min-w-0 flex-1 rounded-md border border-outline px-2 py-1.5 text-xs"
-               placeholder="Name for new collection..."
-               value={workspace.collectionName}
-               onChange={(e) => updateWorkspace({ collectionName: e.target.value })}
-             />
+              <input
+                className="min-w-0 flex-1 rounded-md border border-outline px-2 py-1.5 text-xs"
+                placeholder="Tên bộ tài liệu..."
+                value={workspace.collectionName}
+                onChange={(e) => updateWorkspace({ collectionName: e.target.value })}
+              />
               <button
                 type="button"
                 onClick={handleCreateCollection}
@@ -554,15 +665,54 @@ export default function SourcesPanel({ onCloseMobile }: { onCloseMobile?: () => 
                 className="flex items-center justify-center gap-1 rounded-md bg-primary px-2 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
               >
                 {creatingCollection ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
-                Create
+                Tạo
+              </button>
+            </div>
+          )}
+
+          {workspace.collectionId && renamingCollection && (
+            <div className="flex gap-2">
+              <input
+                className="min-w-0 flex-1 rounded-md border border-outline px-2 py-1.5 text-xs"
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleRenameCollection();
+                  if (e.key === "Escape") setRenamingCollection(false);
+                }}
+                autoFocus
+              />
+              <button
+                type="button"
+                onClick={handleRenameCollection}
+                disabled={savingRename || !renameValue.trim()}
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary text-white disabled:opacity-50"
+                title="Save name"
+                aria-label="Save collection name"
+              >
+                {savingRename ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+              </button>
+              <button
+                type="button"
+                onClick={() => setRenamingCollection(false)}
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-outline text-muted hover:bg-slate-50"
+                title="Cancel"
+                aria-label="Cancel rename"
+              >
+                <X size={13} />
               </button>
             </div>
           )}
 
           {selectedCollection && (
-            <div className="flex gap-3 text-[10px] text-muted font-medium mt-1">
-              <span>{selectedCollection.material_count} docs</span>
+            <div className="flex items-center gap-3 text-[10px] font-medium text-muted">
+              <span>{selectedCollection.material_count} tài liệu</span>
               <span>{selectedCollection.retrievable_chunk_count} chunks</span>
+              {selectedCollection.latest_material_name && (
+                <span className="min-w-0 flex-1 truncate text-right" title={selectedCollection.latest_material_name}>
+                  {selectedCollection.latest_material_name}
+                </span>
+              )}
             </div>
           )}
         </div>
@@ -571,8 +721,8 @@ export default function SourcesPanel({ onCloseMobile }: { onCloseMobile?: () => 
       {/* Dropzone */}
       <div className="p-4 shrink-0">
         <div
-          className={`cursor-pointer rounded-lg border-2 border-dashed p-4 text-center transition ${
-            dragOver ? "border-primary bg-primary/5" : "border-outline bg-white hover:border-primary/50"
+          className={`cursor-pointer rounded-xl border-2 border-dashed p-4 text-center transition-all ${
+            dragOver ? "border-primary bg-primary/5 shadow-sm" : "border-outline/50 bg-white/80 hover:border-primary/40 hover:shadow-sm"
           } ${uploading ? "opacity-50 pointer-events-none" : ""}`}
           onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
           onDragLeave={() => setDragOver(false)}
@@ -580,9 +730,9 @@ export default function SourcesPanel({ onCloseMobile }: { onCloseMobile?: () => 
           onClick={() => !uploading && fileInputRef.current?.click()}
         >
           <input ref={fileInputRef} type="file" className="hidden" multiple accept={ACCEPTED_TYPES} onChange={(e) => { addFiles(e.target.files); if(e.target) e.target.value = ""; }} />
-          <UploadCloud size={20} className="mx-auto mb-2 text-primary" />
-          <p className="text-xs font-semibold text-text">Click to upload or drag files</p>
-          <p className="text-[10px] text-muted mt-1">PDF, DOCX, PPTX, Images</p>
+          <UploadCloud size={18} className="mx-auto mb-2 text-primary/60" />
+          <p className="text-xs font-semibold text-text/80">Click to upload or drag files</p>
+          <p className="text-[10px] text-muted/50 mt-1">PDF, DOCX, PPTX, Images</p>
         </div>
 
         {/* Queue */}
@@ -640,7 +790,6 @@ export default function SourcesPanel({ onCloseMobile }: { onCloseMobile?: () => 
         )}
 
         {error && <div className="mt-2 text-[10px] text-red-600 bg-red-50 p-2 rounded flex items-start gap-1 whitespace-pre-wrap"><AlertCircle size={12} className="shrink-0 mt-0.5" /> {error}</div>}
-        {success && !uploading && <div className="mt-2 text-[10px] text-emerald-600 bg-emerald-50 p-2 rounded flex items-center gap-1"><CheckCircle2 size={12} /> {success}</div>}
       </div>
 
       {/* Materials List */}
@@ -663,6 +812,33 @@ export default function SourcesPanel({ onCloseMobile }: { onCloseMobile?: () => 
           )}
         </div>
 
+        {displayMaterials.length > 0 && (
+          <div className="mx-2 mb-3 rounded-lg border border-outline bg-white p-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold uppercase tracking-wide text-muted">Query scope</p>
+                <p className="truncate text-xs font-semibold text-text">
+                  {sourceScopeMode === "selected"
+                    ? `${activeCount} selected source${activeCount === 1 ? "" : "s"}`
+                    : `All indexed sources (${indexedMaterialIds.length})`}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSourceScopeMode("all")}
+                className="shrink-0 rounded-md border border-outline px-2 py-1 text-[10px] font-semibold text-muted hover:border-primary/40 hover:text-primary"
+              >
+                Select all
+              </button>
+            </div>
+            {sourceScopeMode === "selected" && activeCount === 0 && (
+              <p className="mt-2 rounded bg-amber-50 px-2 py-1 text-[10px] text-amber-700">
+                No active source selected. Select all or choose a file before asking.
+              </p>
+            )}
+          </div>
+        )}
+
         {/* Indexing warning banner */}
         {pendingCount > 0 && (
           <div className="mx-2 mb-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
@@ -672,28 +848,59 @@ export default function SourcesPanel({ onCloseMobile }: { onCloseMobile?: () => 
             </p>
           </div>
         )}
-        {displayMaterials.length === 0 ? (
+        {loadingMaterials && displayMaterials.length === 0 ? (
+          <div className="space-y-1 px-0" aria-label="Đang tải danh sách tài liệu">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="flex items-start gap-2 p-2 rounded-lg bg-white border border-transparent animate-pulse">
+                <div className="mt-0.5 h-5 w-5 shrink-0 rounded bg-slate-200" />
+                <div className="h-4 w-4 shrink-0 rounded bg-slate-200" />
+                <div className="flex-1 space-y-1.5 pt-0.5">
+                  <div className="h-3 rounded bg-slate-200" style={{ width: `${60 + (i * 13) % 30}%` }} />
+                  <div className="h-2.5 w-16 rounded bg-slate-100" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : displayMaterials.length === 0 ? (
            <div className="text-center p-6 text-muted">
              <FileText size={24} className="mx-auto mb-2 opacity-50" />
-             <p className="text-xs">{workspace.collectionId ? "No sources in this collection" : "Select a collection"}</p>
+             <p className="text-xs">{workspace.collectionId ? "Chưa có tài liệu trong bộ này" : "Chọn một bộ tài liệu"}</p>
            </div>
         ) : (
           <div className="space-y-1">
             {displayMaterials.map(item => {
               const isPending = !isTerminalStatus(item.status);
+              const isActiveSource = activeSourceIds.has(item.material_id) && !isPending;
               return (
-              <div key={item.material_id} className={`flex items-start gap-2 p-2 rounded-lg hover:bg-black/5 bg-white border transition group ${isPending ? "border-amber-200 bg-amber-50/50" : "border-transparent hover:border-outline"}`}>
-                {isPending
-                  ? <CircularProgress status={item.status} stage={(item as any).stage ?? null} />
-                  : (() => { const fi = getFileIconInfo(item.original_name, item.file_type); return <span className={`mt-0.5 shrink-0 ${fi.colorClass}`}>{fi.icon}</span>; })()}
+              <div key={item.material_id} className={`source-item flex items-start gap-2 p-2.5 rounded-xl bg-white border transition group ${isPending ? "border-amber-200/60 bg-amber-50/30" : isActiveSource ? "border-primary/20 bg-primary/[0.03]" : "border-transparent hover:border-outline/40 opacity-70"}`}>
+                {isPending ? (
+                  <CircularProgress status={item.status} stage={(item as any).stage ?? null} />
+                ) : (
+                  <label
+                    htmlFor={`${checkboxIdPrefix}-${item.material_id}`}
+                    className="mt-0.5 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center"
+                    title={isActiveSource ? "Đang dùng — nhấn để bỏ chọn" : "Nhấn để chọn nguồn này"}
+                  >
+                    <input
+                      id={`${checkboxIdPrefix}-${item.material_id}`}
+                      type="checkbox"
+                      checked={isActiveSource}
+                      onChange={(e) => toggleSource(item.material_id, e.target.checked)}
+                      className="h-3.5 w-3.5 rounded border-outline text-primary focus:ring-primary"
+                      aria-label={`Use ${item.original_name} when asking`}
+                    />
+                  </label>
+                )}
+                {!isPending && (() => { const fi = getFileIconInfo(item.original_name, item.file_type); return <span className={`mt-0.5 shrink-0 ${fi.colorClass}`}>{fi.icon}</span>; })()}
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-xs font-semibold text-text" title={item.original_name}>{item.original_name}</p>
                   <div className="flex items-center gap-1 mt-1">
                     <StatusBadge status={item.status} />
+                    {!isPending && !isActiveSource && <span className="text-[10px] text-muted">not used</span>}
                     {item.topic && <span className="text-[10px] text-muted uppercase ml-1">{item.topic}</span>}
                   </div>
                 </div>
-                <div className="shrink-0 flex items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 transition">
+                <div className="shrink-0 flex items-center gap-1">
                   {!isPending && (
                     <button
                       type="button"

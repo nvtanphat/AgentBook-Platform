@@ -62,6 +62,17 @@ export default function DebugModal({ materialId, ownerId, originalName, onClose 
   const [hoveredBlockId, setHoveredBlockId] = useState<string | null>(null);
   const [imgSize, setImgSize] = useState<{ w: number; h: number } | null>(null);
   const imgRef = useRef<HTMLImageElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  // Escape to close + focus modal on mount
+  useEffect(() => {
+    dialogRef.current?.focus();
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [onClose]);
 
   useEffect(() => {
     let cancelled = false;
@@ -97,7 +108,12 @@ export default function DebugModal({ materialId, ownerId, originalName, onClose 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
       <div
-        className="bg-white rounded-xl shadow-2xl w-full max-w-6xl h-[90vh] flex flex-col overflow-hidden"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Debug — ${originalName}`}
+        tabIndex={-1}
+        className="bg-white rounded-xl shadow-2xl w-full max-w-6xl h-[90vh] flex flex-col overflow-hidden outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import Field, model_validator
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -62,14 +62,28 @@ class Settings(BaseSettings):
         populate_by_name=True,
     )
 
-    app_name: str = "Prism"
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls,
+        init_settings,
+        env_settings,
+        dotenv_settings,
+        file_secret_settings,
+    ):
+        return init_settings, env_settings, dotenv_settings, file_secret_settings
+
+    app_name: str = "Noelys"
     app_env: str = "development"
     api_v1_prefix: str = "/api/v1"
     testing: bool = False
     api_auth_enabled: bool = False
     api_key: str | None = None
 
-    mongodb_uri: str | None = Field(default=None, alias="MONGODB_URI")
+    mongodb_uri: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("mongodb_uri", "MONGODB_URI", "AGENTBOOK_MONGODB_URI"),
+    )
     mongodb_database: str = "agentbook"
 
     qdrant_url: str = "http://localhost:6333"
@@ -125,6 +139,7 @@ class Settings(BaseSettings):
     rerank_input_k: int = 20
     graph_max_hops: int = 2
     query_rewriter_enabled: bool = True
+    agentic_rag_enabled: bool = True
     min_reranker_score: float = 0.35
     min_evidence_confidence: float = 0.55
     min_graph_confidence: float = 0.55
@@ -251,6 +266,7 @@ def get_settings() -> Settings:
         rerank_input_k=retrieval_section.get("rerank_input_k", 15),
         graph_max_hops=min(int(retrieval_section.get("graph_max_hops", 2)), 2),
         query_rewriter_enabled=env_bool("QUERY_REWRITER_ENABLED", retrieval_section.get("query_rewriter_enabled", True)),
+        agentic_rag_enabled=env_bool("AGENTIC_RAG_ENABLED", retrieval_section.get("agentic_rag_enabled", True)),
         api_auth_enabled=env_bool("API_AUTH_ENABLED", str(env_value("APP_ENV", "development")).lower() == "production"),
         api_key=env_value("API_KEY", None),
         min_ocr_text_quality=refusal_config.get("min_ocr_text_quality", 0.35),

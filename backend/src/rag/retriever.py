@@ -152,7 +152,11 @@ class HybridRetriever:
             query_filter=query_filter,
             limit=limit or self.settings.rerank_input_k,
         )
-        lexical_points = self._lexical_fallback_points(query=query, scope_filter=query_filter, limit=limit or self.settings.rerank_input_k)
+        lexical_points = (
+            []
+            if has_sparse_signal and semantic_points
+            else self._lexical_fallback_points(query=query, scope_filter=query_filter, limit=limit or self.settings.rerank_input_k)
+        )
         if lexical_points:
             points = list(lexical_points)
             existing_ids = {str(point.id) for point in points}

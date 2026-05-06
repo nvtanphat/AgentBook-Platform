@@ -4,6 +4,7 @@ import { Citation, MaterialUploadResponse, QueryResponse } from "../api/client";
 const WORKSPACE_STORAGE_KEY = "prism.workspace.v1";
 const LEGACY_WORKSPACE_STORAGE_KEY = "agentbook.workspace.v2";
 const MATERIALS_STORAGE_KEY = "prism.materials.v1";
+const SOURCE_SCOPE_STORAGE_KEY = "prism.sourceScope.v1";
 
 export type WorkspaceSettings = {
   ownerId: string;
@@ -35,6 +36,12 @@ export type ActiveQueryContext = {
   createdAt: string;
 };
 
+export type ReadySourceSummary = {
+  materialId: string;
+  name: string;
+  topic?: string | null;
+};
+
 type WorkspaceContextValue = {
   workspace: WorkspaceSettings;
   updateWorkspace: (settings: Partial<WorkspaceSettings>) => void;
@@ -51,7 +58,14 @@ type WorkspaceContextValue = {
   setActiveQueryContext: (context: ActiveQueryContext | null) => void;
   chatDraft: string | null;
   setChatDraft: (draft: string | null) => void;
+  sourceScopeMode: "all" | "selected";
+  selectedSourceIds: string[];
+  setSourceScopeMode: (mode: "all" | "selected") => void;
+  setSelectedSourceIds: (ids: string[]) => void;
   scopedMaterialIds: string[];
+  readySourceCount: number;
+  readySources: ReadySourceSummary[];
+  setReadySources: (sources: ReadySourceSummary[]) => void;
 };
 
 const defaultWorkspace: WorkspaceSettings = {
@@ -98,6 +112,15 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [activeCitations, setActiveCitations] = useState<Citation[]>([]);
   const [activeQueryContext, setActiveQueryContext] = useState<ActiveQueryContext | null>(null);
   const [chatDraft, setChatDraft] = useState<string | null>(null);
+  const [readySources, setReadySourcesState] = useState<ReadySourceSummary[]>([]);
+  const [sourceScopeMode, setSourceScopeModeState] = useState<"all" | "selected">(() => {
+    const stored = readStorage<{ mode: string; ids: string[] }>(SOURCE_SCOPE_STORAGE_KEY, { mode: "all", ids: [] });
+    return stored.mode === "selected" ? "selected" : "all";
+  });
+  const [selectedSourceIds, setSelectedSourceIdsState] = useState<string[]>(() => {
+    const stored = readStorage<{ mode: string; ids: string[] }>(SOURCE_SCOPE_STORAGE_KEY, { mode: "all", ids: [] });
+    return Array.isArray(stored.ids) ? stored.ids : [];
+  });
 
   useEffect(() => {
     localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(workspace));
@@ -106,6 +129,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     localStorage.setItem(MATERIALS_STORAGE_KEY, JSON.stringify(materials));
   }, [materials]);
+
+  useEffect(() => {
+    localStorage.setItem(SOURCE_SCOPE_STORAGE_KEY, JSON.stringify({ mode: sourceScopeMode, ids: selectedSourceIds }));
+  }, [selectedSourceIds, sourceScopeMode]);
 
   const value = useMemo<WorkspaceContextValue>(() => {
     const updateWorkspace = (settings: Partial<WorkspaceSettings>) => {
@@ -147,6 +174,34 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       setMaterials((current) => current.filter((material) => material.collectionId !== collectionId));
     };
 
+    const setSourceScopeMode = (mode: "all" | "selected") => {
+      setSourceScopeModeState(mode);
+      if (mode === "all") setSelectedSourceIdsState([]);
+    };
+
+    const setSelectedSourceIds = (ids: string[]) => {
+      const unique = Array.from(new Set(ids.filter(Boolean)));
+      setSelectedSourceIdsState(unique);
+      setSourceScopeModeState("selected");
+    };
+
+    const setReadySources = (sources: ReadySourceSummary[]) => {
+      setReadySourcesState((current) => {
+        const next = sources.map((source) => ({
+          materialId: source.materialId,
+          name: source.name,
+          topic: source.topic ?? null,
+        }));
+        return JSON.stringify(current) === JSON.stringify(next) ? current : next;
+      });
+    };
+
+    const localIndexedIds = materials
+      .filter((item) => item.status.toLowerCase() === "indexed")
+      .filter((item) => !workspace.collectionId || item.collectionId === workspace.collectionId)
+      .map((item) => item.materialId);
+    const readySourceCount = sourceScopeMode === "selected" ? selectedSourceIds.length : localIndexedIds.length;
+
     return {
       workspace,
       updateWorkspace,
@@ -163,12 +218,16 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       setActiveQueryContext,
       chatDraft,
       setChatDraft,
-      scopedMaterialIds: materials
-        .filter((item) => item.status.toLowerCase() === "indexed")
-        .filter((item) => !workspace.collectionId || item.collectionId === workspace.collectionId)
-        .map((item) => item.materialId)
+      sourceScopeMode,
+      selectedSourceIds,
+      setSourceScopeMode,
+      setSelectedSourceIds,
+      scopedMaterialIds: sourceScopeMode === "selected" ? selectedSourceIds : (workspace.collectionId ? [] : localIndexedIds),
+      readySourceCount,
+      readySources,
+      setReadySources,
     };
-  }, [activeCitations, activeQueryContext, chatDraft, materials, selectedCitation, workspace]);
+  }, [activeCitations, activeQueryContext, chatDraft, materials, readySources, selectedCitation, selectedSourceIds, sourceScopeMode, workspace]);
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;
 }

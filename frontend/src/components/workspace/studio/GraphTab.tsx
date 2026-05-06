@@ -1,6 +1,6 @@
 ﻿import { useState, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
-import { AlertCircle, BookOpen, FileText, Link2, Loader2, Maximize2, RefreshCw, Target, X } from "lucide-react";
+import { AlertCircle, BookOpen, FileText, Link2, Loader2, Maximize2, Network, RefreshCw, ShieldCheck, Target, X } from "lucide-react";
 import { GraphResponse, MindmapResponse, loadGraph, loadMindmap } from "../../../api/client";
 import GraphCanvas, { CanvasEdge, CanvasNode } from "../../GraphCanvas";
 import { useWorkspace } from "../../../state/workspace";
@@ -41,6 +41,8 @@ const NOISY_GRAPH_LABELS = new Set([
 ]);
 const NOISY_GRAPH_WORDS = new Set(["adds", "description", "file", "source", "stabilizes", "stops", "technique"]);
 const FORMAT_GRAPH_WORDS = new Set(["docx", "jpg", "jpeg", "llm", "ocr", "pdf", "png", "pptx", "text", "vlm", "xlsx"]);
+const TECHNICAL_GRAPH_LABELS = new Set(["answer chunk", "chunk", "evidence", "key points", "metadata", "source", "sources"]);
+const BAD_GRAPH_LABEL_RE = /(?:jocaled|dalch|uon|nornlalizal|regulariza|techniq|trace viewer question)/i;
 
 type GraphFocus = {
   labels: Set<string>;
@@ -57,6 +59,10 @@ function normalizeGraphText(value: string) {
     .replace(/\u0111/g, "d")
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
+}
+
+function asciiFold(value: string) {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 }
 
 function repairMojibakeText(value: string) {
@@ -81,7 +87,13 @@ function cleanGraphLabel(value: string) {
   if (label.length < 3 || label.includes("|")) return null;
 
   const lower = label.toLowerCase();
+  const folded = asciiFold(label);
   const words = label.split(/\s+/);
+  if (/[ÃÂâ�]/.test(label)) return null;
+  if (label.includes("…") || label.includes("...") || BAD_GRAPH_LABEL_RE.test(label)) return null;
+  if (/^(hinh|bang|cau)\s+\d+$/.test(folded)) return null;
+  if (folded.includes("docxipdfipng") || folded.includes("docx pdf png")) return null;
+  if (TECHNICAL_GRAPH_LABELS.has(lower)) return null;
   if (NOISY_GRAPH_LABELS.has(lower) || NOISY_GRAPH_WORDS.has(lower)) return null;
   if (NOISY_GRAPH_WORDS.has(words[0]?.toLowerCase() ?? "")) return null;
   if (NOISY_GRAPH_WORDS.has(words[words.length - 1]?.toLowerCase() ?? "")) return null;
@@ -162,7 +174,7 @@ function toGraph(response: GraphResponse | null, focus: GraphFocus | null): { no
 
   const allowedIds = new Set(visibleNodes.map((n) => n.id));
   const visibleEdges = response.edges.filter(
-    (e) => allowedIds.has(e.source) && allowedIds.has(e.target)
+    (e) => allowedIds.has(e.source) && allowedIds.has(e.target) && ((e as any).evidence_refs?.length ?? 0) > 0
   ).sort((a, b) => {
     const aFocused = Number(focusIds.has(a.source) || focusIds.has(a.target));
     const bFocused = Number(focusIds.has(b.source) || focusIds.has(b.target));
@@ -188,6 +200,11 @@ function toGraph(response: GraphResponse | null, focus: GraphFocus | null): { no
     source: e.source,
     target: e.target,
     label: e.relation_type,
+    confidence: e.confidence,
+    evidence_count: (e as any).evidence_count ?? ((e as any).evidence_refs?.length ?? 0),
+    evidence_refs: (e as any).evidence_refs ?? [],
+    source_label: (e as any).source_label ?? visibleNodes.find((node) => node.id === e.source)?.label ?? null,
+    target_label: (e as any).target_label ?? visibleNodes.find((node) => node.id === e.target)?.label ?? null,
     focused: focusIds.has(e.source) || focusIds.has(e.target),
   }));
   return { nodes, edges };
@@ -307,6 +324,17 @@ type SelectedNode = {
   source_docs: string[];
   evidenceRefs: Array<Record<string, string | number>>;
   connections: { label: string; relation: string }[];
+};
+
+type SelectedRelation = {
+  source: string;
+  target: string;
+  sourceLabel: string;
+  targetLabel: string;
+  relation: string;
+  confidence: number | null;
+  evidenceCount: number;
+  evidenceRefs: Array<Record<string, string | number>>;
 };
 
 // ─── Color map (mirrors GraphCanvas) ─────────────────────────────────────────
@@ -439,6 +467,69 @@ function NodeInfoCard({ node, onClose }: { node: SelectedNode; onClose: () => vo
   );
 }
 
+function openEvidenceRef(refs: Array<Record<string, string | number>>, onOpenEvidence?: (target: { docId: string; page: number; blockId?: string | null }) => void) {
+  if (!onOpenEvidence) return false;
+  const ref = refs.find((item) => typeof (item.doc_id ?? item.material_id) === "string");
+  if (!ref) return false;
+  const docId = String(ref.doc_id ?? ref.material_id ?? "");
+  const page = Number(ref.page ?? 0);
+  if (!docId || !Number.isFinite(page) || page <= 0) return false;
+  onOpenEvidence({ docId, page, blockId: typeof ref.block_id === "string" ? ref.block_id : null });
+  return true;
+}
+
+function RelationInfoCard({
+  relation,
+  onClose,
+  onOpenEvidence,
+}: {
+  relation: SelectedRelation;
+  onClose: () => void;
+  onOpenEvidence?: (target: { docId: string; page: number; blockId?: string | null }) => void;
+}) {
+  const pct = relation.confidence != null ? Math.round(relation.confidence * 100) : null;
+  const confidenceClass = pct == null
+    ? "bg-slate-100 text-muted"
+    : pct >= 70
+      ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+      : pct >= 40
+        ? "bg-amber-50 text-amber-700 border-amber-200"
+        : "bg-red-50 text-red-700 border-red-200";
+  return (
+    <div className="shrink-0 border-t border-outline bg-white shadow-[0_-1px_8px_rgba(0,0,0,.06)]">
+      <div className="flex items-start gap-3 px-4 py-3">
+        <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/8 text-primary">
+          <Link2 size={15} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-[9px] font-bold uppercase tracking-wider text-muted">Quan hệ dùng để kiểm chứng</p>
+          <div className="mt-1 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1.5 text-xs font-semibold text-text">
+            <span className="truncate rounded bg-slate-100 px-1.5 py-1" title={relation.sourceLabel}>{relation.sourceLabel}</span>
+            <span className="rounded bg-primary/10 px-1.5 py-1 text-[10px] font-bold text-primary" title={relation.relation}>
+              {relation.relation.replace(/_/g, " ")}
+            </span>
+            <span className="truncate rounded bg-slate-100 px-1.5 py-1" title={relation.targetLabel}>{relation.targetLabel}</span>
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] font-semibold text-muted">
+            {pct != null && <span className={`rounded-full border px-2 py-0.5 ${confidenceClass}`}>confidence {pct}%</span>}
+            <span className="rounded-full border border-outline bg-slate-50 px-2 py-0.5">{relation.evidenceCount || relation.evidenceRefs.length} bằng chứng</span>
+            <button
+              type="button"
+              onClick={() => openEvidenceRef(relation.evidenceRefs, onOpenEvidence)}
+              className="rounded-full border border-primary/30 bg-primary/5 px-2 py-0.5 text-primary hover:border-primary/50"
+            >
+              Mở evidence
+            </button>
+          </div>
+        </div>
+        <button onClick={onClose} className="shrink-0 text-muted hover:text-text transition mt-0.5">
+          <X size={13} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Legend ───────────────────────────────────────────────────────────────────
 
 function GraphLegend() {
@@ -461,15 +552,79 @@ function GraphLegend() {
   );
 }
 
+function TraceHeader({
+  question,
+  nodeCount,
+  edgeCount,
+  evidenceCount,
+  sourceCount,
+}: {
+  question: string | null;
+  nodeCount: number;
+  edgeCount: number;
+  evidenceCount: number;
+  sourceCount: number;
+}) {
+  return (
+    <div className="rounded-lg border border-primary/15 bg-primary/5 px-3 py-2">
+      <div className="flex items-start gap-2">
+        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary text-white">
+          <ShieldCheck size={14} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-primary">Answer trace graph</p>
+          <p className="mt-0.5 truncate text-xs font-semibold text-text" title={question ?? undefined}>
+            {question ? question : "Graph quan hệ từ collection hiện tại"}
+          </p>
+          <p className="mt-1 text-[11px] leading-relaxed text-muted">
+            Truy vet quan he de kiem chung cau tra loi; khong thay the Mindmap hoc tap.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-1.5 text-[10px] font-semibold text-muted">
+            <span className="rounded border border-outline bg-white px-2 py-0.5">{nodeCount} nodes</span>
+            <span className="rounded border border-outline bg-white px-2 py-0.5">{edgeCount} relations</span>
+            <span className="rounded border border-outline bg-white px-2 py-0.5">{evidenceCount} evidence</span>
+            <span className="rounded border border-outline bg-white px-2 py-0.5">{sourceCount} sources</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GraphPurposeCard({ hasTrace }: { hasTrace: boolean }) {
+  return (
+    <div className="rounded-lg border border-outline bg-slate-50 px-3 py-2">
+      <div className="flex items-start gap-2">
+        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-white text-primary ring-1 ring-outline">
+          <Link2 size={14} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-muted">Graph role</p>
+          <p className="mt-0.5 text-xs leading-relaxed text-text">
+            Knowledge Graph dung de truy vet quan he va evidence; Mindmap dung de hoc va to chuc y.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-1.5 text-[10px] font-semibold text-muted">
+            <span className="rounded border border-outline bg-white px-2 py-0.5">edge = relation</span>
+            <span className="rounded border border-outline bg-white px-2 py-0.5">click edge = evidence</span>
+            <span className="rounded border border-outline bg-white px-2 py-0.5">{hasTrace ? "scoped to answer" : "scoped to sources"}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Fullscreen overlay ───────────────────────────────────────────────────────
 
 function FullscreenOverlay({
-  mode, canvas, selectedNode, onSelect, onClose, onOpenEvidence, onDraftQuestion, onFindRelated,
+  mode, canvas, selectedNode, selectedRelation, onSelect, onEdgeSelect, onClose, onOpenEvidence, onDraftQuestion, onFindRelated,
 }: {
   mode: "graph" | "mindmap";
   canvas: { nodes?: CanvasNode[]; edges?: CanvasEdge[] };
   selectedNode: SelectedNode | null;
+  selectedRelation: SelectedRelation | null;
   onSelect: (id: string, label: string) => void;
+  onEdgeSelect?: (edge: CanvasEdge) => void;
   onClose: () => void;
   onOpenEvidence?: (target: { docId: string; page: number; blockId?: string | null }) => void;
   onDraftQuestion?: (draft: string) => void;
@@ -507,13 +662,17 @@ function FullscreenOverlay({
           canvasNodes={canvas.nodes ?? []}
           canvasEdges={canvas.edges ?? []}
           onSelect={onSelect}
+          onEdgeSelect={onEdgeSelect}
           onOpenEvidence={onOpenEvidence}
           onDraftQuestion={onDraftQuestion}
           onFindRelated={onFindRelated}
         />
         {mode === "graph" && <GraphLegend />}
       </div>
-      {selectedNode && (
+      {selectedRelation && (
+        <RelationInfoCard relation={selectedRelation} onClose={() => {}} onOpenEvidence={onOpenEvidence} />
+      )}
+      {!selectedRelation && selectedNode && (
         <NodeInfoCard node={selectedNode} onClose={() => {}} />
       )}
     </div>,
@@ -530,20 +689,29 @@ export default function GraphTab({
   mode: "graph" | "mindmap";
   onOpenEvidence?: (target: { docId: string; page: number; blockId?: string | null }) => void;
 }) {
-  const { workspace, scopedMaterialIds, activeQueryContext, setChatDraft } = useWorkspace();
+  const { workspace, scopedMaterialIds, sourceScopeMode, activeQueryContext, setChatDraft } = useWorkspace();
   const [selectedNode, setSelectedNode] = useState<SelectedNode | null>(null);
+  const [selectedRelation, setSelectedRelation] = useState<SelectedRelation | null>(null);
   const [rootTopic, setRootTopic] = useState("");
   const [graphResult, setGraphResult] = useState<GraphResponse | null>(null);
   const [mindmapResult, setMindmapResult] = useState<MindmapResponse | null>(null);
+  const [mindmapDetail, setMindmapDetail] = useState<"overview" | "detailed">("overview");
+  const [mindmapUseLlm, setMindmapUseLlm] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
+  const [graphSearch, setGraphSearch] = useState("");
   const lastAutoLoadKey = useRef<string | null>(null);
 
   const graphFocus = buildGraphFocus(activeQueryContext);
   const canvas = mode === "graph" ? toGraph(graphResult, graphFocus) : toMindmap(mindmapResult);
+  const answerTraceMaterialIds = mode === "graph" && activeQueryContext && !activeQueryContext.response.was_refused
+    ? Array.from(new Set(activeQueryContext.response.citations.map((citation) => citation.doc_id).filter(Boolean)))
+    : [];
+  const graphMaterialIds = answerTraceMaterialIds.length ? answerTraceMaterialIds : scopedMaterialIds;
 
   const handleSelect = useCallback((id: string, label: string) => {
+    setSelectedRelation(null);
     const node = canvas.nodes?.find((n) => n.id === id);
     const edges = canvas.edges ?? [];
     const nodeMap = new Map((canvas.nodes ?? []).map((n) => [n.id, n]));
@@ -570,6 +738,21 @@ export default function GraphTab({
     });
   }, [canvas]);
 
+  const handleEdgeSelect = useCallback((edge: CanvasEdge) => {
+    const nodeMap = new Map((canvas.nodes ?? []).map((node) => [node.id, node]));
+    setSelectedNode(null);
+    setSelectedRelation({
+      source: edge.source,
+      target: edge.target,
+      sourceLabel: edge.source_label || nodeMap.get(edge.source)?.label || edge.source,
+      targetLabel: edge.target_label || nodeMap.get(edge.target)?.label || edge.target,
+      relation: edge.label,
+      confidence: edge.confidence ?? null,
+      evidenceCount: edge.evidence_count ?? edge.evidence_refs?.length ?? 0,
+      evidenceRefs: edge.evidence_refs ?? [],
+    });
+  }, [canvas.nodes]);
+
   async function refresh() {
     setLoading(true);
     setError(null);
@@ -578,20 +761,24 @@ export default function GraphTab({
         const response = await loadGraph({
           owner_id: workspace.ownerId,
           collection_id: workspace.collectionId || null,
-          material_ids: workspace.collectionId ? [] : scopedMaterialIds,
-          root_topic: "Knowledge Graph",
+          material_ids: graphMaterialIds,
+          root_topic: activeQueryContext?.question || rootTopic || "Knowledge Graph",
         });
         setGraphResult(response);
         setSelectedNode(null);
+        setSelectedRelation(null);
       } else {
         const response = await loadMindmap({
           owner_id: workspace.ownerId,
           collection_id: workspace.collectionId || null,
-          material_ids: workspace.collectionId ? [] : scopedMaterialIds,
+          material_ids: scopedMaterialIds,
           root_topic: rootTopic || workspace.collectionName || workspace.subject || "Central Topic",
+          detail_level: mindmapDetail,
+          use_llm: mindmapUseLlm,
         });
         setMindmapResult(response);
         setSelectedNode(null);
+        setSelectedRelation(null);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load.");
@@ -600,11 +787,12 @@ export default function GraphTab({
     }
   }
 
-  const hasScope = Boolean(workspace.collectionId || scopedMaterialIds.length);
+  const hasScope = Boolean(workspace.collectionId ? sourceScopeMode === "all" || scopedMaterialIds.length : scopedMaterialIds.length);
 
   useEffect(() => {
     setError(null);
     setSelectedNode(null);
+    setSelectedRelation(null);
   }, [mode]);
 
   useEffect(() => {
@@ -624,7 +812,9 @@ export default function GraphTab({
       return;
     }
 
-    const scopeKey = `${mode}|${workspace.collectionId || "materials"}|${scopedMaterialIds.join(",")}`;
+    const traceKey = mode === "graph" ? (activeQueryContext?.createdAt ?? "no-trace") : "";
+    const scopedIds = mode === "graph" ? graphMaterialIds : scopedMaterialIds;
+    const scopeKey = `${mode}|${workspace.collectionId || "materials"}|${scopedIds.join(",")}|${mindmapDetail}|${mindmapUseLlm}|${traceKey}`;
     if (lastAutoLoadKey.current === scopeKey) {
       return;
     }
@@ -632,13 +822,21 @@ export default function GraphTab({
     lastAutoLoadKey.current = scopeKey;
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasScope, mode, scopedMaterialIds, workspace.collectionId]);
+  }, [hasScope, mode, scopedMaterialIds, workspace.collectionId, mindmapDetail, mindmapUseLlm]);
 
   const hasCanvas = Boolean(canvas.nodes && canvas.nodes.length > 0);
+  const graphStats = mode === "graph" && hasCanvas
+    ? {
+        nodes: canvas.nodes?.length ?? 0,
+        edges: canvas.edges?.length ?? 0,
+        evidence: (canvas.edges ?? []).reduce((sum, edge) => sum + (edge.evidence_count ?? edge.evidence_refs?.length ?? 0), 0),
+        sources: answerTraceMaterialIds.length || scopedMaterialIds.length || (workspace.collectionId ? 1 : 0),
+      }
+    : null;
   const mindmapStats = mode === "mindmap" && hasCanvas
     ? {
-        groups: (canvas.nodes ?? []).filter((node) => node.type === "cluster").length,
-        concepts: (canvas.nodes ?? []).filter((node) => node.type !== "root" && node.type !== "cluster").length,
+        groups: (canvas.nodes ?? []).filter((node) => node.type === "topic").length,
+        concepts: (canvas.nodes ?? []).filter((node) => node.type !== "root" && node.type !== "topic").length,
         sources: scopedMaterialIds.length || (workspace.collectionId ? 1 : 0),
       }
     : null;
@@ -648,13 +846,60 @@ export default function GraphTab({
       <div className="flex h-full flex-col bg-slate-50">
         {/* Toolbar */}
         <div className="shrink-0 px-4 pt-4 pb-3 border-b border-outline bg-white flex flex-col gap-3">
-          {mode === "mindmap" && (
-            <input
-              className="w-full rounded-md border border-outline px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary transition"
-              value={rootTopic}
-              onChange={(e) => setRootTopic(e.target.value)}
-              placeholder="Chủ đề gốc của mindmap…"
+          {mode === "graph" && graphStats && (
+            <TraceHeader
+              question={activeQueryContext?.question ?? null}
+              nodeCount={graphStats.nodes}
+              edgeCount={graphStats.edges}
+              evidenceCount={graphStats.evidence}
+              sourceCount={graphStats.sources}
             />
+          )}
+          {mode === "graph" && !graphStats && (
+            <GraphPurposeCard hasTrace={Boolean(activeQueryContext)} />
+          )}
+          {mode === "mindmap" && (
+            <div className="flex flex-col gap-2">
+              <input
+                className="w-full rounded-md border border-outline px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary transition"
+                value={rootTopic}
+                onChange={(e) => setRootTopic(e.target.value)}
+                placeholder="Chủ đề gốc của mindmap…"
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="inline-flex overflow-hidden rounded-md border border-outline bg-slate-50 p-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setMindmapDetail("overview")}
+                    className={`px-2.5 py-1 text-[11px] font-semibold transition ${
+                      mindmapDetail === "overview" ? "rounded bg-white text-primary shadow-sm" : "text-muted hover:text-text"
+                    }`}
+                  >
+                    Overview
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMindmapDetail("detailed")}
+                    className={`px-2.5 py-1 text-[11px] font-semibold transition ${
+                      mindmapDetail === "detailed" ? "rounded bg-white text-primary shadow-sm" : "text-muted hover:text-text"
+                    }`}
+                  >
+                    Detailed
+                  </button>
+                </div>
+                <label className="inline-flex items-center gap-1.5 rounded-md border border-outline bg-white px-2.5 py-1 text-[11px] font-semibold text-muted">
+                  <input
+                    type="checkbox"
+                    checked={mindmapUseLlm}
+                    onChange={(event) => setMindmapUseLlm(event.target.checked)}
+                  />
+                  LLM refine
+                </label>
+                <span className="text-[10px] text-muted">
+                  Overview ưu tiên map gọn; Detailed mở rộng thêm concept.
+                </span>
+              </div>
+            </div>
           )}
           <div className="flex gap-2">
             <button
@@ -662,8 +907,8 @@ export default function GraphTab({
               onClick={refresh}
               disabled={loading || !hasScope}
             >
-              {loading ? <Loader2 className="animate-spin" size={14} /> : <RefreshCw size={14} />}
-              {mode === "graph" ? "Tạo Knowledge Graph" : "Tạo Mindmap"}
+              {loading ? <Loader2 className="animate-spin" size={14} /> : mode === "graph" ? <Network size={14} /> : <RefreshCw size={14} />}
+              {mode === "graph" ? (activeQueryContext ? "Refresh relation trace" : "Trace relations") : "Tạo Mindmap"}
             </button>
             {hasCanvas && (
               <button
@@ -675,19 +920,43 @@ export default function GraphTab({
               </button>
             )}
           </div>
-          {hasCanvas && mode === "graph" && graphFocus && activeQueryContext && (
-            <div className="flex items-start gap-2 text-[10px] text-muted">
-              <Target size={11} className="mt-0.5 shrink-0 text-primary" />
-              <span className="min-w-0 truncate">
-                Dang uu tien graph theo cau hoi: {activeQueryContext.question}
-              </span>
-            </div>
-          )}
+
+          {/* Graph search + stats */}
           {hasCanvas && mode === "graph" && (
-            <p className="text-[10px] text-muted">
-              <BookOpen size={9} className="inline mr-1" />
-              Click vào node để xem chi tiết khái niệm và tài liệu nguồn.
-            </p>
+            <div className="flex flex-col gap-2">
+              <div className="relative">
+                <input
+                  className="w-full rounded-md border border-outline bg-slate-50 py-1.5 pl-7 pr-3 text-xs focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary transition"
+                  placeholder="Tìm khái niệm trong graph…"
+                  value={graphSearch}
+                  onChange={(e) => setGraphSearch(e.target.value)}
+                />
+                <svg className="absolute left-2 top-1/2 -translate-y-1/2 text-muted" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+                </svg>
+                {graphSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setGraphSearch("")}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-text"
+                    aria-label="Xóa tìm kiếm"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-[10px] text-muted">
+                {graphFocus && activeQueryContext && (
+                  <span className="flex items-center gap-1 rounded bg-primary/8 px-1.5 py-0.5 text-primary font-medium">
+                    <Target size={9} />
+                    <span className="max-w-[180px] truncate" title={activeQueryContext.question}>
+                      Theo câu hỏi: {activeQueryContext.question}
+                    </span>
+                  </span>
+                )}
+                <span className="ml-auto">Click node · Chuột phải để hành động</span>
+              </div>
+            </div>
           )}
           {mindmapStats && (
             <div className="flex flex-wrap items-center gap-2 text-[10px] font-semibold text-muted">
@@ -717,7 +986,9 @@ export default function GraphTab({
           {!hasCanvas && !loading && !error && (
             <div className="h-full flex items-center justify-center text-xs text-muted p-6 text-center">
               {hasScope
-                ? `Nhấn "Tạo ${mode === "graph" ? "Knowledge Graph" : "Mindmap"}" để trực quan hóa tri thức từ tài liệu.`
+                ? mode === "graph"
+                  ? "Nhấn Trace relations để xem các quan hệ có evidence trong tài liệu."
+                  : "Nhấn Tạo Mindmap để tổ chức ý chính từ tài liệu."
                 : "Chọn hoặc tải tài liệu trước khi tạo visualization."}
             </div>
           )}
@@ -726,11 +997,13 @@ export default function GraphTab({
               <GraphCanvas
                 mode={mode}
                 onSelect={handleSelect}
+                onEdgeSelect={handleEdgeSelect}
                 canvasNodes={canvas.nodes!}
                 canvasEdges={canvas.edges ?? []}
                 onOpenEvidence={onOpenEvidence}
                 onDraftQuestion={(draft) => setChatDraft(draft)}
                 onFindRelated={(draft) => setChatDraft(draft)}
+                searchQuery={graphSearch}
               />
               {mode === "graph" && <GraphLegend />}
             </div>
@@ -738,7 +1011,10 @@ export default function GraphTab({
         </div>
 
         {/* Node info card */}
-        {selectedNode && (
+        {selectedRelation && (
+          <RelationInfoCard relation={selectedRelation} onClose={() => setSelectedRelation(null)} onOpenEvidence={onOpenEvidence} />
+        )}
+        {!selectedRelation && selectedNode && (
           <NodeInfoCard node={selectedNode} onClose={() => setSelectedNode(null)} />
         )}
       </div>
@@ -748,7 +1024,9 @@ export default function GraphTab({
           mode={mode}
           canvas={canvas}
           selectedNode={selectedNode}
+          selectedRelation={selectedRelation}
           onSelect={handleSelect}
+          onEdgeSelect={handleEdgeSelect}
           onClose={() => setFullscreen(false)}
           onOpenEvidence={onOpenEvidence}
           onDraftQuestion={(draft) => setChatDraft(draft)}
@@ -758,5 +1036,3 @@ export default function GraphTab({
     </>
   );
 }
-
-

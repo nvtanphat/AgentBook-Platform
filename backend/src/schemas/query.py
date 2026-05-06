@@ -43,6 +43,43 @@ class QueryResponse(BaseModel):
 
     # NEW: Reasoning path for transparency
     reasoning_path: list[ReasoningStep] = Field(default_factory=list)
+    coverage: "CoverageReport | None" = None
+    agent_trace: "AgentTrace | None" = None
+
+
+class CoverageSource(BaseModel):
+    material_id: str
+    name: str
+    covered: bool = False
+
+
+class CoverageReport(BaseModel):
+    requested_count: int = 0
+    covered_count: int = 0
+    sources: list[CoverageSource] = Field(default_factory=list)
+
+
+class AgentTraceStep(BaseModel):
+    name: str
+    status: Literal["pending", "running", "completed", "skipped", "failed"] = "pending"
+    query: str | None = None
+    sources_requested: int | None = None
+    sources_covered: int | None = None
+    evidence_count: int | None = None
+    warning: str | None = None
+
+
+class AgentVerification(BaseModel):
+    verdict: str
+    confidence: float
+    warning: str | None = None
+
+
+class AgentTrace(BaseModel):
+    plan_type: str
+    steps: list[AgentTraceStep] = Field(default_factory=list)
+    repair_attempted: bool = False
+    verification: AgentVerification | None = None
 
 
 class CompareRequest(BaseModel):
@@ -68,12 +105,14 @@ class CompareResponse(BaseModel):
     comparison_table: list[ComparisonCell] = Field(default_factory=list)
     conflicts: list[str] = Field(default_factory=list)
     citations: list[CitationSchema] = Field(default_factory=list)
+    coverage: CoverageReport | None = None
 
 
 class SummaryRequest(BaseModel):
     owner_id: str = Field(min_length=1)
     collection_id: str | None = None
     material_id: str | None = None
+    material_ids: list[str] = Field(default_factory=list)
     scope: str = "document"
     top_k: int | None = None
     answer_language: str = "vi"
@@ -85,6 +124,7 @@ class SummaryResponse(BaseModel):
     confidence: float
     was_refused: bool = False
     refusal_reason: str | None = None
+    coverage: CoverageReport | None = None
 
 
 class StudyGuideRequest(BaseModel):

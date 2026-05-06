@@ -10,6 +10,7 @@ interface MindmapContextMenuProps {
   onViewSources: (nodeId: string) => void;
   onFindRelated: (nodeId: string) => void;
   onDelete?: (nodeId: string) => void;
+  subtitle?: string;
 }
 
 /**
@@ -30,6 +31,7 @@ export function MindmapContextMenu({
   onViewSources,
   onFindRelated,
   onDelete,
+  subtitle = "Hành động nhanh",
 }: MindmapContextMenuProps) {
   const handleAction = useCallback((action: () => void) => {
     action();
@@ -54,7 +56,7 @@ export function MindmapContextMenu({
       >
         <div className="border-b border-outline px-3 py-2">
           <p className="truncate text-xs font-semibold text-text" title={nodeLabel}>{nodeLabel}</p>
-          <p className="mt-0.5 text-[10px] font-medium uppercase text-muted">Mindmap action</p>
+          <p className="mt-0.5 text-[10px] font-medium uppercase text-muted">{subtitle}</p>
         </div>
 
         {/* Ask AI */}

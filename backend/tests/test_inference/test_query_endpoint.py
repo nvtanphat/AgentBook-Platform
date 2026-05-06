@@ -11,7 +11,7 @@ from src.core.config import get_settings
 from src.core.config import Settings
 from src.dependencies import get_query_service, verify_owner_access
 from src.main import app
-from src.schemas.query import QueryResponse
+from src.schemas.query import AgentTrace, AgentTraceStep, QueryResponse
 
 
 def make_token(payload: dict, *, secret: str = "secret") -> str:
@@ -42,6 +42,21 @@ class FakeQueryService:
     async def compare(self, request):
         raise AssertionError("not used")
 
+    async def ask_stream(self, request):
+        step = AgentTraceStep(name="plan_query", status="completed", query=request.query)
+        yield f"event: agent_step\ndata: {step.model_dump_json()}\n\n"
+        response = QueryResponse(
+            answer="grounded stream",
+            answer_language=request.answer_language or "vi",
+            query_language="vi",
+            source_languages=[],
+            citations=[],
+            confidence=0.8,
+            was_refused=False,
+            agent_trace=AgentTrace(plan_type="factual", steps=[step]),
+        )
+        yield f"event: done\ndata: {response.model_dump_json()}\n\n"
+
 
 def test_query_ask_endpoint_uses_service_override(monkeypatch) -> None:
     monkeypatch.setenv("AGENTBOOK_TESTING", "true")
@@ -63,6 +78,32 @@ def test_query_ask_endpoint_uses_service_override(monkeypatch) -> None:
         assert body["success"] is True
         assert body["data"]["answer"] == "grounded"
         assert body["data"]["answer_language"] == "vi"
+    finally:
+        app.dependency_overrides.clear()
+        get_settings.cache_clear()
+
+
+def test_query_ask_stream_endpoint_forwards_agentic_events(monkeypatch) -> None:
+    monkeypatch.setenv("AGENTBOOK_TESTING", "true")
+    get_settings.cache_clear()
+    app.dependency_overrides[get_query_service] = lambda: FakeQueryService()
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/v1/query/ask-stream",
+                json={
+                    "owner_id": "user_demo",
+                    "collection_id": "65f000000000000000000002",
+                    "query": "Dropout la gi?",
+                    "answer_language": "vi",
+                },
+            )
+        assert response.status_code == 200
+        body = response.text
+        assert "event: agent_step" in body
+        assert '"name":"plan_query"' in body
+        assert "event: done" in body
+        assert '"agent_trace"' in body
     finally:
         app.dependency_overrides.clear()
         get_settings.cache_clear()

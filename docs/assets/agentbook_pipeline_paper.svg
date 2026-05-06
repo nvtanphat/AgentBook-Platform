@@ -1,0 +1,268 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="920" viewBox="0 0 1200 920" style="background-color: white;">
+    <style>
+        text { font-family: 'Times New Roman', Times, serif; fill: #000000; }
+        .title { font-size: 24px; font-weight: bold; text-anchor: middle; text-transform: uppercase; }
+        .phase-title { font-size: 18px; font-weight: bold; font-style: italic; }
+        
+        .box { fill: #ffffff; stroke: #000000; stroke-width: 1.5; }
+        .phase-border { fill: none; stroke: #000000; stroke-width: 1.5; stroke-dasharray: 6 4; }
+        .db-shape { fill: #ffffff; stroke: #000000; stroke-width: 1.5; }
+        
+        .text-title { font-size: 16px; font-weight: bold; text-anchor: middle; dominant-baseline: central; }
+        .text-sub { font-size: 14px; text-anchor: middle; dominant-baseline: central; }
+        .edge-label { font-size: 14px; font-style: italic; text-anchor: middle; background: white; }
+        
+        .arrow { fill: none; stroke: #000000; stroke-width: 1.5; marker-end: url(#arrowhead); }
+        .arrow-thick { fill: none; stroke: #000000; stroke-width: 2.5; marker-end: url(#arrowhead-thick); }
+        .arrow-dashed { fill: none; stroke: #000000; stroke-width: 1.5; stroke-dasharray: 4 4; marker-end: url(#arrowhead); }
+        
+        .icon { fill: none; stroke: #000000; stroke-width: 1.5; }
+        .icon-fill { fill: #000000; stroke: none; }
+    </style>
+    <defs>
+        <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#000000" />
+        </marker>
+        <marker id="arrowhead-thick" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#000000" />
+        </marker>
+    </defs>
+
+    <text x="600" y="45" class="title">Figure 1. AgentBook: Evidence-Preserving Graph RAG Architecture</text>
+
+    <!-- Phases Borders -->
+    <rect x="40" y="80" width="540" height="580" class="phase-border" />
+    <text x="60" y="110" class="phase-title">Phase 1: Knowledge Ingestion &amp; Graph Construction</text>
+
+    <rect x="620" y="80" width="540" height="580" class="phase-border" />
+    <text x="640" y="110" class="phase-title">Phase 2: Cross-Document Reasoning &amp; QA</text>
+
+    <rect x="40" y="690" width="1120" height="180" class="phase-border" />
+    <text x="60" y="720" class="phase-title">Shared Data &amp; Persistence Layer</text>
+
+    <!-- ==================== PHASE 1: INGESTION ==================== -->
+    <g transform="translate(110, 140)">
+        <rect x="0" y="0" width="400" height="70" class="box" />
+        <g transform="translate(25, 20)">
+            <path d="M2,0 L18,0 L28,10 L28,30 L2,30 Z" class="icon" />
+            <path d="M18,0 L18,10 L28,10" class="icon" />
+            <line x1="7" y1="16" x2="23" y2="16" class="icon" />
+            <line x1="7" y1="22" x2="18" y2="22" class="icon" />
+        </g>
+        <text x="75" y="25" class="text-title" text-anchor="start">Multimodal Document Sources</text>
+        <text x="75" y="48" class="text-sub" text-anchor="start">PDFs, PPTXs, Scans, Handwritten Notes, Spreadsheets</text>
+    </g>
+
+    <path d="M 310 210 L 310 240" class="arrow" />
+
+    <g transform="translate(110, 240)">
+        <rect x="0" y="0" width="400" height="70" class="box" />
+        <g transform="translate(25, 20)">
+            <rect x="0" y="5" width="30" height="20" class="icon" />
+            <line x1="0" y1="15" x2="30" y2="15" stroke="#000000" stroke-width="1.5" stroke-dasharray="2 2"/>
+            <path d="M5,5 L10,0 L20,0 L25,5" class="icon" />
+        </g>
+        <text x="75" y="25" class="text-title" text-anchor="start">Layout-Aware Parser &amp; OCR Engine</text>
+        <text x="75" y="48" class="text-sub" text-anchor="start">Docling (Tables/Figures) + PaddleOCR + Quality Gate</text>
+    </g>
+
+    <path d="M 310 310 L 310 340" class="arrow" />
+
+    <g transform="translate(110, 340)">
+        <rect x="0" y="0" width="400" height="70" class="box" />
+        <g transform="translate(25, 20)">
+            <rect x="0" y="0" width="30" height="30" class="icon" />
+            <line x1="0" y1="10" x2="30" y2="10" class="icon" />
+            <line x1="0" y1="20" x2="30" y2="20" class="icon" />
+            <line x1="15" y1="10" x2="15" y2="20" class="icon" />
+        </g>
+        <text x="75" y="25" class="text-title" text-anchor="start">Semantic Chunking &amp; Normalization</text>
+        <text x="75" y="48" class="text-sub" text-anchor="start">Preserve Hierarchy, Page, Block IDs, BBox Evidence</text>
+    </g>
+
+    <path d="M 210 410 L 210 440" class="arrow" />
+    <path d="M 410 410 L 410 440" class="arrow" />
+
+    <!-- Split: Embedding vs Graph -->
+    <g transform="translate(110, 440)">
+        <rect x="0" y="0" width="180" height="70" class="box" />
+        <g transform="translate(15, 20)">
+            <rect x="0" y="0" width="20" height="30" class="icon" />
+            <circle cx="10" cy="8" r="2" class="icon-fill" />
+            <circle cx="10" cy="15" r="2" class="icon-fill" />
+            <circle cx="10" cy="22" r="2" class="icon-fill" />
+        </g>
+        <text x="45" y="25" class="text-title" text-anchor="start">Embedding</text>
+        <text x="45" y="48" class="text-sub" text-anchor="start">Dense &amp; Sparse</text>
+    </g>
+
+    <g transform="translate(330, 440)">
+        <rect x="0" y="0" width="180" height="70" class="box" />
+        <g transform="translate(15, 20)">
+            <circle cx="10" cy="5" r="4" class="icon" />
+            <circle cx="5" cy="25" r="4" class="icon" />
+            <circle cx="20" cy="20" r="4" class="icon" />
+            <line x1="9" y1="9" x2="6" y2="21" class="icon" />
+            <line x1="12" y1="8" x2="18" y2="17" class="icon" />
+        </g>
+        <text x="45" y="25" class="text-title" text-anchor="start">Graph Builder</text>
+        <text x="45" y="48" class="text-sub" text-anchor="start">Entity / Event</text>
+    </g>
+
+    <path d="M 200 510 L 200 650 L 240 650 L 240 740" class="arrow-dashed" />
+    <path d="M 420 510 L 420 650 L 580 650 L 580 740" class="arrow-dashed" />
+
+
+    <!-- ==================== PHASE 2: ONLINE RAG ==================== -->
+    <g transform="translate(690, 140)">
+        <rect x="0" y="0" width="400" height="60" class="box" />
+        <g transform="translate(25, 15)">
+            <circle cx="15" cy="10" r="6" class="icon" />
+            <path d="M 5 30 Q 15 15 25 30" class="icon" />
+        </g>
+        <text x="70" y="22" class="text-title" text-anchor="start">User Query</text>
+        <text x="70" y="42" class="text-sub" text-anchor="start">Bilingual (VI/EN) Natural Language Input</text>
+    </g>
+
+    <path d="M 890 200 L 890 230" class="arrow" />
+
+    <g transform="translate(690, 230)">
+        <rect x="0" y="0" width="400" height="60" class="box" />
+        <g transform="translate(25, 15)">
+            <circle cx="12" cy="12" r="8" class="icon" />
+            <line x1="18" y1="18" x2="26" y2="26" class="icon" />
+            <circle cx="24" cy="8" r="3" class="icon-fill" />
+            <line x1="16" y1="10" x2="21" y2="9" class="icon" />
+        </g>
+        <text x="70" y="22" class="text-title" text-anchor="start">Query Processor</text>
+        <text x="70" y="42" class="text-sub" text-anchor="start">Intent Classification &amp; Translation Rewriting</text>
+    </g>
+
+    <path d="M 890 290 L 890 310" class="arrow" />
+    <path d="M 890 310 L 780 310 L 780 330" class="arrow" />
+    <path d="M 890 310 L 1000 310 L 1000 330" class="arrow" />
+
+    <g transform="translate(690, 330)">
+        <rect x="0" y="0" width="180" height="70" class="box" />
+        <g transform="translate(15, 20)">
+            <polygon points="2,2 24,2 16,12 16,26 10,22 10,12" class="icon" />
+        </g>
+        <text x="45" y="25" class="text-title" text-anchor="start">Hybrid Retriever</text>
+        <text x="45" y="48" class="text-sub" text-anchor="start">RRF Fusion</text>
+    </g>
+
+    <g transform="translate(910, 330)">
+        <rect x="0" y="0" width="180" height="70" class="box" />
+        <g transform="translate(15, 20)">
+            <path d="M 5 15 L 15 5 L 25 15 L 15 25 Z" class="icon" />
+            <circle cx="15" cy="15" r="3" class="icon-fill" />
+            <line x1="0" y1="15" x2="5" y2="15" class="icon" />
+            <line x1="25" y1="15" x2="30" y2="15" class="icon" />
+        </g>
+        <text x="45" y="25" class="text-title" text-anchor="start">Graph Expand</text>
+        <text x="45" y="48" class="text-sub" text-anchor="start">Multi-hop Paths</text>
+    </g>
+
+    <path d="M 750 400 L 750 420 L 850 420 L 850 440" class="arrow" />
+    <path d="M 1030 400 L 1030 420 L 930 420 L 930 440" class="arrow" />
+
+    <g transform="translate(690, 440)">
+        <rect x="0" y="0" width="400" height="60" class="box" />
+        <g transform="translate(25, 15)">
+            <line x1="0" y1="5" x2="20" y2="5" class="icon" />
+            <line x1="0" y1="15" x2="15" y2="15" class="icon" />
+            <line x1="0" y1="25" x2="10" y2="25" class="icon" />
+            <line x1="24" y1="5" x2="24" y2="25" class="icon" />
+            <polygon points="20,20 28,20 24,26" class="icon-fill" />
+        </g>
+        <text x="70" y="22" class="text-title" text-anchor="start">Cross-Encoder Reranker</text>
+        <text x="70" y="42" class="text-sub" text-anchor="start">Candidate Scoring &amp; Evidence Validation</text>
+    </g>
+
+    <path d="M 890 500 L 890 530" class="arrow" />
+
+    <g transform="translate(690, 530)">
+        <rect x="0" y="0" width="400" height="60" class="box" />
+        <g transform="translate(25, 15)">
+            <rect x="4" y="8" width="22" height="16" class="icon" />
+            <line x1="8" y1="8" x2="8" y2="4" class="icon" />
+            <line x1="22" y1="8" x2="22" y2="4" class="icon" />
+            <circle cx="10" cy="14" r="1.5" class="icon-fill" />
+            <circle cx="20" cy="14" r="1.5" class="icon-fill" />
+            <line x1="12" y1="20" x2="18" y2="20" class="icon" />
+        </g>
+        <text x="70" y="22" class="text-title" text-anchor="start">Grounded QA Synthesizer &amp; Guardrails</text>
+        <text x="70" y="42" class="text-sub" text-anchor="start">LLM Generation + Evidence-Based Refusal Policy</text>
+    </g>
+
+    <path d="M 890 590 L 890 620" class="arrow-thick" />
+
+    <g transform="translate(690, 620)">
+        <rect x="0" y="0" width="400" height="30" fill="none" stroke="none" />
+        <g transform="translate(60, 5)">
+            <path d="M 0 8 L 5 13 L 15 2" class="icon" />
+        </g>
+        <text x="210" y="15" class="text-title" text-anchor="middle">Output: Answer + Citation Trace</text>
+    </g>
+
+    <!-- Data Layer Connections (UP arrows) -->
+    <path d="M 260 740 L 260 675 L 810 675 L 810 400" class="arrow-dashed" />
+    <path d="M 600 740 L 600 685 L 970 685 L 970 400" class="arrow-dashed" />
+
+    <!-- Redis Async Connection -->
+    <path d="M 940 740 L 940 275 L 510 275" class="arrow-dashed" />
+
+
+    <!-- ==================== DATA LAYER ==================== -->
+    <g transform="translate(140, 740)">
+        <path d="M 0 20 Q 120 0 240 20 L 240 100 Q 120 120 0 100 Z" class="db-shape" />
+        <path d="M 0 20 Q 120 40 240 20" class="db-shape" />
+        <g transform="translate(110, 35)">
+            <rect x="0" y="0" width="20" height="20" class="icon" />
+            <circle cx="10" cy="10" r="2" class="icon-fill" />
+            <line x1="0" y1="10" x2="4" y2="10" class="icon" />
+            <line x1="10" y1="0" x2="10" y2="4" class="icon" />
+        </g>
+        <text x="120" y="70" class="text-title">Vector Index</text>
+        <text x="120" y="88" class="text-sub">Qdrant (Dense+Sparse)</text>
+    </g>
+
+    <g transform="translate(480, 740)">
+        <path d="M 0 20 Q 120 0 240 20 L 240 100 Q 120 120 0 100 Z" class="db-shape" />
+        <path d="M 0 20 Q 120 40 240 20" class="db-shape" />
+        <g transform="translate(110, 35)">
+            <circle cx="10" cy="2" r="3" class="icon" />
+            <circle cx="2" cy="18" r="3" class="icon" />
+            <circle cx="18" cy="18" r="3" class="icon" />
+            <line x1="8" y1="6" x2="4" y2="14" class="icon" />
+            <line x1="12" y1="6" x2="16" y2="14" class="icon" />
+        </g>
+        <text x="120" y="70" class="text-title">Knowledge Graph</text>
+        <text x="120" y="88" class="text-sub">MongoDB Edge Collections</text>
+    </g>
+
+    <g transform="translate(820, 740)">
+        <path d="M 0 20 Q 120 0 240 20 L 240 100 Q 120 120 0 100 Z" class="db-shape" />
+        <path d="M 0 20 Q 120 40 240 20" class="db-shape" />
+        <g transform="translate(110, 35)">
+            <circle cx="10" cy="10" r="10" class="icon" />
+            <line x1="10" y1="10" x2="10" y2="4" class="icon" />
+            <line x1="10" y1="10" x2="14" y2="14" class="icon" />
+        </g>
+        <text x="120" y="70" class="text-title">Task Queue</text>
+        <text x="120" y="88" class="text-sub">Redis / Celery</text>
+    </g>
+
+    <!-- Annotations / Labels on edges -->
+    <text x="310" y="225" class="edge-label">Parse / OCR</text>
+    <text x="310" y="325" class="edge-label">Bounding Boxes</text>
+    <text x="890" y="215" class="edge-label">Raw Query</text>
+    <text x="890" y="300" class="edge-label">Processed Query</text>
+    <text x="850" y="415" class="edge-label">Candidates</text>
+    <text x="890" y="515" class="edge-label">Reranked Evidence</text>
+    
+    <text x="210" y="580" class="edge-label">Vectors</text>
+    <text x="490" y="580" class="edge-label">Entities</text>
+    
+    <text x="730" y="265" class="edge-label">Async Parsing Jobs</text>
+</svg>

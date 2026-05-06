@@ -4,11 +4,11 @@ export default {
   theme: {
     extend: {
       colors: {
-        background: "#f8f9ff",
+        background: "#f0f2f8",
         surface: "#ffffff",
-        "surface-low": "#eff4ff",
-        "surface-mid": "#e5eeff",
-        "surface-high": "#dce9ff",
+        "surface-low": "#f5f7fc",
+        "surface-mid": "#edf1fb",
+        "surface-high": "#e5ecf7",
         primary: "#006591",
         "primary-bright": "#0ea5e9",
         secondary: "#006b5f",
@@ -27,11 +27,12 @@ export default {
         sidebar: "260px"
       },
       borderRadius: {
-        panel: "8px"
+        panel: "12px"
       },
       boxShadow: {
-        soft: "0 18px 60px rgba(15, 38, 70, 0.08)",
-        glow: "0 12px 30px rgba(14, 165, 233, 0.25)"
+        soft: "0 18px 60px rgba(15, 38, 70, 0.06)",
+        glow: "0 12px 30px rgba(14, 165, 233, 0.2)",
+        card: "0 1px 3px rgba(15, 38, 70, 0.04), 0 4px 12px rgba(15, 38, 70, 0.02)"
       }
     }
   },

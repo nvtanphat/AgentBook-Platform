@@ -97,12 +97,12 @@ try:
 
     llm = OllamaLLM(settings)
 
-    async def test_llm():
+    async def run_llm():
         prompt = "What is 2+2? Answer in one word."
         answer = await llm.generate(prompt=prompt)
         return answer
 
-    answer = asyncio.run(test_llm())
+    answer = asyncio.run(run_llm())
     print(f"   ✓ LLM generation completed")
     print(f"   - Model: {settings.llm_local_model}")
     print(f"   - Answer: {answer[:100]}")

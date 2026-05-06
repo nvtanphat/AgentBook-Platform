@@ -36,7 +36,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-async def test_pdf_parsing():
+async def run_pdf_parsing():
     """Test PDF parsing với Docling."""
     logger.info("=" * 60)
     logger.info("TEST 1: PDF Parsing")
@@ -65,7 +65,7 @@ async def test_pdf_parsing():
         return None
 
 
-async def test_docx_parsing():
+async def run_docx_parsing():
     """Test DOCX parsing với Docling."""
     logger.info("=" * 60)
     logger.info("TEST 2: DOCX Parsing")
@@ -90,7 +90,7 @@ async def test_docx_parsing():
         return None
 
 
-async def test_image_ocr():
+async def run_image_ocr():
     """Test Image OCR với EasyOCR."""
     logger.info("=" * 60)
     logger.info("TEST 3: Image OCR")
@@ -119,7 +119,7 @@ async def test_image_ocr():
         return None
 
 
-async def test_chunking(doc):
+async def run_chunking(doc):
     """Test Semantic Chunking."""
     logger.info("=" * 60)
     logger.info("TEST 4: Semantic Chunking")
@@ -179,7 +179,7 @@ async def test_chunking(doc):
         return None
 
 
-async def test_embedding(chunks):
+async def run_embedding(chunks):
     """Test BGE-M3 Embedding."""
     logger.info("=" * 60)
     logger.info("TEST 5: BGE-M3 Embedding")
@@ -210,7 +210,7 @@ async def test_embedding(chunks):
         return None
 
 
-async def test_retrieval():
+async def run_retrieval():
     """Test Hybrid Retrieval."""
     logger.info("=" * 60)
     logger.info("TEST 6: Hybrid Retrieval")
@@ -244,7 +244,7 @@ async def test_retrieval():
         return None
 
 
-async def test_reranking(results):
+async def run_reranking(results):
     """Test CrossEncoder Reranking."""
     logger.info("=" * 60)
     logger.info("TEST 7: CrossEncoder Reranking")
@@ -275,7 +275,7 @@ async def test_reranking(results):
         return None
 
 
-async def test_llm_generation(chunks):
+async def run_llm_generation(chunks):
     """Test LLM Answer Generation."""
     logger.info("=" * 60)
     logger.info("TEST 8: LLM Generation (Qwen2.5 3B)")
@@ -319,24 +319,24 @@ async def main():
     logger.info("=" * 60 + "\n")
 
     # Test 1-3: Parsing
-    pdf_doc = await test_pdf_parsing()
-    docx_doc = await test_docx_parsing()
-    ocr_doc = await test_image_ocr()
+    pdf_doc = await run_pdf_parsing()
+    docx_doc = await run_docx_parsing()
+    ocr_doc = await run_image_ocr()
 
     # Test 4: Chunking (use DOCX doc if available)
     test_doc = docx_doc or pdf_doc or ocr_doc
-    chunks = await test_chunking(test_doc)
+    chunks = await run_chunking(test_doc)
 
     # Test 5: Embedding
-    embeddings = await test_embedding(chunks)
+    embeddings = await run_embedding(chunks)
 
     # Test 6-7: Retrieval & Reranking (requires indexed data)
-    results = await test_retrieval()
-    reranked = await test_reranking(results)
+    results = await run_retrieval()
+    reranked = await run_reranking(results)
 
     # Test 8: LLM Generation
     test_chunks = reranked or results or chunks
-    answer = await test_llm_generation(test_chunks)
+    answer = await run_llm_generation(test_chunks)
 
     # Summary
     logger.info("\n" + "=" * 60)

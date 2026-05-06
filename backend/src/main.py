@@ -151,8 +151,9 @@ async def lifespan(app: FastAPI):
         logger.critical("API auth is enabled but AGENTBOOK_API_KEY is not configured; scoped API requests will fail closed")
     await init_database(settings)
     _ensure_qdrant_collection(settings)
-    await _recover_stuck_materials()
-    await _reenqueue_uploaded_materials(settings)
+    if not settings.testing:
+        await _recover_stuck_materials()
+        await _reenqueue_uploaded_materials(settings)
     yield
     await close_query_service()
     close_cached_qdrant_client()

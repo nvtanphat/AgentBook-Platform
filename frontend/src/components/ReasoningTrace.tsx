@@ -45,7 +45,7 @@ export default function ReasoningTrace({ steps, onStepHover }: ReasoningTracePro
       <div className="flex items-center gap-1.5 mb-2">
         <Lightbulb size={12} className="text-primary" />
         <p className="text-xs font-semibold text-muted">
-          How I found this answer:
+          Cách tôi tìm câu trả lời:
         </p>
       </div>
 
@@ -85,7 +85,7 @@ export default function ReasoningTrace({ steps, onStepHover }: ReasoningTracePro
                 ))}
                 {step.entities.length > 5 && (
                   <span className="text-[10px] text-muted">
-                    +{step.entities.length - 5} more
+                    +{step.entities.length - 5} mục khác
                   </span>
                 )}
               </div>

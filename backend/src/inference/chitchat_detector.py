@@ -1,19 +1,13 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 
-# ---------------------------------------------------------------------------
-# Tier 1A — Instant reply map (no LLM, sub-millisecond)
-# Match against the query and return a pre-written response directly.
-# Only include patterns where the intent is completely unambiguous and the
-# reply is equally appropriate for all surface variants.
-# ---------------------------------------------------------------------------
-
+# Tier 1A: instant replies for unambiguous conversational queries.
 _INSTANT_REPLY_MAP: list[tuple[re.Pattern[str], str]] = [
-    # Greetings
     (
-        re.compile(r"^(xin chào|chào\s*(bạn|prism|mọi người)?|hello(\s+there)?|hi(\s+there)?|hey(\s+there)?|alo+|helo)\s*[!.]*$", re.IGNORECASE),
-        "Xin chào! Tôi là Prism, trợ lý học tập của AgentBook. Bạn muốn hỏi gì về tài liệu hôm nay?",
+        re.compile(r"^(xin chào|chào\s*(bạn|noelys|mọi người)?|hello(\s+there)?|hi(\s+there)?|hey(\s+there)?|alo+|helo)\s*[!.]*$", re.IGNORECASE),
+        "Xin chào! Tôi là Noelys, trợ lý học tập của Noelys. Bạn muốn hỏi gì về tài liệu hôm nay?",
     ),
     (
         re.compile(r"^chào buổi sáng\s*[!.]*$", re.IGNORECASE),
@@ -31,7 +25,6 @@ _INSTANT_REPLY_MAP: list[tuple[re.Pattern[str], str]] = [
         re.compile(r"^good\s*(afternoon|evening)\s*[!.]*$", re.IGNORECASE),
         "Hello! How can I help you today?",
     ),
-    # Farewells
     (
         re.compile(r"^(tạm biệt|bye+|goodbye|hẹn gặp lại|see you)\s*[!.]*$", re.IGNORECASE),
         "Tạm biệt! Chúc bạn học tập hiệu quả. Hẹn gặp lại!",
@@ -44,69 +37,42 @@ _INSTANT_REPLY_MAP: list[tuple[re.Pattern[str], str]] = [
         re.compile(r"^chúc ngủ ngon\s*[!.]*$", re.IGNORECASE),
         "Chúc bạn ngủ ngon! Hẹn gặp lại bạn lần sau nhé.",
     ),
-    # Gratitude
     (
         re.compile(r"^(cảm ơn|cám ơn|thanks?|thank you|xin cảm ơn)(.*)(rồi|nhé|nha|thôi|vậy|ok|oke)?\s*[!.]*$", re.IGNORECASE),
         "Không có gì! Nếu bạn còn câu hỏi nào, cứ hỏi tôi nhé.",
     ),
     (
-        re.compile(r"^(cảm ơn|cám ơn|thanks?|thank you|xin cảm ơn)\s*[!.]*$", re.IGNORECASE),
-        "Không có gì! Nếu bạn còn câu hỏi nào, cứ hỏi tôi nhé.",
-    ),
-    # Simple acknowledgements
-    (
         re.compile(r"^(ok|okay|oke|được|rồi|được rồi|hiểu rồi|alright|got it|sure|vâng|dạ|ừ+)\s*[!.]*$", re.IGNORECASE),
         "Tốt! Bạn cần thêm thông tin gì không?",
     ),
-    # You're welcome
     (
         re.compile(r"^(không có gì|you'?re welcome|de gi|không dám)\s*[!.]*$", re.IGNORECASE),
         "Nếu cần gì thêm, bạn cứ hỏi nhé!",
     ),
 ]
 
-# ---------------------------------------------------------------------------
-# Tier 1B — Chitchat signal patterns (needs LLM response from chitchat.txt)
-# These identify conversational intent but require LLM to craft a good reply.
-# ---------------------------------------------------------------------------
 
 _CHITCHAT_PATTERNS: list[re.Pattern[str]] = [
-    # Identity / capability questions
     re.compile(r"\b(bạn là ai|mày là ai|you are who|who are you)\b", re.IGNORECASE),
     re.compile(r"\b(bạn tên gì|tên của bạn|what('s| is) your name)\b", re.IGNORECASE),
     re.compile(r"\b(bạn làm được gì|bạn có thể làm gì|what can you do|bạn có thể giúp gì)\b", re.IGNORECASE),
     re.compile(r"\b(bạn là (gì|loại gì|AI|robot)|what (are|kind of) (are )?you)\b", re.IGNORECASE),
-    re.compile(r"\b(agentbook là gì|prism là gì|bạn hoạt động như thế nào)\b", re.IGNORECASE),
-    # How are you / feelings
+    re.compile(r"\b(noelys là gì|bạn hoạt động như thế nào)\b", re.IGNORECASE),
     re.compile(r"\b(bạn có khỏe không|bạn khỏe không|bạn ổn không|how are you|how('s| is) it going|you okay)\b", re.IGNORECASE),
     re.compile(r"\b(bạn đang làm gì|bạn đang nghĩ gì|what are you doing|what('re| are) you thinking)\b", re.IGNORECASE),
-    # Apologies
     re.compile(r"^(xin lỗi|xin lỗi bạn|sorry|pardon|thông cảm)\b", re.IGNORECASE),
-    # Compliments / reactions
     re.compile(r"\b(bạn (giỏi|thông minh|tuyệt|hay|xịn|thật sự tốt)|giỏi lắm|hay quá|tuyệt (quá|vời)|quá xịn|bạn thật tuyệt)\b", re.IGNORECASE),
     re.compile(r"^(wow|wao|ồ|ôi|oa+|tuyệt|hay|xịn|ngon)\s*[!.]*$", re.IGNORECASE),
-    # Jokes / fun
     re.compile(r"^(kể chuyện cười|kể joke|tell (me )?a joke|joke|kể cho tôi nghe)\b", re.IGNORECASE),
-    # Greetings (need LLM for non-trivial variants)
     re.compile(r"^(good\s*(morning|afternoon|evening|night))\b", re.IGNORECASE),
     re.compile(r"^(chào buổi (sáng|trưa|chiều|tối))\b", re.IGNORECASE),
-    # Farewells (non-trivial variants)
     re.compile(r"\b(tạm biệt|hẹn gặp lại|see you (later|soon|tomorrow))\b", re.IGNORECASE),
-    # Gratitude (non-trivial variants — longer thank-you messages)
     re.compile(r"^(cảm ơn|cám ơn|thanks?|thank you|xin cảm ơn)\b", re.IGNORECASE),
     re.compile(r"^(không có gì|you'?re welcome)\b", re.IGNORECASE),
-    # Affirmations that are context-dependent
     re.compile(r"^(ok|okay|oke|được|rồi|được rồi|hiểu rồi|alright|got it|sure)\s*[.!]*$", re.IGNORECASE),
     re.compile(r"^(vâng|dạ|ừ+|uh[ -]?huh)\s*[.!]*$", re.IGNORECASE),
-    # Thanks + completion
     re.compile(r"^(cảm ơn|thanks?).{0,40}(rồi|nhé|nha|thôi|vậy|ok|oke)\s*[.!]*$", re.IGNORECASE),
 ]
-
-# Domain signals — presence means the query is NOT pure chitchat.
-_DOMAIN_SIGNALS = re.compile(
-    r"\b(là gì|nghĩa là|định nghĩa|giải thích|tại sao|vì sao|như thế nào|how|what|why|when|where|which|define|explain|describe|compare)\b",
-    re.IGNORECASE,
-)
 
 
 def get_instant_reply(query: str) -> str | None:
@@ -118,19 +84,53 @@ def get_instant_reply(query: str) -> str | None:
     return None
 
 
+def _ascii_fold(text: str) -> str:
+    text = text.lower().strip()
+    text = text.replace("\u0111", "d").replace("\u0110", "d")
+    text = unicodedata.normalize("NFD", text)
+    text = "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
+    text = re.sub(r"[^\w\s'?!.-]+", " ", text, flags=re.UNICODE)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _is_chitchat_normalized(text: str) -> bool:
+    normalized = _ascii_fold(text)
+    if not normalized:
+        return False
+
+    instant_patterns = [
+        r"^(xin chao|chao( ban| noelys| moi nguoi)?|hello( there)?|hi( there)?|hey( there)?|alo+|helo)[!.]*$",
+        r"^chao buoi (sang|trua|chieu|toi)[!.]*$",
+        r"^good\s*(morning|afternoon|evening|night)[!.]*$",
+        r"^(tam biet|bye+|goodbye|hen gap lai|see you)[!.]*$",
+        r"^(cam on|thanks?|thank you|xin cam on).*$",
+        r"^(ok|okay|oke|duoc|roi|duoc roi|hieu roi|alright|got it|sure|vang|da|u+)[!.]*$",
+        r"^(khong co gi|you're welcome|youre welcome|de gi|khong dam)[!.]*$",
+    ]
+    if any(re.search(pattern, normalized, re.IGNORECASE) for pattern in instant_patterns):
+        return True
+
+    conversational_patterns = [
+        r"\b(ban la ai|may la ai|who are you|you are who)\b",
+        r"\b(ban ten gi|ten cua ban|what('s| is) your name)\b",
+        r"\b(ban lam duoc gi|ban co the lam gi|what can you do|ban co the giup gi)\b",
+        r"\b(ban la gi|ban la loai gi|ban la ai|what are you)\b",
+        r"\b(noelys la gi|ban hoat dong nhu the nao)\b",
+        r"\b(ban co khoe khong|ban khoe khong|ban on khong|how are you|how's it going|how is it going|you okay)\b",
+        r"\b(ban dang lam gi|ban dang nghi gi|what are you doing|what are you thinking)\b",
+        r"^(xin loi|sorry|pardon|thong cam)\b",
+        r"\b(ban (gioi|thong minh|tuyet|hay|xin|that su tot)|gioi lam|hay qua|tuyet qua|tuyet voi|qua xin|ban that tuyet)\b",
+        r"^(wow|wao|o|oi|oa+|tuyet|hay|xin|ngon)[!.]*$",
+        r"^(ke chuyen cuoi|ke joke|tell (me )?a joke|joke|ke cho toi nghe)\b",
+    ]
+    return any(re.search(pattern, normalized, re.IGNORECASE) for pattern in conversational_patterns)
+
+
 def is_chitchat(query: str) -> bool:
     """Return True when the query is conversational and does not require RAG retrieval."""
     text = query.strip()
     if not text:
         return False
-
-    # Fast path: instant reply map implies chitchat
-    for pattern, _ in _INSTANT_REPLY_MAP:
-        if pattern.search(text):
-            return True
-
-    for pattern in _CHITCHAT_PATTERNS:
-        if pattern.search(text):
-            return True
-
-    return False
+    if _is_chitchat_normalized(text):
+        return True
+    return any(pattern.search(text) for pattern in _CHITCHAT_PATTERNS)
