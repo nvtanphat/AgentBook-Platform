@@ -39,6 +39,12 @@ data/vectordb/*
 data/vectordb_local/*
 evaluation/results/*
 
+# Eval Outputs
+*_out*.txt
+e2e_*.txt
+eval_*.txt
+ablation_*.txt
+
 # Markdown files
 # Ignore top-level markdown files except README.md
 /*.md
