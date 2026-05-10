@@ -6,9 +6,9 @@ import logging
 from beanie import PydanticObjectId
 
 from src.core.config import Settings
-from src.models.knowledge_graph import Entity, Event, EvidenceRef, Relation
+from src.models.knowledge_graph import Entity, EvidenceRef, Relation
 from src.models.material import Material, get_material_pages_by_material_ids
-from src.processing.types import EvidenceBlock
+from src.processing.types import BBox, EvidenceBlock
 from src.rag.types import GraphPath, RetrievalScope
 
 logger = logging.getLogger(__name__)
@@ -206,6 +206,7 @@ class GraphRetriever:
             if found is None:
                 continue
             material, page, block = found
+            bbox = BBox.model_validate(block.bbox.model_dump()) if block.bbox is not None else None
             evidence.append(
                 EvidenceBlock(
                     owner_id=material.owner_id,
@@ -217,7 +218,7 @@ class GraphRetriever:
                     block_type=block.block_type,
                     snippet_original=block.content,
                     source_language=block.language,
-                    bbox=block.bbox,
+                    bbox=bbox,
                     confidence=block.ocr_confidence,
                     metadata=block.extra,
                 )

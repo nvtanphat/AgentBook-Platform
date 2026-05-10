@@ -31,7 +31,7 @@ from src.processing.figure_captioner import FigureCaptioner
 from src.processing.ocr_engine import EasyOCREngine
 from src.processing.ocr_quality_gate import score_ocr_document
 from src.processing.spreadsheet_parser import SpreadsheetParser, SUPPORTED_SPREADSHEET_EXTENSIONS
-from src.processing.types import BlockType, OCRQualityError, ParsedDocument
+from src.processing.types import BlockType, OCRQualityError, ParsedBlock, ParsedDocument, ParsedPage
 from src.rag.indexer import QdrantMongoIndexer
 
 
@@ -121,6 +121,7 @@ class ParseIndexPipeline:
             )
             chunker = self._resolve_chunker()
             chunks = chunker.build_chunks(evidence_map)
+            chunks = [c for c in chunks if len((c.content or "").strip()) >= 50]
             run_chunk_qa(chunks, material_id=str(material.id))
             entities = self.entity_resolver.resolve(self.entity_extractor.extract(evidence_map))
             events, relations = self.event_extractor.extract(evidence_map, entities)
@@ -179,10 +180,10 @@ class ParseIndexPipeline:
             )
         except MemoryError as exc:
             logger.critical(
-                "Pipeline OOM — process may be unstable; reduce batch sizes or free RAM",
+                "Pipeline OOM - process may be unstable; reduce batch sizes or free RAM",
                 extra={"material_id": material_id, "job_id": job_id, "stage": job.stage},
             )
-            await self._fail(material=material, job=job, failed_stage=job.stage, error="Out of memory — retry after freeing RAM")
+            await self._fail(material=material, job=job, failed_stage=job.stage, error="Out of memory - retry after freeing RAM")
             raise
         except Exception as exc:
             failed_stage = getattr(exc, "failed_stage", None) or job.stage
@@ -219,7 +220,7 @@ class ParseIndexPipeline:
             )
             return enriched
         except Exception:
-            logger.exception("Contextual enrichment failed entirely — continuing without context")
+            logger.exception("Contextual enrichment failed entirely - continuing without context")
             return chunks
 
     def _resolve_chunker(self) -> LayoutAwareChunker | SemanticChunker:
@@ -242,7 +243,7 @@ class ParseIndexPipeline:
             source_type = str(material.extra_metadata.get("source_type", "")).lower()
             if "hand" in source_type or material.modality == "handwriting":
                 return self.handwriting_reader.parse_image(path, language=self._declared_language(material.language))
-            return self._parse_printed_image(path, declared_language=material.language)
+            return self._parse_image_vlm_first(path, declared_language=material.language)
         raise ValueError(f"No Phase 2 parser is configured for .{material.file_type}")
 
     def _caption_figures(self, parsed: ParsedDocument, language: str) -> ParsedDocument:
@@ -293,7 +294,13 @@ class ParseIndexPipeline:
                 elif caption:
                     block.content = caption
                     block.extra.pop("needs_captioning", None)
-                    block.extra["caption_source"] = "vlm" if "[Hình" not in caption and "[Figure" not in caption else "ocr"
+                    caption_source = "ocr" if caption.startswith(("[Hình", "[Figure")) else "vlm"
+                    block.extra["caption_source"] = caption_source
+                    block.extra["parse_method"] = "figure_caption"
+                    if caption_source == "vlm" and captioner._available_model:
+                        block.extra["vlm_model"] = captioner._available_model
+                    if caption_source == "ocr":
+                        block.extra["fallback_reason"] = "vlm_unavailable_or_empty"
                     captioned_count += 1
 
         if captioned_count:
@@ -356,12 +363,67 @@ class ParseIndexPipeline:
 
         return ""
 
+    def _parse_image_vlm_first(self, path: Path, *, declared_language: str) -> ParsedDocument:
+        """For standalone image files: try VLM captioning first, OCR fallback.
+
+        Infographics, charts, and complex layouts are better described by a
+        vision model than by OCR, which scrambles multi-column reading order.
+        Falls back to _parse_printed_image transparently when no VLM is available.
+        """
+        language = declared_language if declared_language in {"vi", "en"} else "vi"
+        captioner = FigureCaptioner(
+            ollama_base_url=self.settings.ollama_base_url,
+            language=language,
+            ocr_fallback=False,  # we handle OCR ourselves below
+        )
+        vlm_model = captioner._detect_available_model()
+        fallback_reason = "vlm_unavailable"
+        if vlm_model:
+            caption = captioner.caption_image_path(path)
+            if caption and len(caption.strip()) >= 80:
+                logger.info(
+                    "Standalone image parsed via VLM",
+                    extra={"model": vlm_model, "image": path.name, "chars": len(caption)},
+                )
+                block = ParsedBlock(
+                    block_id=f"blk-{path.stem[:12]}",
+                    block_index=0,
+                    block_type=BlockType.PARAGRAPH.value,
+                    content=caption,
+                    page_number=1,
+                    reading_order=0,
+                    language=language,
+                    source="vlm",
+                    extra={
+                        "parse_method": "vlm",
+                        "caption_source": "vlm",
+                        "vlm_model": vlm_model,
+                        "image_file": path.name,
+                    },
+                )
+                return ParsedDocument(
+                    source_path=str(path),
+                    file_type=path.suffix.lstrip(".").lower(),
+                    language=language,
+                    pages=[ParsedPage(page_number=1, blocks=[block])],
+                    extra={"parser": "vlm", "parse_method": "vlm", "vlm_model": vlm_model},
+                )
+            fallback_reason = "vlm_caption_too_short_or_empty"
+        parsed = self._parse_printed_image(path, declared_language=declared_language)
+        parsed.extra.setdefault("parse_method", "ocr")
+        parsed.extra["fallback_reason"] = fallback_reason
+        parsed.extra["vlm_attempted"] = bool(vlm_model)
+        if vlm_model:
+            parsed.extra["vlm_model"] = vlm_model
+        return parsed
+
     def _parse_printed_image(self, path: Path, *, declared_language: str) -> ParsedDocument:
         runtime_language = self._ocr_runtime_language(declared_language)
         parsed = self._ocr_engine_for_language(runtime_language).parse_image(
             path,
             language=self._declared_language(declared_language),
         )
+        parsed.extra.setdefault("parse_method", "ocr")
         if declared_language != "unknown":
             return self._apply_ocr_quality_gate(parsed)
 
@@ -371,6 +433,7 @@ class ParseIndexPipeline:
             return self._apply_ocr_quality_gate(parsed)
 
         vi_parsed = self._ocr_engine_for_language("vi").parse_image(path, language="vi")
+        vi_parsed.extra.setdefault("parse_method", "ocr")
         selected = self._select_better_ocr_result(parsed, vi_parsed)
         selected.extra["ocr_language_routing"] = {
             "initial": runtime_language,
@@ -511,3 +574,5 @@ class ParseIndexPipeline:
         job.finished_at = utc_now()
         await material.save()
         await job.save()
+
+

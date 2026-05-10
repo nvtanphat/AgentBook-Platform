@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Any
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -28,6 +29,9 @@ class QueryRequest(BaseModel):
     query: str = Field(min_length=1)
     top_k: int | None = None
     answer_language: str | None = None
+    # Per-request technique overrides for ablation testing.
+    # Keys: reranker_enabled, agentic_rag_enabled
+    rag_flags: dict[str, bool] = Field(default_factory=dict)
 
 
 class QueryResponse(BaseModel):
@@ -63,16 +67,22 @@ class AgentTraceStep(BaseModel):
     name: str
     status: Literal["pending", "running", "completed", "skipped", "failed"] = "pending"
     query: str | None = None
+    tool: str | None = None
+    duration_ms: int | None = None
     sources_requested: int | None = None
     sources_covered: int | None = None
     evidence_count: int | None = None
     warning: str | None = None
+    metadata: dict[str, Any] | None = None
 
 
 class AgentVerification(BaseModel):
     verdict: str
     confidence: float
     warning: str | None = None
+    unsupported_sentence_count: int | None = None
+    invalid_citation_count: int | None = None
+    repair_attempted: bool = False
 
 
 class AgentTrace(BaseModel):
@@ -98,6 +108,28 @@ class ComparisonCell(BaseModel):
     source: str
     citation: CitationSchema | None = None
     confidence: float
+    source_id: str | None = None
+    citation_ids: list[str] = Field(default_factory=list)
+    missing_evidence: bool = False
+
+
+class CompareSource(BaseModel):
+    source_id: str
+    name: str
+
+
+class CompareMatrixCell(BaseModel):
+    value: str
+    confidence: float
+    citation_ids: list[str] = Field(default_factory=list)
+    missing_evidence: bool = False
+
+
+class DimensionCoverage(BaseModel):
+    dimension: str
+    requested_count: int = 0
+    covered_count: int = 0
+    missing_source_ids: list[str] = Field(default_factory=list)
 
 
 class CompareResponse(BaseModel):
@@ -106,6 +138,10 @@ class CompareResponse(BaseModel):
     conflicts: list[str] = Field(default_factory=list)
     citations: list[CitationSchema] = Field(default_factory=list)
     coverage: CoverageReport | None = None
+    sources: list[CompareSource] = Field(default_factory=list)
+    matrix: dict[str, dict[str, CompareMatrixCell]] = Field(default_factory=dict)
+    cell_citations: dict[str, list[str]] = Field(default_factory=dict)
+    dimension_coverage: list[DimensionCoverage] = Field(default_factory=list)
 
 
 class SummaryRequest(BaseModel):

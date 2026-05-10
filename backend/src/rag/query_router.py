@@ -1,9 +1,36 @@
 from __future__ import annotations
 
+import json
+import logging
 import re
 from enum import Enum
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from src.core.base_llm import BaseLLM
+
+logger = logging.getLogger(__name__)
+
+_ROUTER_PROMPT = """\
+You are a query classifier for a multilingual document Q&A system. Classify the query into exactly one route.
+
+Routes:
+- "factual": asks for definition, explanation, or a specific fact
+- "summarization": asks to summarize, outline, or list main points
+- "comparison": asks to compare, contrast, or differentiate items
+- "graph_relation": asks about relationships, causes, effects, or dependencies between entities
+- "claim_check": asks to verify, fact-check, or validate a statement
+- "general": anything else
+
+Query: {query}
+
+Output ONLY a JSON object (no markdown, no prose):
+{{"route": "factual", "use_multi_query": true, "use_mmr": false, "use_graph": false, "top_k_multiplier": 0.75}}
+
+JSON:\
+"""
 
 
 class RouteType(str, Enum):
@@ -81,7 +108,49 @@ _CLAIM_CHECK_RE = re.compile(
 
 
 class QueryRouter:
-    """Rule-based adaptive routing for knowledge queries."""
+    """Adaptive routing for knowledge queries — LLM-powered with regex fallback."""
+
+    async def route_with_llm(self, query: str, *, llm: "BaseLLM") -> RouteDecision:
+        """LLM-powered routing. Falls back to deterministic regex on any failure."""
+        try:
+            prompt = _ROUTER_PROMPT.format(query=query)
+            raw = await llm.generate(prompt=prompt)
+            decision = self._parse_llm_route(raw)
+            if decision is not None:
+                logger.info("LLM router decision", extra={"route": decision.route_type.value})
+                return decision
+        except Exception as exc:
+            logger.warning("LLM router failed — falling back to regex", extra={"error": str(exc)})
+        return self.route(query)
+
+    def _parse_llm_route(self, raw: str) -> RouteDecision | None:
+        text = raw.strip()
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+        match = re.search(r"\{.*\}", text, re.DOTALL)
+        if not match:
+            return None
+        try:
+            data = json.loads(match.group(0))
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(data, dict):
+            return None
+
+        route_str = str(data.get("route", "general")).lower()
+        try:
+            route_type = RouteType(route_str)
+        except ValueError:
+            return None
+
+        return RouteDecision(
+            route_type=route_type,
+            top_k_multiplier=float(data.get("top_k_multiplier", 1.0)),
+            use_graph=bool(data.get("use_graph", route_type == RouteType.GRAPH_RELATION)),
+            graph_priority=route_type == RouteType.GRAPH_RELATION,
+            use_multi_query=bool(data.get("use_multi_query", True)),
+            use_mmr=bool(data.get("use_mmr", route_type in (RouteType.COMPARISON, RouteType.SUMMARIZATION))),
+        )
 
     def route(self, query: str) -> RouteDecision:
         text = " ".join(query.split())

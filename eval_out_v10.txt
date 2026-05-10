@@ -1,0 +1,146 @@
+
+=================================================================
+  E2E Eval (RAGAS-style metrics) — user_demo
+  API: http://localhost:8000  timeout=300s/query
+=================================================================
+
+[ 1/20] [factual] Accuracy, Precision, Recall và F1-score là gì?
+        [refused] 63.2s  conf=0.709  faith=0.00  cit_cov=0.00  cit_valid=1.00
+        ans_rel=0.349  sem_faith=0.469  grounded=1.00  ctx_prec=1.00  sents=1
+        answer[:80]: Tôi không tìm thấy đủ bằng chứng trong tài liệu được cung cấp để trả lời câu hỏi
+
+[ 2/20] [factual] Confusion matrix dùng để làm gì?
+        [refused] 31.4s  conf=0.569  faith=0.00  cit_cov=0.00  cit_valid=1.00
+        ans_rel=0.379  sem_faith=0.469  grounded=1.00  ctx_prec=1.00  sents=1
+        answer[:80]: Tôi không tìm thấy đủ bằng chứng trong tài liệu được cung cấp để trả lời câu hỏi
+
+[ 3/20] [factual] Overfitting là gì và làm sao để tránh?
+        [refused] 32.4s  conf=0.537  faith=0.00  cit_cov=0.00  cit_valid=1.00
+        ans_rel=0.369  sem_faith=0.514  grounded=1.00  ctx_prec=1.00  sents=1
+        answer[:80]: Tôi không tìm thấy đủ bằng chứng trong tài liệu được cung cấp để trả lời câu hỏi
+
+[ 4/20] [factual] What is supervised learning?
+        [refused] 19.7s  conf=0.545  faith=0.00  cit_cov=0.00  cit_valid=1.00
+        ans_rel=0.271  sem_faith=0.392  grounded=0.00  ctx_prec=1.00  sents=1
+        answer[:80]: Tôi không tìm thấy đủ bằng chứng trong tài liệu được cung cấp để trả lời câu hỏi
+
+[ 5/20] [factual] Machine learning là gì?
+        [refused] 35.8s  conf=0.687  faith=0.00  cit_cov=0.00  cit_valid=1.00
+        ans_rel=0.309  sem_faith=0.465  grounded=1.00  ctx_prec=1.00  sents=1
+        answer[:80]: Tôi không tìm thấy đủ bằng chứng trong tài liệu được cung cấp để trả lời câu hỏi
+
+[ 6/20] [summarization] Tóm tắt các bước cơ bản để xây dựng một mô hình machine
+        [refused] 68.4s  conf=0.590  faith=0.00  cit_cov=0.00  cit_valid=1.00
+        ans_rel=0.386  sem_faith=0.465  grounded=1.00  ctx_prec=1.00  sents=1
+        answer[:80]: Tôi không tìm thấy đủ bằng chứng trong tài liệu được cung cấp để trả lời câu hỏi
+
+[ 7/20] [summarization] Các metric đánh giá mô hình phân loại phổ biến là gì?
+        [refused] 45.9s  conf=0.528  faith=0.00  cit_cov=0.00  cit_valid=1.00
+        ans_rel=0.353  sem_faith=0.429  grounded=1.00  ctx_prec=1.00  sents=1
+        answer[:80]: Tôi không tìm thấy đủ bằng chứng trong tài liệu được cung cấp để trả lời câu hỏi
+
+[ 8/20] [comparison] Precision và Recall khác nhau như thế nào?
+        [refused] 43.5s  conf=0.602  faith=0.00  cit_cov=0.00  cit_valid=1.00
+        ans_rel=0.291  sem_faith=0.469  grounded=1.00  ctx_prec=1.00  sents=1
+        answer[:80]: Tôi không tìm thấy đủ bằng chứng trong tài liệu được cung cấp để trả lời câu hỏi
+
+[ 9/20] [comparison] Supervised learning và unsupervised learning khác nhau 
+        [refused] 43.4s  conf=0.502  faith=0.00  cit_cov=0.00  cit_valid=1.00
+        ans_rel=0.310  sem_faith=0.444  grounded=1.00  ctx_prec=1.00  sents=1
+        answer[:80]: Tôi không tìm thấy đủ bằng chứng trong tài liệu được cung cấp để trả lời câu hỏi
+
+[10/20] [graph_relation] F1-score liên quan đến Precision và Recall như thế nào?
+        [refused] 52.5s  conf=0.681  faith=0.00  cit_cov=0.00  cit_valid=1.00
+        ans_rel=0.344  sem_faith=0.469  grounded=1.00  ctx_prec=1.00  sents=1
+        answer[:80]: Tôi không tìm thấy đủ bằng chứng trong tài liệu được cung cấp để trả lời câu hỏi
+
+[11/20] [graph_relation] Dữ liệu training ảnh hưởng như thế nào đến hiệu suất mô
+        [refused] 52.3s  conf=0.508  faith=0.00  cit_cov=0.00  cit_valid=1.00
+        ans_rel=0.383  sem_faith=0.420  grounded=1.00  ctx_prec=1.00  sents=1
+        answer[:80]: Tôi không tìm thấy đủ bằng chứng trong tài liệu được cung cấp để trả lời câu hỏi
+
+[12/20] [claim_check] F1-score là trung bình cộng của Precision và Recall đún
+        [refused] 42.8s  conf=0.674  faith=0.00  cit_cov=0.00  cit_valid=1.00
+        ans_rel=0.349  sem_faith=0.469  grounded=1.00  ctx_prec=1.00  sents=1
+        answer[:80]: Tôi không tìm thấy đủ bằng chứng trong tài liệu được cung cấp để trả lời câu hỏi
+
+[13/20] [claim_check] Accuracy luôn là metric tốt nhất để đánh giá mô hình kh
+        [refused] 46.9s  conf=0.575  faith=0.00  cit_cov=0.00  cit_valid=1.00
+        ans_rel=0.376  sem_faith=0.462  grounded=1.00  ctx_prec=1.00  sents=1
+        answer[:80]: Tôi không tìm thấy đủ bằng chứng trong tài liệu được cung cấp để trả lời câu hỏi
+
+[14/20] [off_topic_should_refuse] Thủ đô của nước Pháp là gì?
+        [refused] 46.0s  conf=0.500  faith=0.00  cit_cov=0.00  cit_valid=1.00
+        ans_rel=0.280  sem_faith=0.415  grounded=1.00  ctx_prec=1.00  sents=1
+        answer[:80]: Tôi không tìm thấy đủ bằng chứng trong tài liệu được cung cấp để trả lời câu hỏi
+
+[15/20] [off_topic_should_refuse] Hôm nay thời tiết thế nào?
+        [refused] 45.2s  conf=0.500  faith=0.00  cit_cov=0.00  cit_valid=1.00
+        ans_rel=0.401  sem_faith=0.561  grounded=1.00  ctx_prec=1.00  sents=1
+        answer[:80]: Tôi không tìm thấy đủ bằng chứng trong tài liệu được cung cấp để trả lời câu hỏi
+
+[16/20] [false_premise] Tại sao F1-score là tổng của Precision và Recall?
+        [refused] 42.6s  conf=0.614  faith=0.00  cit_cov=0.00  cit_valid=1.00  fp_corrected=False
+        ans_rel=0.350  sem_faith=0.469  grounded=1.00  ctx_prec=1.00  sents=1
+        answer[:80]: Tôi không tìm thấy đủ bằng chứng trong tài liệu được cung cấp để trả lời câu hỏi
+
+[17/20] [false_premise] Vì sao mô hình có accuracy cao luôn tốt hơn mô hình có 
+        [refused] 45.5s  conf=0.512  faith=0.00  cit_cov=0.00  cit_valid=1.00  fp_corrected=False
+        ans_rel=0.370  sem_faith=0.415  grounded=1.00  ctx_prec=1.00  sents=1
+        answer[:80]: Tôi không tìm thấy đủ bằng chứng trong tài liệu được cung cấp để trả lời câu hỏi
+
+[18/20] [cross_lingual] What metrics are used to evaluate a classification mode
+        [refused] 25.6s  conf=0.505  faith=0.00  cit_cov=0.00  cit_valid=1.00
+        ans_rel=0.370  sem_faith=0.415  grounded=1.00  ctx_prec=1.00  sents=1
+        answer[:80]: Tôi không tìm thấy đủ bằng chứng trong tài liệu được cung cấp để trả lời câu hỏi
+
+[19/20] [cross_lingual] What is the difference between precision and recall?
+        [refused] 36.6s  conf=0.590  faith=0.00  cit_cov=0.00  cit_valid=1.00
+        ans_rel=0.287  sem_faith=0.469  grounded=1.00  ctx_prec=1.00  sents=1
+        answer[:80]: Tôi không tìm thấy đủ bằng chứng trong tài liệu được cung cấp để trả lời câu hỏi
+
+[20/20] [anaphora] Nó khác với accuracy như thế nào?
+        [refused] 50.5s  conf=0.511  faith=0.00  cit_cov=0.00  cit_valid=1.00
+        ans_rel=0.371  sem_faith=0.481  grounded=1.00  ctx_prec=1.00  sents=1
+        answer[:80]: Tôi không tìm thấy đủ bằng chứng trong tài liệu được cung cấp để trả lời câu hỏi
+
+
+=================================================================
+  E2E EVAL REPORT (RAGAS-style)
+=================================================================
+  Tổng queries:           20
+  Answered:               20/20
+  Errors/Timeout:         0
+  Avg elapsed:            43.5s/query
+─────────────────────────────────────────────────────────────────
+  RAG QUERIES (0 answered non-refused)
+    Faithfulness (cit.):  0.000  (% câu có [N] marker)
+    Citation coverage:    0.000  (% đoạn có citation)
+    Citation validity:    0.000  (% [N] trong range citations)
+    Answer relevance:     0.000  (cosine query↔answer)
+    Semantic faithfulness:0.000  (cosine answer↔citation)
+    Grounded ratio:       0.000  (% câu sem≥0.4 vs citation)
+    Context precision:    0.000  (% chunks score≥0.4)
+    Avg confidence:       0.000
+    Avg sentences/answer: 0.0
+─────────────────────────────────────────────────────────────────
+  OFF-TOPIC (2 queries)
+    Correctly refused:    2/2
+  FALSE PREMISE (2 queries)
+    Correction detected:  0/2
+  FALSE REFUSALS (in-scope refused): 18
+─────────────────────────────────────────────────────────────────
+  BY QUERY TYPE
+    anaphora                       answered=0/1  faith=0.00  rel=0.37
+    claim_check                    answered=0/2  faith=0.00  rel=0.36
+    comparison                     answered=0/2  faith=0.00  rel=0.30
+    cross_lingual                  answered=0/2  faith=0.00  rel=0.33
+    factual                        answered=0/5  faith=0.00  rel=0.34
+    false_premise                  answered=0/2  faith=0.00  rel=0.36
+    graph_relation                 answered=0/2  faith=0.00  rel=0.36
+    off_topic_should_refuse        answered=0/2  faith=0.00  rel=0.34
+    summarization                  answered=0/2  faith=0.00  rel=0.37
+─────────────────────────────────────────────────────────────────
+  Saved: D:\GenAI\DoAn01\backend\eval_results\e2e_eval.jsonl
+=================================================================
+

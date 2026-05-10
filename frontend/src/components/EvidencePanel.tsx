@@ -22,14 +22,77 @@ function extractKeywords(text: string): Set<string> {
     .replace(/[.,;:!?()\[\]{}"']/g, " ")
     .split(/\s+/)
     .filter((w) => w.length >= 4 && !STOP_WORDS.has(w));
-  return new Set(words);
+  return new Set(words.sort((a, b) => b.length - a.length).slice(0, 8));
 }
 
-function HighlightedText({ text, keywords, className }: { text: string; keywords: Set<string>; className?: string }) {
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function buildExactSnippetPattern(text: string, snippet?: string | null): RegExp | null {
+  const needle = (snippet ?? "").trim();
+  if (!needle) return null;
+
+  const textCompact = text.replace(/\s+/g, " ").trim();
+  const needleCompact = needle.replace(/\s+/g, " ").trim();
+  if (!textCompact || !needleCompact || needleCompact.length < 16) return null;
+  if (needleCompact.length / textCompact.length > 0.9) return null;
+
+  return new RegExp(`(${needleCompact.split(/\s+/).map(escapeRegExp).join("\\s+")})`, "i");
+}
+
+function snippetCoversMostText(text: string, snippet?: string | null) {
+  const textCompact = text.replace(/\s+/g, " ").trim();
+  const needleCompact = (snippet ?? "").replace(/\s+/g, " ").trim();
+  if (!textCompact || !needleCompact || needleCompact.length < 16) return false;
+  return needleCompact.length / textCompact.length > 0.75;
+}
+
+function HighlightedText({
+  text,
+  keywords,
+  exactSnippet,
+  className,
+}: {
+  text: string;
+  keywords: Set<string>;
+  exactSnippet?: string | null;
+  className?: string;
+}) {
+  if (snippetCoversMostText(text, exactSnippet)) {
+    return (
+      <mark className={`rounded bg-yellow-200/80 px-0.5 text-yellow-950 not-italic ${className ?? ""}`}>
+        {text}
+      </mark>
+    );
+  }
+
+  const exactPattern = buildExactSnippetPattern(text, exactSnippet);
+  if (exactPattern) {
+    const exactParts = text.split(exactPattern);
+    if (exactParts.length > 1) {
+      return (
+        <span className={className}>
+          {exactParts.map((part, i) =>
+            i % 2 === 1 ? (
+              <mark key={i} className="rounded bg-yellow-200/80 px-0.5 text-yellow-950 not-italic">
+                {part}
+              </mark>
+            ) : (
+              <span key={i}>{part}</span>
+            )
+          )}
+        </span>
+      );
+    }
+  }
+
+  if (exactSnippet) return <span className={className}>{text}</span>;
+
   if (keywords.size === 0) return <span className={className}>{text}</span>;
 
   const pattern = new RegExp(
-    `(${Array.from(keywords).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`,
+    `(${Array.from(keywords).map(escapeRegExp).join("|")})`,
     "gi"
   );
   const parts = text.split(pattern);
@@ -210,7 +273,7 @@ function MatchedSnippet({ citation }: { citation: Citation }) {
 
 // ─── Specialised block content renderers ─────────────────────────────────────
 
-function HeadingBlock({ text, keywords }: { text: string; keywords: Set<string> }) {
+function HeadingBlock({ text, keywords, exactSnippet }: { text: string; keywords: Set<string>; exactSnippet?: string | null }) {
   const level = text.match(/^(#{1,4})\s/)?.[1]?.length ?? 2;
   const clean = text.replace(/^#{1,4}\s+/, "");
   const cls = level === 1
@@ -220,7 +283,7 @@ function HeadingBlock({ text, keywords }: { text: string; keywords: Set<string> 
     : "text-xs font-semibold uppercase tracking-wide text-muted";
   return (
     <div className={`border-l-2 border-primary/40 pl-2 ${cls}`}>
-      <HighlightedText text={clean} keywords={keywords} />
+      <HighlightedText text={clean} keywords={keywords} exactSnippet={exactSnippet} />
     </div>
   );
 }
@@ -338,11 +401,12 @@ function SourceImageViewer({
 // ─── Block card ───────────────────────────────────────────────────────────────
 
 function BlockCard({
-  block, highlighted, keywords,
+  block, highlighted, keywords, exactSnippet,
 }: {
   block: EvidenceBlock;
   highlighted: boolean;
   keywords: Set<string>;
+  exactSnippet?: string | null;
 }) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -387,7 +451,11 @@ function BlockCard({
       {isTable ? (
         <SnippetRenderer text={block.snippet_original} blockType={block.block_type} maxRows={6} compact />
       ) : isHeading ? (
-        <HeadingBlock text={block.snippet_original} keywords={highlighted ? keywords : new Set()} />
+        <HeadingBlock
+          text={block.snippet_original}
+          keywords={highlighted ? keywords : new Set()}
+          exactSnippet={highlighted ? exactSnippet : null}
+        />
       ) : isFormula ? (
         <FormulaBlock text={block.snippet_original} />
       ) : isCode ? (
@@ -396,7 +464,11 @@ function BlockCard({
         <ImageBlock text={block.snippet_original} />
       ) : (
         <p className="whitespace-pre-wrap text-xs leading-relaxed text-text">
-          <HighlightedText text={block.snippet_original} keywords={highlighted ? keywords : new Set()} />
+          <HighlightedText
+            text={block.snippet_original}
+            exactSnippet={highlighted ? exactSnippet : null}
+            keywords={highlighted ? keywords : new Set()}
+          />
         </p>
       )}
     </div>
@@ -406,11 +478,12 @@ function BlockCard({
 // ─── Page view ────────────────────────────────────────────────────────────────
 
 function PageView({
-  pageData, highlightBlockId, keywords,
+  pageData, highlightBlockId, keywords, exactSnippet,
 }: {
   pageData: EvidencePageResponse;
   highlightBlockId?: string | null;
   keywords: Set<string>;
+  exactSnippet?: string | null;
 }) {
   return (
     <div className="space-y-2 p-4">
@@ -423,6 +496,7 @@ function PageView({
             block={block}
             highlighted={block.block_id === highlightBlockId}
             keywords={keywords}
+            exactSnippet={exactSnippet}
           />
         ))
       )}
@@ -559,6 +633,7 @@ export default function EvidencePanel({ citation: citationProp, docId: docIdProp
 
   // Keywords extracted from the citation snippet for highlighting
   const keywords = citation ? extractKeywords(citation.snippet_original) : new Set<string>();
+  const exactSnippet = citation?.snippet_original ?? null;
 
   // Page load state
   const [pageData, setPageData] = useState<EvidencePageResponse | null>(null);
@@ -681,7 +756,12 @@ export default function EvidencePanel({ citation: citationProp, docId: docIdProp
                 {pageData.blocks.length}
               </span>
             </div>
-            <PageView pageData={pageData} highlightBlockId={highlightBlockId} keywords={keywords} />
+            <PageView
+              pageData={pageData}
+              highlightBlockId={highlightBlockId}
+              keywords={keywords}
+              exactSnippet={exactSnippet}
+            />
           </>
         )}
       </div>

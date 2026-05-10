@@ -166,9 +166,9 @@ export function renderInlineTokens(
             <button
               key={`${i}-${ri}`}
               onClick={() => onCitationClick(ref)}
-              className="mx-0.5 inline-flex h-4 min-w-[16px] items-center justify-center rounded bg-primary/10 px-1 text-[10px] font-bold text-primary hover:bg-primary/20 transition"
+              className="mx-1 inline-flex h-4 min-w-[20px] items-center justify-center rounded bg-primary/10 px-1 text-[10px] font-bold text-primary hover:bg-primary/20 transition"
             >
-              {ref + 1}
+              [{ref + 1}]
             </button>
           ) : (
             <sup key={`${i}-${ri}`} className="font-bold text-primary text-[9px] mx-0.5">[{ref + 1}]</sup>

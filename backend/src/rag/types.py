@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pydantic import BaseModel, Field
+from typing import Any
 
 from src.processing.types import BBox, EvidenceBlock
 
@@ -30,6 +31,7 @@ class RetrievedChunk(BaseModel):
     source_pages: list[int] = Field(default_factory=list)
     bboxes: list[BBox] = Field(default_factory=list)
     evidence: list[EvidenceBlock] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
     dense_score: float | None = None
     sparse_score: float | None = None
     graph_score: float | None = None

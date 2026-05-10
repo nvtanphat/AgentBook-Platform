@@ -1,4 +1,5 @@
 import json
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
@@ -21,6 +22,7 @@ from src.services.study_guide_service import StudyGuideService
 from src.services.summary_service import SummaryService
 
 router = APIRouter(prefix="/query", tags=["query"])
+logger = logging.getLogger(__name__)
 
 
 @router.post("/ask", response_model=APIResponse[QueryResponse])
@@ -81,6 +83,7 @@ async def compare(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except Exception as exc:
+        logger.exception("Compare pipeline failed")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Compare pipeline error ({type(exc).__name__}): {exc}") from exc
     return APIResponse(success=True, message="Comparison generated successfully", data=result, error=None)
 

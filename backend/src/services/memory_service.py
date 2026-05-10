@@ -11,11 +11,13 @@ from src.rag.types import RetrievalScope
 
 logger = logging.getLogger(__name__)
 
-SHORT_TERM_TURNS = 3
-SUMMARY_AFTER_TURNS = 6
-MAX_MEMORY_CHARS = 1800
-MAX_SUMMARY_CHARS = 900
-MAX_MESSAGE_CHARS = 260
+SHORT_TERM_TURNS = 4        # verbatim recent turns fed to LLM
+SUMMARY_AFTER_TURNS = 6    # compress older turns into summary after this many total turns
+MAX_TURNS_SUMMARIZED = 16  # hard cap: never summarize more than this many older turns
+MAX_MEMORY_CHARS = 2000
+MAX_SUMMARY_CHARS = 1000
+MAX_QUERY_KEY_CHARS = 110  # key phrase extracted from query for each summary line
+MAX_ANSWER_KEY_CHARS = 180 # first sentence of answer for each summary line
 
 
 class MemoryService:
@@ -40,34 +42,39 @@ class MemoryService:
 
         sections: list[str] = []
         if summary_doc and summary_doc.summary.strip():
-            sections.append("Summary memory:\n" + summary_doc.summary.strip())
+            sections.append("Lịch sử hội thoại (tóm tắt):\n" + summary_doc.summary.strip())
         if recent:
-            lines = ["Short-term memory:"]
+            lines = ["Tin nhắn gần đây:"]
             for item in reversed(recent):
-                lines.append(f"- User: {self._trim(item.query, MAX_MESSAGE_CHARS)}")
-                lines.append(f"  Assistant: {self._trim(item.answer, MAX_MESSAGE_CHARS)}")
+                lines.append(f"- Người dùng: {self._trim(item.query, 220)}")
+                lines.append(f"  Trợ lý: {self._trim(item.answer, 300)}")
             sections.append("\n".join(lines))
         return self._trim("\n\n".join(sections), MAX_MEMORY_CHARS)
 
     async def update_after_query(self, *, scope: RetrievalScope, conversation_id: str) -> None:
-        """Refresh extractive summary memory from older turns without adding LLM latency."""
+        """Refresh extractive summary memory from older turns. Runs in background — no LLM cost."""
         try:
             collection_oid = self._collection_oid(scope)
+            total_limit = min(SUMMARY_AFTER_TURNS + SHORT_TERM_TURNS + MAX_TURNS_SUMMARIZED, 64)
             logs = await self._recent_logs(
                 owner_id=scope.owner_id,
                 collection_id=collection_oid,
                 conversation_id=conversation_id,
-                limit=SUMMARY_AFTER_TURNS + SHORT_TERM_TURNS,
+                limit=total_limit,
             )
             if len(logs) <= SUMMARY_AFTER_TURNS:
                 return
 
-            older_logs = list(reversed(logs[SHORT_TERM_TURNS:]))
-            summary_lines = [
-                f"- {self._trim(item.query, 140)} -> {self._trim(item.answer, 220)}"
-                for item in older_logs
-                if item.query.strip() and item.answer.strip()
-            ]
+            # logs sorted newest-first; skip the SHORT_TERM_TURNS verbatim ones
+            older_logs = list(reversed(logs[SHORT_TERM_TURNS:SHORT_TERM_TURNS + MAX_TURNS_SUMMARIZED]))
+            summary_lines: list[str] = []
+            for idx, item in enumerate(older_logs, start=1):
+                if not item.query.strip() or not item.answer.strip():
+                    continue
+                q = self._trim(item.query, MAX_QUERY_KEY_CHARS)
+                a = self._first_sentence(item.answer, MAX_ANSWER_KEY_CHARS)
+                summary_lines.append(f"[{idx}] Q: {q}\n    A: {a}")
+
             summary = self._trim("\n".join(summary_lines), MAX_SUMMARY_CHARS)
             if not summary:
                 return
@@ -130,6 +137,19 @@ class MemoryService:
     @staticmethod
     def _trim(value: str, limit: int) -> str:
         text = " ".join(value.split())
+        if len(text) <= limit:
+            return text
+        return text[: max(0, limit - 1)].rstrip() + "…"
+
+    @staticmethod
+    def _first_sentence(value: str, limit: int) -> str:
+        """Extract first meaningful sentence, then trim to limit."""
+        text = " ".join(value.split())
+        for sep in (".", "!", "?", "\n"):
+            pos = text.find(sep)
+            if 20 < pos < limit:
+                text = text[: pos + 1]
+                break
         if len(text) <= limit:
             return text
         return text[: max(0, limit - 1)].rstrip() + "…"

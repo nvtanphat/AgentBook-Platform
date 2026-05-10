@@ -164,7 +164,9 @@ class HybridRetriever:
         else:
             points = semantic_points
         hydrated = await self._hydrate_points(points)
-        return hydrated
+        # Filter out noise chunks (headers, page numbers, titles) with very short content
+        hydrated = [c for c in hydrated if len((c.content or "").strip()) >= 40]
+        return self._diversify(hydrated, max_per_doc=self.settings.max_chunks_per_doc)
 
     def _lexical_fallback_points(
         self,
@@ -398,6 +400,21 @@ class HybridRetriever:
         if bbox is None:
             return None
         return BBox(x1=bbox.x1, y1=bbox.y1, x2=bbox.x2, y2=bbox.y2)
+
+
+    @staticmethod
+    def _diversify(chunks: list[RetrievedChunk], max_per_doc: int) -> list[RetrievedChunk]:
+        """Cap chunks per document to avoid one broad chunk dominating results."""
+        if max_per_doc <= 0:
+            return chunks
+        counts: dict[str, int] = {}
+        result: list[RetrievedChunk] = []
+        for chunk in chunks:
+            doc = chunk.document_name
+            if counts.get(doc, 0) < max_per_doc:
+                result.append(chunk)
+                counts[doc] = counts.get(doc, 0) + 1
+        return result
 
 
 def dedupe_retrieved_chunks(chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:

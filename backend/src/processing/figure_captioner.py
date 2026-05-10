@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import logging
+import re
 import tempfile
 import threading
 from pathlib import Path
@@ -22,20 +23,20 @@ logger = logging.getLogger(__name__)
 
 # Prompt used for VLM captioning. Short and structured so the model stays focused.
 _CAPTION_PROMPT_VI = (
-    "Mô tả ngắn gọn nội dung hình ảnh này bằng tiếng Việt (tối đa 3 câu). "
-    "Nếu là biểu đồ, nêu loại biểu đồ và xu hướng chính. "
-    "Nếu là bảng, tóm tắt nội dung. "
-    "Không mô tả màu sắc hay bố cục, chỉ nêu thông tin quan trọng."
+    "Read all text visible in this image. "
+    "List every label, term, number, formula, and step you can see. "
+    "Respond in Vietnamese. Format as a structured list. "
+    "Only report what is actually shown, do not infer."
 )
 _CAPTION_PROMPT_EN = (
-    "Briefly describe the content of this image in English (max 3 sentences). "
-    "If it is a chart, state the chart type and key trend. "
-    "If it is a table, summarize the content. "
-    "Focus on information, not colors or layout."
+    "Read all text visible in this image. "
+    "List every label, term, number, formula, and step you can see. "
+    "Format as a structured list. "
+    "Only report what is actually shown, do not infer."
 )
 
 # Vision models supported by Ollama, tried in order.
-_OLLAMA_VISION_MODELS = ["qwen2-vl", "llava", "moondream", "bakllava", "llava-phi3"]
+_OLLAMA_VISION_MODELS = ["minicpm-v", "qwen2-vl", "llava", "moondream", "bakllava", "llava-phi3"]
 
 
 class FigureCaptioner:
@@ -107,7 +108,7 @@ class FigureCaptioner:
             return ""
 
         prompt = _CAPTION_PROMPT_VI if self.language == "vi" else _CAPTION_PROMPT_EN
-        image_b64 = base64.b64encode(image_path.read_bytes()).decode("ascii")
+        image_b64 = self._encode_image_resized(image_path)
 
         try:
             response = httpx.post(
@@ -117,13 +118,20 @@ class FigureCaptioner:
                     "prompt": prompt,
                     "images": [image_b64],
                     "stream": False,
-                    "options": {"temperature": 0.1, "num_predict": 256},
+                    "options": {"temperature": 0.1, "num_predict": 512},
                 },
-                timeout=30.0,
+                timeout=300.0,
             )
             response.raise_for_status()
             data = response.json()
             caption = (data.get("response") or "").strip()
+            caption = self._remove_repetition_loops(caption)
+            if self._looks_like_cross_language_hallucination(caption):
+                logger.warning(
+                    "VLM caption rejected due to cross-language hallucination",
+                    extra={"model": model, "image": image_path.name, "chars": len(caption)},
+                )
+                return ""
             if caption:
                 logger.info(
                     "Figure captioned via VLM",
@@ -137,6 +145,25 @@ class FigureCaptioner:
             )
             return ""
 
+    def _looks_like_cross_language_hallucination(self, text: str) -> bool:
+        """Reject VLM captions that inject unrelated CJK text into vi/en OCR output."""
+        if not text or self.language not in {"vi", "en"}:
+            return False
+
+        cjk_chars = re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]", text)
+        if not cjk_chars:
+            return False
+
+        visible_chars = [ch for ch in text if not ch.isspace()]
+        cjk_ratio = len(cjk_chars) / max(1, len(visible_chars))
+
+        # A genuine Vietnamese/English slide should not contain sustained CJK runs.
+        # Short isolated symbols are tolerated, but VLM hallucinations often contain
+        # repeated mixed fragments such as "đ用力導決策".
+        has_cjk_run = re.search(r"[\u3400-\u4dbf\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]{2,}", text) is not None
+        has_mixed_garble = re.search(r"[A-Za-zÀ-ỹ][\u3400-\u4dbf\u4e00-\u9fff]|[\u3400-\u4dbf\u4e00-\u9fff][A-Za-zÀ-ỹ]", text) is not None
+        return cjk_ratio >= 0.02 or has_cjk_run or has_mixed_garble
+
     def _detect_available_model(self) -> str | None:
         if self._model_checked:
             return self._available_model
@@ -145,16 +172,47 @@ class FigureCaptioner:
             import httpx
             resp = httpx.get(f"{self.ollama_base_url}/api/tags", timeout=5.0)
             resp.raise_for_status()
-            installed = {m["name"].split(":")[0] for m in resp.json().get("models", [])}
+            all_models = resp.json().get("models", [])
+            installed = {m["name"].split(":")[0]: m["name"] for m in all_models}
             for model in _OLLAMA_VISION_MODELS:
                 if model in installed:
-                    self._available_model = model
-                    logger.info("Figure captioner using VLM model: %s", model)
-                    return model
+                    self._available_model = installed[model]
+                    logger.info("Figure captioner using VLM model: %s", self._available_model)
+                    return self._available_model
         except Exception as exc:
             logger.debug("Ollama not reachable for figure captioning: %s", exc)
         logger.info("No vision model found in Ollama — figure captioner will use OCR fallback")
         return None
+
+    @staticmethod
+    def _encode_image_resized(image_path: Path, max_side: int = 1024) -> str:
+        """Resize image to max_side px on longest side, return base64. Falls back to raw bytes."""
+        try:
+            from PIL import Image
+            import io
+            img = Image.open(image_path)
+            w, h = img.size
+            if max(w, h) > max_side:
+                scale = max_side / max(w, h)
+                img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            return base64.b64encode(buf.getvalue()).decode("ascii")
+        except Exception:
+            return base64.b64encode(image_path.read_bytes()).decode("ascii")
+
+    @staticmethod
+    def _remove_repetition_loops(text: str) -> str:
+        """Detect and truncate repeating token loops from VLM hallucination."""
+        if not text:
+            return text
+        # Find repeating substrings >= 8 chars that appear 4+ times consecutively
+        import re
+        pattern = re.compile(r"(.{8,}?)\1{3,}", re.DOTALL)
+        m = pattern.search(text)
+        if m:
+            text = text[:m.start()].rstrip(" /,\n") + "..."
+        return text
 
     def _try_ocr_fallback(self, image_path: Path) -> str:
         """Run EasyOCR on the figure region to extract any embedded text."""

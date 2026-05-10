@@ -13,9 +13,8 @@ retrieval:
   top_k: 5
   final_top_k: 5
   rrf_k: 60
-  rerank_input_k: 15
+  rerank_input_k: 8
   graph_max_hops: 2
-  query_rewriter_enabled: true  # LLM-based Multi-Query / RAG-Fusion (replaces dictionary VI→EN)
 
 chunking:
   strategy: semantic

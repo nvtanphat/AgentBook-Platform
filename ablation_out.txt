@@ -1,0 +1,69 @@
+
+=================================================================
+  CONFIG: Baseline (reranker ON, no multi-query, no agentic)
+=================================================================
+  [1/8] [factual] Regularization là gì và tại sao cần dùng?
+        [answered] 148s  score=0.634  cov=0.00  faith=0.06
+  [2/8] [factual] L1 và L2 regularization khác nhau như thế nào?
+        [answered] 191s  score=0.587  cov=0.08  faith=0.13
+  [3/8] [summarization] Tóm tắt các kỹ thuật regularization phổ biến
+        [answered] 187s  score=0.540  cov=0.00  faith=0.18
+  [4/8] [comparison] So sánh L1 và L2 regularization
+        [answered] 207s  score=0.652  cov=0.10  faith=0.12
+  [5/8] [claim_check] Dropout có giúp giảm overfitting không?
+        [answered] 144s  score=0.721  cov=0.00  faith=0.03
+  [6/8] [cross_lingual] What is the difference between L1 and L2 regulariz
+        [answered] 146s  score=0.586  cov=0.00  faith=0.10
+  [7/8] [off_topic_should_refuse] Thủ đô của nước Pháp là gì?
+        [refused] 123s  score=0.500  cov=0.00  faith=0.09
+  [8/8] [false_premise] Tại sao L2 regularization tạo ra sparse weights?
+        [answered] 146s  score=0.515  cov=0.00  faith=0.04
+
+=================================================================
+  CONFIG: No Reranker (fusion score only)
+=================================================================
+  [1/8] [factual] Regularization là gì và tại sao cần dùng?
+        [answered] 125s  score=0.533  cov=0.00  faith=0.02
+  [2/8] [factual] L1 và L2 regularization khác nhau như thế nào?
+        [answered] 151s  score=0.583  cov=0.09  faith=0.10
+  [3/8] [summarization] Tóm tắt các kỹ thuật regularization phổ biến
+        [answered] 149s  score=0.500  cov=0.00  faith=0.12
+  [4/8] [comparison] So sánh L1 và L2 regularization
+        [refused] 140s  score=0.577  cov=0.18  faith=0.11
+  [5/8] [claim_check] Dropout có giúp giảm overfitting không?
+        [answered] 112s  score=0.500  cov=0.00  faith=0.04
+  [6/8] [cross_lingual] What is the difference between L1 and L2 regulariz
+        [answered] 127s  score=0.583  cov=0.10  faith=0.08
+  [7/8] [off_topic_should_refuse] Thủ đô của nước Pháp là gì?
+        [refused] 100s  score=0.583  cov=0.00  faith=0.00
+  [8/8] [false_premise] Tại sao L2 regularization tạo ra sparse weights?
+        [answered] 114s  score=0.571  cov=0.00  faith=0.06
+
+=================================================================
+  CONFIG: Multi-Query Rewriter (reranker + query expansion)
+=================================================================
+  [1/8] [factual] Regularization là gì và tại sao cần dùng?
+        [answered] 137s  score=0.634  cov=0.00  faith=0.05
+  [2/8] [factual] L1 và L2 regularization khác nhau như thế nào?
+        [answered] 207s  score=0.587  cov=0.00  faith=0.13
+  [3/8] [summarization] Tóm tắt các kỹ thuật regularization phổ biến
+        [answered] 199s  score=0.540  cov=0.00  faith=0.19
+  [4/8] [comparison] So sánh L1 và L2 regularization
+        [answered] 181s  score=0.652  cov=0.10  faith=0.14
+  [5/8] [claim_check] Dropout có giúp giảm overfitting không?
+        [answered] 134s  score=0.721  cov=0.00  faith=0.03
+  [6/8] [cross_lingual] What is the difference between L1 and L2 regulariz
+        [answered] 133s  score=0.586  cov=0.00  faith=0.11
+  [7/8] [off_topic_should_refuse] Thủ đô của nước Pháp là gì?
+        [refused] 121s  score=0.500  cov=0.00  faith=0.14
+  [8/8] [false_premise] Tại sao L2 regularization tạo ra sparse weights?
+        [answered] 129s  score=0.515  cov=0.00  faith=0.01
+
+=================================================================
+  CONFIG: Agentic RAG (multi-step retrieval)
+=================================================================
+  [1/8] [factual] Regularization là gì và tại sao cần dùng?
+        TIMEOUT 300s
+  [2/8] [factual] L1 và L2 regularization khác nhau như thế nào?
+        TIMEOUT 300s
+  [3/8] [summarization] Tóm tắt các kỹ thuật regularization phổ biến

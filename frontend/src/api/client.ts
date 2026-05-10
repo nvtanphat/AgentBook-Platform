@@ -34,6 +34,7 @@ export type Citation = {
   role: string;
   source_language: string;
   confidence: number;
+  evidence_blocks?: EvidenceBlock[];
 };
 
 export type MaterialUploadMetadata = {
@@ -168,16 +169,22 @@ export type AgentTraceStep = {
   name: string;
   status: "pending" | "running" | "completed" | "skipped" | "failed";
   query?: string | null;
+  tool?: string | null;
+  duration_ms?: number | null;
   sources_requested?: number | null;
   sources_covered?: number | null;
   evidence_count?: number | null;
   warning?: string | null;
+  metadata?: Record<string, unknown> | null;
 };
 
 export type AgentVerification = {
   verdict: string;
   confidence: number;
   warning?: string | null;
+  unsupported_sentence_count?: number | null;
+  invalid_citation_count?: number | null;
+  repair_attempted?: boolean;
 };
 
 export type AgentTrace = {
@@ -217,6 +224,9 @@ export type ComparisonCell = {
   source: string;
   citation: Citation | null;
   confidence: number;
+  source_id?: string | null;
+  citation_ids?: string[];
+  missing_evidence?: boolean;
 };
 
 export type CoverageSource = {
@@ -231,12 +241,35 @@ export type CoverageReport = {
   sources: CoverageSource[];
 };
 
+export type CompareSource = {
+  source_id: string;
+  name: string;
+};
+
+export type CompareMatrixCell = {
+  value: string;
+  confidence: number;
+  citation_ids: string[];
+  missing_evidence: boolean;
+};
+
+export type DimensionCoverage = {
+  dimension: string;
+  requested_count: number;
+  covered_count: number;
+  missing_source_ids: string[];
+};
+
 export type CompareResponse = {
   topic: string;
   comparison_table: ComparisonCell[];
   conflicts: string[];
   citations: Citation[];
   coverage?: CoverageReport | null;
+  sources?: CompareSource[];
+  matrix?: Record<string, Record<string, CompareMatrixCell>>;
+  cell_citations?: Record<string, string[]>;
+  dimension_coverage?: DimensionCoverage[];
 };
 
 export type EvidenceBlock = {

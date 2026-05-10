@@ -1,0 +1,17 @@
+
+=================================================================
+  E2E Eval (RAGAS-style metrics) — user_demo
+  API: http://localhost:8000  timeout=300s/query
+=================================================================
+
+[ 1/20] [factual] Regularization là gì và tại sao cần dùng?
+        [answered] 146.8s  conf=0.543  faith=1.00  cit_cov=1.00
+        ans_rel=0.741  sem_faith=0.619  ctx_prec=1.00
+        answer[:80]: Regularization là một kỹ thuật được sử dụng trong học máy để giảm thiểu Overfitt
+
+[ 2/20] [factual] L1 và L2 regularization khác nhau như thế nào?
+        [refused] 225.8s  conf=0.511  faith=0.25  cit_cov=0.67
+        ans_rel=0.730  sem_faith=0.537  ctx_prec=1.00
+        answer[:80]: **L1 regularization tạo ra sparse weights[4] trong khi L2 regularization tạo ra 
+
+[ 3/20] [factual] Dropout hoạt động như thế nào trong quá trình training?

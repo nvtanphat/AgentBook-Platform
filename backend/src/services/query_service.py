@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 from time import perf_counter
-from typing import AsyncGenerator
+from typing import AsyncGenerator, cast
 
 from src.agentic.service import AgenticRagService
 from beanie import PydanticObjectId
@@ -23,7 +24,20 @@ from src.rag.retriever import HybridRetriever
 from src.rag.types import RetrievalScope
 from src.rag.vector_store import get_qdrant_client_for_settings
 from src.guardrails.contradiction_detector import ContradictionDetector
-from src.schemas.query import CompareRequest, CompareResponse, ComparisonCell, CoverageReport, CoverageSource, QueryRequest, QueryResponse
+from src.schemas.query import (
+    CompareMatrixCell,
+    CompareRequest,
+    CompareResponse,
+    CompareSource,
+    ComparisonCell,
+    CoverageReport,
+    CoverageSource,
+    DimensionCoverage,
+    QueryRequest,
+    QueryResponse,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class QueryService:
@@ -60,7 +74,9 @@ class QueryService:
         conversation_id = self._conversation_id(request.conversation_id)
         memory_context = await self.memory_service.build_context(scope=scope, conversation_id=conversation_id)
         started = perf_counter()
-        if self.settings.agentic_rag_enabled:
+        flags = request.rag_flags
+        use_agentic = flags.get("agentic_rag_enabled", self.settings.agentic_rag_enabled)
+        if use_agentic:
             response = await self.agentic_rag.answer(
                 query=request.query,
                 scope=scope,
@@ -75,10 +91,13 @@ class QueryService:
                 top_k=request.top_k,
                 answer_language=request.answer_language,
                 memory_context=memory_context,
+                rag_flags=flags,
             )
         latency_ms = int((perf_counter() - started) * 1000)
         await self._log_query(request=request, response=response, latency_ms=latency_ms)
-        await self.memory_service.update_after_query(scope=scope, conversation_id=conversation_id)
+        asyncio.create_task(
+            self.memory_service.update_after_query(scope=scope, conversation_id=conversation_id)
+        )
         return response
 
     async def ask_stream(self, request: QueryRequest) -> AsyncGenerator[str, None]:
@@ -86,6 +105,9 @@ class QueryService:
         scope.ensure_scoped()
         conversation_id = self._conversation_id(request.conversation_id)
         memory_context = await self.memory_service.build_context(scope=scope, conversation_id=conversation_id)
+        started = perf_counter()
+        final_response: QueryResponse | None = None
+
         if self.settings.agentic_rag_enabled:
             queue: asyncio.Queue[object] = asyncio.Queue()
 
@@ -117,6 +139,7 @@ class QueryService:
                         yield f"event: error\ndata: {json.dumps({'message': payload}, ensure_ascii=False)}\n\n"
                         break
                     if event_type == "done":
+                        final_response = cast(QueryResponse, payload)
                         yield f"event: done\ndata: {payload.model_dump_json()}\n\n"
                         break
             finally:
@@ -127,6 +150,7 @@ class QueryService:
                 except asyncio.CancelledError:
                     pass
         else:
+            _DONE_PREFIX = "event: done\ndata: "
             async for chunk in self.inference_engine.answer_stream(
                 query=request.query,
                 scope=scope,
@@ -135,7 +159,21 @@ class QueryService:
                 memory_context=memory_context,
             ):
                 yield chunk
-        await self.memory_service.update_after_query(scope=scope, conversation_id=conversation_id)
+                if final_response is None and chunk.startswith(_DONE_PREFIX):
+                    raw = chunk[len(_DONE_PREFIX):].rstrip("\n")
+                    try:
+                        final_response = QueryResponse.model_validate_json(raw)
+                    except Exception:
+                        pass
+
+        latency_ms = int((perf_counter() - started) * 1000)
+        if final_response is not None:
+            asyncio.create_task(
+                self._log_query(request=request, response=final_response, latency_ms=latency_ms)
+            )
+        asyncio.create_task(
+            self.memory_service.update_after_query(scope=scope, conversation_id=conversation_id)
+        )
 
     async def compare(self, request: CompareRequest) -> CompareResponse:
         scope = RetrievalScope(owner_id=request.owner_id, collection_id=request.collection_id, material_ids=request.material_ids)
@@ -151,7 +189,11 @@ class QueryService:
 
         query = f"{request.topic}. Compare by: {', '.join(dimensions)}"
         limit = max(request.top_k or self.settings.final_top_k, min(12, len(dimensions) * 3))
-        retrieved = await self.retriever.retrieve(query=query, scope=scope, limit=limit)
+        try:
+            retrieved = await self.retriever.retrieve(query=query, scope=scope, limit=limit)
+        except OSError as exc:
+            logger.warning("Compare retrieval failed", exc_info=True, extra={"owner_id": request.owner_id, "error": str(exc)})
+            retrieved = []
         citations_by_chunk = self.response_parser.citations_from_chunks(retrieved)
         citation_lookup = {chunk.chunk_id: citation for chunk, citation in zip(retrieved, citations_by_chunk)}
         results = [
@@ -179,10 +221,9 @@ class QueryService:
         return CompareResponse(topic=request.topic, comparison_table=cells, citations=list(deduped.values()), conflicts=conflicts, coverage=coverage)
 
     async def _compare_by_source(self, *, request: CompareRequest, dimensions: list[str], material_ids: list[str]) -> CompareResponse:
-        chunks_by_material: dict[str, list] = {}
+        chunks_by_material_dimension: dict[str, dict[str, list]] = {material_id: {} for material_id in material_ids}
         all_chunks: list = []
-        base_query = f"{request.topic}. Compare by: {', '.join(dimensions)}"
-        per_source_limit = max(3, min(6, len(dimensions) + 1))
+        per_cell_limit = max(2, min(4, request.top_k or self.settings.final_top_k))
 
         for material_id in material_ids:
             material_scope = RetrievalScope(
@@ -190,51 +231,147 @@ class QueryService:
                 collection_id=request.collection_id,
                 material_ids=[material_id],
             )
-            chunks = await self.retriever.retrieve(query=base_query, scope=material_scope, limit=per_source_limit)
-            if chunks:
-                chunks_by_material[material_id] = chunks
-                all_chunks.extend(chunks)
+            for dimension in dimensions:
+                query = f"{request.topic}. Khía cạnh so sánh: {dimension}"
+                try:
+                    chunks = await self.retriever.retrieve(query=query, scope=material_scope, limit=per_cell_limit)
+                except OSError as exc:
+                    logger.warning(
+                        "Compare cell retrieval failed",
+                        exc_info=True,
+                        extra={
+                            "owner_id": request.owner_id,
+                            "material_id": material_id,
+                            "dimension": dimension,
+                            "error": str(exc),
+                        },
+                    )
+                    chunks = []
+                ranked = self._rank_chunks_for_dimension(topic=request.topic, dimension=dimension, chunks=chunks)
+                selected = ranked[:2]
+                chunks_by_material_dimension[material_id][dimension] = selected
+                all_chunks.extend(selected)
 
         citation_lookup = {
             chunk.chunk_id: citation
             for chunk, citation in zip(all_chunks, self.response_parser.citations_from_chunks(all_chunks))
         }
+        source_names = await self._material_names(material_ids)
+        compare_sources = [
+            CompareSource(source_id=material_id, name=source_names.get(material_id, material_id))
+            for material_id in material_ids
+        ]
 
         cells: list[ComparisonCell] = []
         all_citations: list = []
         all_evidence: list = []
+        matrix: dict[str, dict[str, CompareMatrixCell]] = {source.source_id: {} for source in compare_sources}
+        cell_citations: dict[str, list[str]] = {}
+        dimension_coverage: list[DimensionCoverage] = []
         for dimension in dimensions:
-            selected: list = []
-            lines: list[str] = [f"{dimension}:"]
+            dimension_selected: list = []
+            missing_source_ids: list[str] = []
             for material_id in material_ids:
-                chunks = chunks_by_material.get(material_id) or []
-                ranked = self._rank_chunks_for_dimension(topic=request.topic, dimension=dimension, chunks=chunks)
-                if not ranked:
-                    lines.append(f"- {material_id}: Không tìm thấy bằng chứng phù hợp.")
+                chunks = chunks_by_material_dimension.get(material_id, {}).get(dimension) or []
+                source_name = source_names.get(material_id, material_id)
+                if not chunks:
+                    missing_source_ids.append(material_id)
+                    value = "Không đủ bằng chứng cho khía cạnh này."
+                    matrix[material_id][dimension] = CompareMatrixCell(value=value, confidence=0.0, citation_ids=[], missing_evidence=True)
+                    cells.append(
+                        ComparisonCell(
+                            dimension=dimension,
+                            value=value,
+                            source=source_name,
+                            citation=None,
+                            confidence=0.0,
+                            source_id=material_id,
+                            citation_ids=[],
+                            missing_evidence=True,
+                        )
+                    )
                     continue
-                chunk = ranked[0]
-                selected.append(chunk)
-                citation = citation_lookup.get(chunk.chunk_id)
-                if citation:
-                    all_citations.append(citation)
-                all_evidence.extend(chunk.evidence)
-                lines.append(f"- {chunk.document_name}: {self._snippet(chunk.content, max_chars=260)}")
 
-            confidence = self.confidence_scorer.score(selected)
-            cell_citations = [citation_lookup[chunk.chunk_id] for chunk in selected if chunk.chunk_id in citation_lookup]
+                answer = await self._synthesize_dimension(
+                    topic=request.topic,
+                    dimension=dimension,
+                    chunks=chunks,
+                    answer_language=request.answer_language,
+                )
+                answer = self.response_parser.inject_citations(answer, chunks)
+                citations = [citation_lookup[chunk.chunk_id] for chunk in chunks if chunk.chunk_id in citation_lookup]
+                citation_ids = [self._citation_key(citation) for citation in citations]
+                confidence = self.confidence_scorer.score(chunks)
+                all_citations.extend(citations)
+                all_evidence.extend(ev for chunk in chunks for ev in chunk.evidence)
+                dimension_selected.extend(chunks)
+                matrix[material_id][dimension] = CompareMatrixCell(
+                    value=answer,
+                    confidence=confidence,
+                    citation_ids=citation_ids,
+                    missing_evidence=False,
+                )
+                cell_citations[f"{material_id}::{dimension}"] = citation_ids
+                cells.append(
+                    ComparisonCell(
+                        dimension=dimension,
+                        value=answer,
+                        source=source_name,
+                        citation=citations[0] if citations else None,
+                        confidence=confidence,
+                        source_id=material_id,
+                        citation_ids=citation_ids,
+                        missing_evidence=False,
+                    )
+                )
+
+            dimension_coverage.append(
+                DimensionCoverage(
+                    dimension=dimension,
+                    requested_count=len(material_ids),
+                    covered_count=len(material_ids) - len(missing_source_ids),
+                    missing_source_ids=missing_source_ids,
+                )
+            )
+            confidence = self.confidence_scorer.score(dimension_selected)
+            dimension_citations = [citation_lookup[chunk.chunk_id] for chunk in dimension_selected if chunk.chunk_id in citation_lookup]
+            lines = [f"{dimension}:"]
+            for material_id in material_ids:
+                source_name = source_names.get(material_id, material_id)
+                value = matrix[material_id][dimension].value
+                lines.append(f"- {source_name}: {self._snippet(value, max_chars=260)}")
             cells.append(
                 ComparisonCell(
                     dimension=dimension,
                     value="\n".join(lines),
-                    source=f"{len(selected)} sources",
-                    citation=cell_citations[0] if cell_citations else None,
+                    source=f"{len(dimension_selected)} evidence chunks",
+                    citation=dimension_citations[0] if dimension_citations else None,
                     confidence=confidence,
+                    citation_ids=[self._citation_key(citation) for citation in dimension_citations],
+                    missing_evidence=bool(missing_source_ids),
                 )
             )
 
         deduped = {f"{c.doc_id}:{c.page}:{c.block_id}": c for c in all_citations}
-        coverage = await self._coverage_report(expected_material_ids=material_ids, covered_material_ids=list(chunks_by_material.keys()))
-        return CompareResponse(topic=request.topic, comparison_table=cells, citations=list(deduped.values()), conflicts=[], coverage=coverage)
+        contradictions = ContradictionDetector().detect(all_evidence)
+        conflicts = [c.description for c in contradictions]
+        covered_material_ids = [
+            material_id
+            for material_id, by_dimension in chunks_by_material_dimension.items()
+            if any(by_dimension.get(dimension) for dimension in dimensions)
+        ]
+        coverage = await self._coverage_report(expected_material_ids=material_ids, covered_material_ids=covered_material_ids)
+        return CompareResponse(
+            topic=request.topic,
+            comparison_table=cells,
+            citations=list(deduped.values()),
+            conflicts=conflicts,
+            coverage=coverage,
+            sources=compare_sources,
+            matrix=matrix,
+            cell_citations=cell_citations,
+            dimension_coverage=dimension_coverage,
+        )
 
     async def _indexed_material_ids_for_collection(self, request: CompareRequest) -> list[str]:
         if not request.collection_id:
@@ -355,6 +492,10 @@ class QueryService:
         if len(snippet) > max_chars:
             return snippet[: max_chars - 3].rstrip() + "..."
         return snippet
+
+    @staticmethod
+    def _citation_key(citation) -> str:
+        return f"{citation.doc_id}:{citation.page}:{citation.block_id}"
 
     async def _synthesize_dimension(self, *, topic: str, dimension: str, chunks: list, answer_language: str = "vi") -> str:
         """Synthesize a concise 1-3 sentence answer for one comparison dimension via LLM."""

@@ -12,9 +12,9 @@ upload:
     - "xls"
 
 refusal:
-  min_reranker_score: 0.35      # kept for reference, no longer used in refusal logic
-  min_evidence_confidence: 0.35  # sigmoid scale (0-1); reranker logit also normalized before comparison
-  min_graph_confidence: 0.45
+  min_reranker_score: 0.30      # kept for reference, no longer used in refusal logic
+  min_evidence_confidence: 0.20  # sigmoid scale (0-1); reranker logit also normalized before comparison
+  min_graph_confidence: 0.40
   min_handwriting_quality_score: 0.72
   min_handwriting_confidence: 0.8
 

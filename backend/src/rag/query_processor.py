@@ -5,8 +5,6 @@ import re
 
 from pydantic import BaseModel, Field
 
-from src.rag.query_rewriter import LLMQueryRewriter
-
 logger = logging.getLogger(__name__)
 
 
@@ -136,13 +134,53 @@ class QueryProcessor:
         re.IGNORECASE,
     )
 
+    # Instruction verbs that should be stripped from retrieval queries so that
+    # BGE-M3 focuses on the topic rather than the command.
+    _INSTRUCTION_PREFIX_RE = re.compile(
+        r"^(tóm tắt|tổng hợp|liệt kê|nêu|trình bày|giải thích|mô tả|hãy|cho biết|"
+        r"summarize|list|describe|explain|outline|give me|tell me|what are)\s+",
+        re.IGNORECASE,
+    )
+
+    # Vietnamese anaphoric pronouns that carry no retrievable content on their own.
+    # Stripping them lets BGE-M3 focus on the actual predicate/comparison.
+    _ANAPHORA_PRONOUN_RE = re.compile(
+        r"^(nó|chúng|họ|đây|đó|này|chúng nó|chúng ta|chúng tôi|cái này|cái đó)\b\s*",
+        re.IGNORECASE,
+    )
+
+    def _strip_anaphora(self, query: str) -> str:
+        """Remove leading Vietnamese pronoun so retrieval targets the predicate."""
+        return self._ANAPHORA_PRONOUN_RE.sub("", query).strip()
+
+    def _strip_instruction(self, query: str) -> str:
+        """Remove leading instruction verb so retrieval focuses on the topic."""
+        return self._INSTRUCTION_PREFIX_RE.sub("", query).strip()
+
     def process(self, query: str, *, answer_language: str | None = None) -> ProcessedQuery:
         normalized = " ".join(query.split())
         query_language = self.detect_language(normalized)
         translated_query = self.translate_to_english(normalized) if query_language == "vi" else None
+
+        # Build retrieval queries: always include topic-focused variant (instruction stripped).
+        topic_query = self._strip_instruction(normalized)
         retrieval_queries = [normalized]
+        if topic_query and topic_query.lower() != normalized.lower():
+            retrieval_queries.insert(0, topic_query)  # topic first for primary embedding
+
+        # Anaphora: if query starts with a pronoun, add a pronoun-stripped variant so
+        # BGE-M3 can match the predicate even without co-reference context.
+        deref_query = self._strip_anaphora(normalized)
+        if deref_query and deref_query.lower() != normalized.lower() and deref_query not in retrieval_queries:
+            retrieval_queries.insert(0, deref_query)
+
         if translated_query and translated_query.lower() != normalized.lower():
-            retrieval_queries.append(translated_query)
+            topic_en = self._strip_instruction(translated_query)
+            if topic_en not in retrieval_queries:
+                retrieval_queries.append(topic_en)
+            if translated_query not in retrieval_queries:
+                retrieval_queries.append(translated_query)
+
         return ProcessedQuery(
             original_query=normalized,
             query_language=query_language,
@@ -156,45 +194,9 @@ class QueryProcessor:
         query: str,
         *,
         answer_language: str | None = None,
-        rewriter: LLMQueryRewriter | None = None,
+        hyde_enabled: bool = False,
     ) -> ProcessedQuery:
-        """LLM-based query rewriting (Multi-Query / RAG-Fusion).
-
-        Falls back to the dictionary-based ``process`` if the rewriter is unavailable
-        or returns invalid output. Generates 1 original + 1 translation + up to 3
-        paraphrases for parallel retrieval and RRF fusion downstream.
-        """
-        normalized = " ".join(query.split())
-        if rewriter is None:
-            return self.process(normalized, answer_language=answer_language)
-
-        result = await rewriter.rewrite(normalized)
-        if result is None:
-            query_language = self.detect_language(normalized)
-            logger.info("Query rewriter failed; using original multilingual query only")
-            return ProcessedQuery(
-                original_query=normalized,
-                query_language=query_language,
-                translated_query=None,
-                answer_language=answer_language or ("vi" if query_language == "vi" else "en"),
-                retrieval_queries=[normalized],
-            )
-
-        retrieval_queries = [normalized]
-        translated_query = result.translated_query.strip() if result.translated_query else None
-        if translated_query and translated_query.lower() != normalized.lower():
-            retrieval_queries.append(translated_query)
-        for paraphrase in result.paraphrases:
-            if paraphrase.lower() not in {q.lower() for q in retrieval_queries}:
-                retrieval_queries.append(paraphrase)
-
-        return ProcessedQuery(
-            original_query=normalized,
-            query_language=result.language,
-            translated_query=translated_query,
-            answer_language=answer_language or ("vi" if result.language == "vi" else "en"),
-            retrieval_queries=retrieval_queries,
-        )
+        return self.process(query, answer_language=answer_language)
 
     def detect_language(self, query: str) -> str:
         lowered = query.lower()

@@ -56,7 +56,10 @@
       "Bash(echo \"exit:$?\")",
       "Bash(docker *)",
       "Bash(powershell.exe *)",
-      "Bash(ollama list *)"
+      "Bash(ollama list *)",
+      "PowerShell(Get-Process -Name python -ErrorAction SilentlyContinue)",
+      "PowerShell(cd d:\\\\GenAI\\\\DoAn01; Remove-Item backend.err.log, backend.out.log -Force -ErrorAction SilentlyContinue; $env:PYTHONPATH = \"d:\\\\GenAI\\\\DoAn01\\\\backend\"; Start-Process powershell -ArgumentList \"-NoProfile -Command `\"cd d:\\\\GenAI\\\\DoAn01\\\\backend; python -m uvicorn src.main:app --host 0.0.0.0 --port 8000 2>&1 | Tee-Object -FilePath d:\\\\GenAI\\\\DoAn01\\\\backend.err.log`\"\" -WindowStyle Minimized; Write-Host \"Backend start initiated\")",
+      "Bash(break)"
     ]
   }
 }

@@ -50,12 +50,9 @@ def build_reasoning_path(
         relations = []
 
         for chunk in graph_chunks[:5]:
-            # Try to extract entity names from chunk metadata
-            if hasattr(chunk, 'metadata') and chunk.metadata:
-                if 'entity_label' in chunk.metadata:
-                    entities.append(chunk.metadata['entity_label'])
-                if 'relation_type' in chunk.metadata:
-                    relations.append(chunk.metadata['relation_type'])
+            metadata = getattr(chunk, "metadata", {}) or {}
+            entities.extend(str(item) for item in metadata.get("entity_labels", []) if item)
+            relations.extend(str(item) for item in metadata.get("relation_types", []) if item)
 
         # Deduplicate
         entities = list(dict.fromkeys(entities))[:5]
@@ -63,16 +60,15 @@ def build_reasoning_path(
 
         avg_graph_score = sum(c.fused_score or 0.0 for c in graph_chunks[:5]) / min(5, len(graph_chunks))
 
-        if entities:
-            entity_str = ", ".join(entities)
-            relation_str = f" via {', '.join(relations)}" if relations else ""
-            steps.append(ReasoningStep(
-                step_type="traverse",
-                entities=entities,
-                relations=relations,
-                confidence=avg_graph_score,
-                description=f"Traversed knowledge graph: {entity_str}{relation_str}"
-            ))
+        entity_str = ", ".join(entities) if entities else f"{len(graph_chunks)} graph evidence chunks"
+        relation_str = f" via {', '.join(relations)}" if relations else ""
+        steps.append(ReasoningStep(
+            step_type="traverse",
+            entities=entities,
+            relations=relations,
+            confidence=avg_graph_score,
+            description=f"Traversed knowledge graph: {entity_str}{relation_str}"
+        ))
 
     # Step 3: Reranking & synthesis
     if reranked_chunks:

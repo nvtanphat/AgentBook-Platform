@@ -52,8 +52,10 @@ function agentStepLabel(name: string): string {
     trace_graph: "Đang truy vết quan hệ trên Knowledge Graph...",
     verify_coverage: "Đang kiểm tra độ phủ nguồn...",
     repair_retrieval: "Đang bổ sung bằng chứng còn thiếu...",
+    verify_evidence_quality: "Đang kiểm tra chất lượng bằng chứng...",
     rerank_evidence: "Đang xếp hạng bằng chứng phù hợp...",
     synthesize_answer: "Đang tổng hợp câu trả lời...",
+    repair_answer: "Đang sửa câu trả lời theo bằng chứng...",
     verify_claims: "Đang kiểm chứng câu trả lời...",
   };
   return labels[name] ?? `Đang xử lý: ${name.replace(/_/g, " ")}`;
@@ -154,6 +156,17 @@ function AgentBadges({ response }: { response: QueryResponse }) {
           Đã bổ sung truy xuất
         </span>
       )}
+      {verification?.repair_attempted && (
+        <span className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-700">
+          Đã sửa câu trả lời
+        </span>
+      )}
+      {Boolean(verification?.invalid_citation_count || verification?.unsupported_sentence_count) && (
+        <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700">
+          <AlertTriangle size={10} />
+          Cần kiểm tra citation
+        </span>
+      )}
       {trace && (
         <span className="inline-flex items-center rounded-full border border-outline bg-slate-50 px-2 py-0.5 text-[10px] font-bold text-muted">
           Kế hoạch: {trace.plan_type.replace(/_/g, " ")}
@@ -198,8 +211,13 @@ function AgentTracePanel({ response }: { response: QueryResponse }) {
                   </span>
                 </div>
                 <div className="mt-1 flex flex-wrap gap-1.5 text-[10px] text-muted">
+                  {step.tool && <span>tool: {step.tool}</span>}
+                  {step.duration_ms != null && <span>{step.duration_ms}ms</span>}
                   {step.sources_requested != null && <span>{step.sources_covered ?? 0}/{step.sources_requested} nguồn</span>}
                   {step.evidence_count != null && <span>{step.evidence_count} bằng chứng</span>}
+                  {typeof step.metadata?.sub_questions_covered === "number" && typeof step.metadata?.sub_questions_requested === "number" && (
+                    <span>{String(step.metadata.sub_questions_covered)}/{String(step.metadata.sub_questions_requested)} câu hỏi con</span>
+                  )}
                   {step.warning && <span className="text-amber-700">{step.warning}</span>}
                 </div>
               </div>
@@ -210,6 +228,12 @@ function AgentTracePanel({ response }: { response: QueryResponse }) {
               Kiểm chứng: <span className="font-bold text-text">{trace.verification.verdict}</span>
               {" "}({Math.round(trace.verification.confidence * 100)}%)
               {trace.verification.warning && <span className="ml-1 text-amber-700">{trace.verification.warning}</span>}
+              {trace.verification.repair_attempted && <span className="ml-1 text-blue-700">Đã sửa câu trả lời.</span>}
+              {Boolean(trace.verification.unsupported_sentence_count || trace.verification.invalid_citation_count) && (
+                <span className="ml-1 text-amber-700">
+                  Citation cần kiểm tra: {trace.verification.unsupported_sentence_count ?? 0} câu thiếu, {trace.verification.invalid_citation_count ?? 0} citation sai.
+                </span>
+              )}
             </div>
           )}
         </div>
@@ -508,7 +532,7 @@ export default function ChatPanel({ onOpenSources, onOpenEvidence, onTraceGraph,
     }
 
     setError(null);
-    setAgentStatus("Đang lập kế hoạch agentic RAG...");
+    setAgentStatus("Đang chuẩn bị tìm bằng chứng...");
     setLoading(true);
     setQuestion("");
     setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "user", content: trimmed }]);

@@ -1,6 +1,6 @@
 import { FormEvent, KeyboardEvent, useState } from "react";
 import { AlertCircle, AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, Loader2, Plus, X } from "lucide-react";
-import { Citation, CompareResponse, CoverageReport, compareDocuments } from "../../../api/client";
+import { Citation, CompareMatrixCell, CompareResponse, CoverageReport, compareDocuments } from "../../../api/client";
 import { useWorkspace } from "../../../state/workspace";
 
 const DEFAULT_DIMENSIONS = ["ý chính", "điểm giống", "điểm khác", "bằng chứng"];
@@ -10,12 +10,11 @@ const DIMENSION_PRESETS = [
   { label: "Kiểm chứng", values: ["luận điểm", "bằng chứng", "nguồn trích dẫn", "độ tin cậy"] },
 ];
 
-function DimensionTags({
-  tags, onChange,
-}: {
-  tags: string[];
-  onChange: (tags: string[]) => void;
-}) {
+function citationKey(citation: Citation): string {
+  return `${citation.doc_id}:${citation.page ?? "None"}:${citation.block_id ?? "None"}`;
+}
+
+function DimensionTags({ tags, onChange }: { tags: string[]; onChange: (tags: string[]) => void }) {
   const [input, setInput] = useState("");
 
   function add() {
@@ -29,7 +28,10 @@ function DimensionTags({
   }
 
   function handleKey(e: KeyboardEvent<HTMLInputElement>) {
-    if (e.key === "Enter") { e.preventDefault(); add(); }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      add();
+    }
     if (e.key === "Backspace" && !input && tags.length) remove(tags[tags.length - 1]);
   }
 
@@ -38,7 +40,7 @@ function DimensionTags({
       {tags.map((tag) => (
         <span key={tag} className="flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary">
           {tag}
-          <button type="button" onClick={() => remove(tag)} className="transition hover:text-red-500" aria-label={`Remove ${tag}`}>
+          <button type="button" onClick={() => remove(tag)} className="transition hover:text-red-500" aria-label={`Xóa ${tag}`}>
             <X size={10} />
           </button>
         </span>
@@ -52,7 +54,7 @@ function DimensionTags({
           placeholder={tags.length === 0 ? "Nhập khía cạnh, Enter để thêm" : "Thêm khía cạnh"}
         />
         {input.trim() && (
-          <button type="button" onClick={add} className="text-muted transition hover:text-primary" aria-label="Add dimension">
+          <button type="button" onClick={add} className="text-muted transition hover:text-primary" aria-label="Thêm khía cạnh">
             <Plus size={12} />
           </button>
         )}
@@ -102,112 +104,114 @@ function CoveragePanel({ coverage }: { coverage?: CoverageReport | null }) {
   );
 }
 
-const CARD_COLLAPSE_LINES = 5;
-
-type SourceEvidenceRow = {
-  source: string;
-  snippet: string;
-};
-
-type CompareMatrix = {
-  sources: string[];
-  dimensions: string[];
-  cells: Record<string, Record<string, string>>;
-};
-
-function parseSourceEvidence(value: string): { heading: string; rows: SourceEvidenceRow[] } {
-  const [firstLine, ...rest] = value.split("\n");
-  const heading = firstLine?.replace(/:$/, "").trim() || "Bằng chứng";
-  const rows = rest
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith("- "))
-    .map((line) => {
-      const body = line.slice(2);
-      const separator = body.indexOf(": ");
-      if (separator <= 0) return { source: "Nguồn", snippet: body };
-      return {
-        source: body.slice(0, separator).trim(),
-        snippet: body.slice(separator + 2).trim(),
-      };
-    });
-  return { heading, rows };
+function DimensionCoveragePanel({ result }: { result: CompareResponse }) {
+  const rows = result.dimension_coverage ?? [];
+  if (!rows.length) return null;
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {rows.map((row) => {
+        const complete = row.covered_count >= row.requested_count;
+        return (
+          <span
+            key={row.dimension}
+            className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${
+              complete ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"
+            }`}
+          >
+            {row.dimension}: {row.covered_count}/{row.requested_count}
+          </span>
+        );
+      })}
+    </div>
+  );
 }
 
-function buildCompareMatrix(rows: CompareResponse["comparison_table"]): CompareMatrix | null {
-  const parsed = rows.map((row) => ({
-    dimension: row.dimension,
-    rows: parseSourceEvidence(row.value).rows,
-  }));
-  if (!parsed.length || parsed.some((item) => item.rows.length === 0)) return null;
-
-  const sources = Array.from(new Set(parsed.flatMap((item) => item.rows.map((row) => row.source))));
-  const dimensions = parsed.map((item) => item.dimension);
-  const cells: CompareMatrix["cells"] = {};
-  for (const source of sources) cells[source] = {};
-  for (const item of parsed) {
-    for (const row of item.rows) {
-      cells[row.source][item.dimension] = row.snippet;
-    }
-  }
-  return { sources, dimensions, cells };
-}
-
-function CompareMatrixTable({
-  matrix, citations, onCitationClick,
+function CompareCellView({
+  cell,
+  citations,
+  onCitationClick,
 }: {
-  matrix: CompareMatrix;
+  cell?: CompareMatrixCell;
   citations: Citation[];
   onCitationClick: (c: Citation) => void;
 }) {
-  const citationByDoc = new Map(citations.map((citation) => [citation.doc_name, citation]));
+  if (!cell) return <span className="text-muted">-</span>;
+  const citationById = new Map(citations.map((citation) => [citationKey(citation), citation]));
+  const cellCitations = cell.citation_ids.map((id) => citationById.get(id)).filter((citation): citation is Citation => Boolean(citation));
+
+  return (
+    <div className="space-y-2">
+      <div className={cell.missing_evidence ? "text-amber-700" : "text-text"}>
+        {cell.value}
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <ConfidencePill value={cell.confidence} />
+        {cell.missing_evidence && (
+          <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700">
+            thiếu bằng chứng
+          </span>
+        )}
+        {cellCitations.slice(0, 2).map((citation, index) => (
+          <button
+            key={`${citationKey(citation)}-${index}`}
+            type="button"
+            onClick={() => onCitationClick(citation)}
+            className="rounded-full border border-outline bg-white px-2 py-0.5 text-[10px] font-semibold text-muted transition hover:border-primary/40 hover:text-primary"
+          >
+            p.{citation.page ?? "?"}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CompareMatrixTable({
+  result,
+  onCitationClick,
+}: {
+  result: CompareResponse;
+  onCitationClick: (c: Citation) => void;
+}) {
+  const sources = result.sources ?? [];
+  const matrix = result.matrix ?? {};
+  const dimensions = result.dimension_coverage?.map((row) => row.dimension) ?? [];
+  if (!sources.length || !dimensions.length) return null;
+
   return (
     <div className="rounded-lg border border-outline bg-white shadow-sm">
       <div className="border-b border-outline bg-slate-50 px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted">
-        Bảng so sánh theo nguồn · cuộn ngang để xem các khía cạnh
+        Bảng so sánh theo nguồn · mỗi ô có citation riêng
       </div>
       <div className="w-full overflow-x-auto">
         <table className="w-max min-w-full border-collapse text-left">
           <thead>
             <tr className="border-b border-outline bg-slate-50">
-              <th className="w-[180px] min-w-[180px] border-r border-outline bg-slate-50 px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-muted">
+              <th className="sticky left-0 z-10 w-[190px] min-w-[190px] border-r border-outline bg-slate-50 px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-muted">
                 Nguồn
               </th>
-              {matrix.dimensions.map((dimension) => (
-                <th key={dimension} className="w-[260px] min-w-[260px] border-r border-outline px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-muted last:border-r-0">
+              {dimensions.map((dimension) => (
+                <th key={dimension} className="w-[300px] min-w-[300px] border-r border-outline px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-muted last:border-r-0">
                   {dimension}
                 </th>
               ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-outline">
-            {matrix.sources.map((source) => {
-              const citation = citationByDoc.get(source);
-              return (
-                <tr key={source} className="align-top">
-                  <th className="w-[180px] min-w-[180px] border-r border-outline bg-white px-3 py-3 text-xs font-semibold leading-snug text-text">
-                    <div className="space-y-2">
-                      <p className="break-words">{source}</p>
-                      {citation && (
-                        <button
-                          type="button"
-                          onClick={() => onCitationClick(citation)}
-                          className="rounded-full border border-outline px-2 py-0.5 text-[10px] font-semibold text-muted transition hover:border-primary/40 hover:text-primary"
-                        >
-                          Bằng chứng p.{citation.page ?? "?"}
-                        </button>
-                      )}
+            {sources.map((source) => (
+              <tr key={source.source_id} className="align-top">
+                <th className="sticky left-0 z-10 w-[190px] min-w-[190px] border-r border-outline bg-white px-3 py-3 text-xs font-semibold leading-snug text-text">
+                  <p className="break-words">{source.name}</p>
+                </th>
+                {dimensions.map((dimension) => (
+                  <td key={`${source.source_id}-${dimension}`} className="w-[300px] min-w-[300px] border-r border-outline px-3 py-3 text-xs leading-relaxed last:border-r-0">
+                    <div className="max-h-40 overflow-y-auto pr-1">
+                      <CompareCellView cell={matrix[source.source_id]?.[dimension]} citations={result.citations} onCitationClick={onCitationClick} />
                     </div>
-                  </th>
-                  {matrix.dimensions.map((dimension) => (
-                    <td key={`${source}-${dimension}`} className="w-[260px] min-w-[260px] border-r border-outline px-3 py-3 text-xs leading-relaxed text-text last:border-r-0">
-                      <div className="max-h-32 overflow-y-auto pr-1">
-                        {matrix.cells[source]?.[dimension] || <span className="text-muted">-</span>}
-                      </div>
-                    </td>
-                  ))}
-                </tr>
-              );
-            })}
+                  </td>
+                ))}
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
@@ -215,92 +219,67 @@ function CompareMatrixTable({
   );
 }
 
-function SourceEvidenceList({ rows, expanded }: { rows: SourceEvidenceRow[]; expanded: boolean }) {
-  const visibleRows = expanded ? rows : rows.slice(0, 4);
-  return (
-    <div className="overflow-hidden rounded-md border border-outline">
-      <div className="grid grid-cols-[minmax(120px,0.85fr)_minmax(0,2fr)] border-b border-outline bg-slate-50 text-[10px] font-bold uppercase tracking-wider text-muted">
-        <div className="border-r border-outline px-3 py-2">Nguồn</div>
-        <div className="px-3 py-2">Bằng chứng</div>
-      </div>
-      <div className="divide-y divide-outline bg-white">
-        {visibleRows.map((row, index) => (
-          <div key={`${row.source}-${index}`} className="grid grid-cols-[minmax(120px,0.85fr)_minmax(0,2fr)]">
-            <div className="border-r border-outline bg-slate-50/50 px-3 py-2">
-              <p className="break-words text-xs font-semibold leading-snug text-text">{row.source}</p>
-            </div>
-            <div className="px-3 py-2">
-              <p className="text-xs leading-relaxed text-text">{row.snippet}</p>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
+const CARD_COLLAPSE_LINES = 5;
 
 function ResultCard({
-  dimension, value, source, citation, confidence, onCitationClick,
+  dimension,
+  value,
+  source,
+  citation,
+  confidence,
+  missingEvidence,
+  onCitationClick,
 }: {
   dimension: string;
   value: string;
   source: string;
   citation: Citation | null;
   confidence: number;
+  missingEvidence?: boolean;
   onCitationClick: (c: Citation) => void;
 }) {
-  const parsed = parseSourceEvidence(value);
-  const hasSourceRows = parsed.rows.length > 0;
   const lines = value.split("\n");
-  const isLong = hasSourceRows ? parsed.rows.length > 4 : lines.length > CARD_COLLAPSE_LINES || value.length > 400;
+  const isLong = lines.length > CARD_COLLAPSE_LINES || value.length > 400;
   const [expanded, setExpanded] = useState(false);
-  const visibleRowCount = Math.min(4, parsed.rows.length);
   const displayValue = isLong && !expanded
     ? (value.length > 400 ? `${value.slice(0, 400)}...` : `${lines.slice(0, CARD_COLLAPSE_LINES).join("\n")}...`)
     : value;
-
-  const noEvidence = confidence === 0;
+  const noEvidence = confidence === 0 || missingEvidence;
 
   return (
-    <div className={`overflow-hidden rounded-lg border bg-white shadow-sm ${noEvidence ? "opacity-60" : ""}`}>
+    <div className={`overflow-hidden rounded-lg border bg-white shadow-sm ${noEvidence ? "opacity-70" : ""}`}>
       <div className="flex items-center justify-between gap-3 border-b border-outline bg-slate-50 px-4 py-2.5">
         <div className="min-w-0">
           <span className="block truncate text-xs font-bold capitalize text-text">{dimension}</span>
-          {hasSourceRows && <span className="text-[10px] text-muted">{parsed.rows.length} bằng chứng theo nguồn</span>}
+          <span className="text-[10px] text-muted">{source}</span>
         </div>
         <ConfidencePill value={confidence} />
       </div>
 
       <div className="px-4 py-3">
-        {hasSourceRows ? (
-          <SourceEvidenceList rows={parsed.rows} expanded={expanded} />
-        ) : (
-          <p className="whitespace-pre-wrap text-sm leading-relaxed text-text">{displayValue}</p>
-        )}
+        <p className={`whitespace-pre-wrap text-sm leading-relaxed ${noEvidence ? "text-amber-700" : "text-text"}`}>{displayValue}</p>
         {isLong && (
           <button
             type="button"
             onClick={() => setExpanded((v) => !v)}
             className="mt-1.5 flex items-center gap-1 text-[11px] font-semibold text-primary hover:opacity-70"
           >
-            {expanded ? <><ChevronUp size={11} /> Thu gọn</> : <><ChevronDown size={11} /> Xem thêm{hasSourceRows ? ` (${parsed.rows.length - visibleRowCount})` : ""}</>}
+            {expanded ? <><ChevronUp size={11} /> Thu gọn</> : <><ChevronDown size={11} /> Xem thêm</>}
           </button>
         )}
       </div>
 
-      {!noEvidence && (
+      {!noEvidence && citation && (
         <div className="flex items-center justify-between border-t border-outline bg-slate-50/50 px-4 py-2">
           <span className="max-w-[60%] truncate text-[11px] text-muted" title={source}>{source}</span>
-          {citation && (
-            <button
-              type="button"
-              onClick={() => onCitationClick(citation)}
-              className="flex shrink-0 items-center gap-1 rounded-full border border-outline bg-white px-2 py-0.5 text-[11px] font-semibold text-muted transition hover:border-primary/40 hover:text-primary"
-            >
-              p.{citation.page ?? "?"}
-              <span className="ml-0.5 opacity-50">mở</span>
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => onCitationClick(citation)}
+            className="flex shrink-0 items-center gap-1 rounded-full border border-outline bg-white px-2 py-0.5 text-[11px] font-semibold text-muted transition hover:border-primary/40 hover:text-primary"
+          >
+            p.{citation.page ?? "?"}
+            <span className="ml-0.5 opacity-50">mở</span>
+          </button>
         </div>
       )}
     </div>
@@ -355,7 +334,7 @@ export default function CompareTab({ onOpenEvidence }: CompareTabProps) {
       }
       setResult(response);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Comparison failed.");
+      setError(err instanceof Error ? err.message : "Không thể tạo bảng so sánh.");
     } finally {
       setLoading(false);
     }
@@ -368,7 +347,7 @@ export default function CompareTab({ onOpenEvidence }: CompareTabProps) {
     : readySources.length
       ? `${readySources.length} nguồn sẵn sàng`
       : workspace.collectionName || "collection hiện tại";
-  const matrix = result ? buildCompareMatrix(result.comparison_table) : null;
+  const hasMatrix = Boolean(result?.sources?.length && result?.matrix && Object.keys(result.matrix).length > 0);
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-slate-50">
@@ -427,19 +406,22 @@ export default function CompareTab({ onOpenEvidence }: CompareTabProps) {
         {loading && (
           <div className="flex flex-col items-center justify-center gap-3 py-12 text-muted">
             <Loader2 size={24} className="animate-spin text-primary" />
-            <p className="text-xs">Đang truy xuất bằng chứng cho {dimensions.length} khía cạnh...</p>
-            <p className="text-[10px] text-muted/70">Lần đầu có thể chậm hơn vì phải warm model.</p>
+            <p className="text-xs">Đang truy xuất và tổng hợp bằng chứng cho {dimensions.length} khía cạnh...</p>
+            <p className="text-[10px] text-muted/70">Compare v2 kiểm tra từng nguồn nên có thể chậm hơn compare nhanh.</p>
           </div>
         )}
 
         {result && !loading && (
           <>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <h3 className="text-xs font-bold uppercase tracking-wider text-muted">
                 {result.topic}
               </h3>
               <span className="rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-muted">
-                {result.comparison_table.length} khía cạnh
+                {result.sources?.length || result.coverage?.requested_count || 0} nguồn
+              </span>
+              <span className="rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-muted">
+                {result.dimension_coverage?.length || dimensions.length} khía cạnh
               </span>
               {result.citations.length > 0 && (
                 <span className="rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-muted">
@@ -449,18 +431,20 @@ export default function CompareTab({ onOpenEvidence }: CompareTabProps) {
             </div>
 
             <CoveragePanel coverage={result.coverage} />
+            <DimensionCoveragePanel result={result} />
 
-            {matrix ? (
-              <CompareMatrixTable matrix={matrix} citations={result.citations} onCitationClick={handleCitationClick} />
+            {hasMatrix ? (
+              <CompareMatrixTable result={result} onCitationClick={handleCitationClick} />
             ) : (
-              result.comparison_table.map((row) => (
+              result.comparison_table.map((row, index) => (
                 <ResultCard
-                  key={row.dimension}
+                  key={`${row.source}-${row.dimension}-${index}`}
                   dimension={row.dimension}
                   value={row.value}
                   source={row.source}
                   citation={row.citation}
                   confidence={row.confidence}
+                  missingEvidence={row.missing_evidence}
                   onCitationClick={handleCitationClick}
                 />
               ))
@@ -482,8 +466,8 @@ export default function CompareTab({ onOpenEvidence }: CompareTabProps) {
         {!result && !loading && !error && (
           <div className="flex flex-col items-center justify-center gap-2 py-12 text-center">
             <p className="text-sm font-semibold text-text">So sánh trên bằng chứng</p>
-            <p className="max-w-[220px] text-xs text-muted">
-              Bấm tạo bảng để Noelys đối chiếu các tài liệu đang chọn theo từng khía cạnh.
+            <p className="max-w-[240px] text-xs text-muted">
+              Bấm tạo bảng để Noelys đối chiếu các tài liệu đang chọn theo từng khía cạnh, kèm citation cho từng ô.
             </p>
           </div>
         )}

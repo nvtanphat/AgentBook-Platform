@@ -144,14 +144,20 @@ async def get_material_pages_by_material_ids(materials: list[Material]) -> dict[
     if not material_by_id:
         return {}
     pages_by_material: dict[str, list[MaterialPage]] = {str(material_id): [] for material_id in material_by_id}
-    try:
-        documents = await MaterialPageDocument.find(
-            {"material_id": {"$in": list(material_by_id)}}
-        ).to_list()
-    except Exception:
-        documents = []
-    for document in sorted(documents, key=lambda item: (str(item.material_id), item.page_number)):
-        pages_by_material.setdefault(str(document.material_id), []).append(document.to_material_page())
+    # Fetch per material to avoid $in serialization issues with PydanticObjectId
+    import asyncio as _asyncio
+    async def _fetch(mat_id: PydanticObjectId) -> list[MaterialPageDocument]:
+        try:
+            return await MaterialPageDocument.find(
+                MaterialPageDocument.material_id == mat_id
+            ).sort("page_number").to_list()
+        except Exception:
+            return []
+    results = await _asyncio.gather(*[_fetch(mid) for mid in material_by_id])
+    for mat_id, docs in zip(material_by_id, results):
+        key = str(mat_id)
+        if docs:
+            pages_by_material[key] = [d.to_material_page() for d in docs]
     for material_id, material in material_by_id.items():
         key = str(material_id)
         if not pages_by_material.get(key):

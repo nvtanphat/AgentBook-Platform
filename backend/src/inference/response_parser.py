@@ -26,6 +26,8 @@ def _citation_confidence(chunk: RetrievedChunk) -> float:
 
 
 _ORDERED_LIST_RE = re.compile(r"^(\s*)(\d+)\.\s", re.MULTILINE)
+_SAME_CITATION_SENTENCE_RE = re.compile(r"\[(\d+)\]([.!?])(\s+)(?=[^.!?]*\[\1\][.!?])")
+_TOC_ENTRY_RE = re.compile(r"^trang\s+\d+\s*[-–]", re.IGNORECASE)
 
 
 def _fix_numbered_lists(text: str) -> str:
@@ -56,6 +58,12 @@ def _fix_numbered_lists(text: str) -> str:
     return "\n".join(result)
 
 
+def _collapse_repeated_sentence_citations(text: str) -> str:
+    """Avoid noisy repeated markers like '[1]. ... [1].' within one paragraph."""
+    paragraphs = text.split("\n\n")
+    return "\n\n".join(_SAME_CITATION_SENTENCE_RE.sub(r"\2\3", paragraph) for paragraph in paragraphs)
+
+
 class ResponseParser:
     _MIN_CITATION_OVERLAP = 3  # require ≥3 content-word overlaps to suppress spurious citations
     _REFUSAL_RE = re.compile(
@@ -75,7 +83,7 @@ class ResponseParser:
             )
         return "\n\n".join(lines)
 
-    def citations_from_chunks(self, chunks: list[RetrievedChunk]) -> list[CitationSchema]:
+    def citations_from_chunks(self, chunks: list[RetrievedChunk], *, focus_text: str | None = None) -> list[CitationSchema]:
         """One citation per chunk — index N in this list matches [N] in the LLM answer.
 
         Chunk order must match the order used in format_evidence_for_prompt so that
@@ -86,7 +94,17 @@ class ResponseParser:
             evs = chunk.evidence
             pages = sorted({e.page for e in evs}) if evs else sorted(set(chunk.source_pages))
             page = pages[0] if pages else None
-            primary_ev = evs[0] if evs else None
+            # Prefer the most substantive block — filter TOC entries ("Trang N - ..."),
+            # slide headers, and very short blocks; fall back to first block if needed.
+            substantive_evs = [
+                e for e in evs
+                if len(e.snippet_original.strip()) >= 40
+                and not _TOC_ENTRY_RE.match(e.snippet_original.strip())
+            ]
+            primary_ev = self._select_primary_evidence(
+                substantive_evs if substantive_evs else evs,
+                focus_text=focus_text,
+            )
 
             # All contributing blocks exposed for downstream spatial rendering
             evidence_blocks = [
@@ -123,19 +141,42 @@ class ResponseParser:
             )
         return citations
 
+    @staticmethod
+    def _token_set(text: str) -> set[str]:
+        return set(_WORD_RE.findall((text or "").lower()))
+
+    def _select_primary_evidence(self, evidence: list, *, focus_text: str | None) -> object | None:
+        if not evidence:
+            return None
+        focus_tokens = self._token_set(focus_text or "")
+        if not focus_tokens:
+            return evidence[0]
+
+        def score(ev) -> tuple[int, float, int]:
+            ev_tokens = self._token_set(ev.snippet_original)
+            overlap = len(focus_tokens & ev_tokens)
+            confidence = float(ev.confidence or 0.0)
+            return (overlap, confidence, len(ev.snippet_original or ""))
+
+        best = max(evidence, key=score)
+        return best if score(best)[0] > 0 else evidence[0]
+
     def inject_citations(self, answer: str, chunks: list[RetrievedChunk]) -> str:
-        """Append best-matching [N] citation to each sentence if LLM didn't add any."""
+        """Ensure every sentence has a valid [N] citation.
+
+        - If LLM added no [N] at all: inject best-matching citation on every sentence.
+        - If LLM added some [N] but missed sentences: fill in the gaps.
+        - Clamp any [N] where N > len(chunks) to [1] (invalid citation range).
+        """
         answer = _fix_numbered_lists(answer)
         if not chunks:
             return answer
         if self._REFUSAL_RE.search(answer):
             return answer
-        # If model already placed at least one [N] marker, trust it
-        if re.search(r"\[\d+\]", answer):
-            return answer
 
-        # Token sets per chunk — use evidence block snippets when available because they are
-        # block-level text and far more specific than the full multi-block chunk content.
+        num_sources = len(chunks)
+
+        # Token sets per chunk for best-match injection.
         chunk_tokens: list[set[str]] = []
         for chunk in chunks:
             if chunk.evidence:
@@ -144,7 +185,31 @@ class ResponseParser:
                 combined = chunk.content
             chunk_tokens.append(set(_WORD_RE.findall(combined.lower())))
 
-        # Split answer into paragraphs first (preserve paragraph breaks)
+        _citation_num_re = re.compile(r"\[(\d+)\]")
+
+        def _best_tag(sentence: str) -> str:
+            sent_tokens = set(_WORD_RE.findall(sentence.lower()))
+            best_idx, best_score = 0, 0
+            for idx, ctokens in enumerate(chunk_tokens):
+                score = len(sent_tokens & ctokens)
+                if score > best_score:
+                    best_score, best_idx = score, idx
+            return f"[{best_idx + 1}]"
+
+        def _process_sentence(text: str) -> str:
+            stripped = text.strip()
+            if not stripped:
+                return text
+            has_citation = bool(_citation_num_re.search(stripped))
+            if not has_citation:
+                tag = _best_tag(stripped)
+                if stripped[-1] in ".!?":
+                    text = text.rstrip()[:-1] + tag + text.rstrip()[-1]
+                else:
+                    text = text.rstrip() + tag
+            return text
+
+        # Split answer into paragraphs, then sentences.
         paragraphs = answer.split("\n\n")
         result_paragraphs: list[str] = []
 
@@ -152,32 +217,21 @@ class ResponseParser:
             if not para.strip():
                 result_paragraphs.append(para)
                 continue
-            # Split paragraph into sentences on . ! ? followed by space or end
             parts = re.split(r"(?<=[.!?])(\s+)", para)
-            # parts alternates: [sentence, separator, sentence, separator, ...]
             out_parts: list[str] = []
             i = 0
             while i < len(parts):
                 chunk_text = parts[i]
                 sep = parts[i + 1] if i + 1 < len(parts) else ""
-                stripped = chunk_text.strip()
-                if stripped:
-                    sent_tokens = set(_WORD_RE.findall(stripped.lower()))
-                    best_idx, best_score = 0, 0
-                    for idx, ctokens in enumerate(chunk_tokens):
-                        score = len(sent_tokens & ctokens)
-                        if score > best_score:
-                            best_score, best_idx = score, idx
-                    if best_score >= self._MIN_CITATION_OVERLAP:
-                        tag = f"[{best_idx + 1}]"
-                        # Insert tag before terminal punctuation or at end
-                        if stripped and stripped[-1] in ".!?":
-                            chunk_text = chunk_text.rstrip()[:-1] + tag + chunk_text.rstrip()[-1]
-                        else:
-                            chunk_text = chunk_text.rstrip() + tag
-                out_parts.append(chunk_text + sep)
+                out_parts.append(_process_sentence(chunk_text) + sep)
                 i += 2
-
             result_paragraphs.append("".join(out_parts))
 
-        return "\n\n".join(result_paragraphs)
+        result = "\n\n".join(result_paragraphs)
+
+        # Clamp out-of-range citation numbers to [1].
+        def _clamp(m: re.Match) -> str:
+            n = int(m.group(1))
+            return f"[{n}]" if 1 <= n <= num_sources else "[1]"
+
+        return _collapse_repeated_sentence_citations(_citation_num_re.sub(_clamp, result))

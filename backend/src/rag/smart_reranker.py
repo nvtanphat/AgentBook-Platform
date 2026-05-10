@@ -21,31 +21,24 @@ class SmartReranker:
         self.confidence_threshold = confidence_threshold
 
     def should_rerank(self, chunks: list["RetrievedChunk"]) -> bool:
-        """Decide if reranking is needed based on retrieval confidence."""
+        """Decide if reranking is needed based on retrieval confidence.
+
+        RRF fused_score is ~1/(k+rank) — max ~0.033 with k=60.
+        Use normalized rank-based logic: skip only when top chunk is already
+        reranked (rerank_score available) with high confidence.
+        """
         if not chunks:
             return False
 
-        # Check top retrieval score
-        top_score = chunks[0].fused_score if chunks[0].fused_score else 0.0
-
-        # Check score distribution (variance)
-        if len(chunks) >= 2:
-            scores = [c.fused_score or 0.0 for c in chunks[:5]]
-            score_gap = scores[0] - scores[1] if len(scores) >= 2 else 0.0
-
-            # High confidence: top score high AND clear gap
-            if top_score >= self.confidence_threshold and score_gap >= 0.15:
-                logger.info(
-                    "Skipping reranking (high confidence)",
-                    extra={"top_score": top_score, "score_gap": score_gap}
-                )
+        # If rerank_score is already set (second pass), use it
+        top_rerank = chunks[0].rerank_score if chunks[0].rerank_score else None
+        if top_rerank is not None:
+            if top_rerank >= self.confidence_threshold:
+                logger.info("Skipping reranking (rerank_score high)", extra={"top_rerank": top_rerank})
                 return False
 
-        # Low confidence: need reranking
-        logger.info(
-            "Reranking needed (low confidence)",
-            extra={"top_score": top_score}
-        )
+        # Always rerank when fused_score only (RRF scores too small to threshold on)
+        logger.info("Reranking needed", extra={"top_fused": chunks[0].fused_score or 0.0})
         return True
 
     def rerank(self, *, query: str, chunks: list["RetrievedChunk"], limit: int | None = None):

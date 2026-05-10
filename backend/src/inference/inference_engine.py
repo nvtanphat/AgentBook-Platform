@@ -17,12 +17,13 @@ from src.inference.confidence_scorer import ConfidenceScorer
 from src.inference.intent_classifier import IntentClassifier, QueryIntent
 from src.inference.reasoning_path_builder import build_reasoning_path
 from src.inference.response_parser import ResponseParser
+from src.rag.crag_evaluator import CRAGEvaluator
 from src.rag.graph_retriever import GraphRetriever
 from src.rag.query_processor import QueryProcessor
-from src.rag.query_rewriter import LLMQueryRewriter
 from src.rag.query_router import QueryRouter, RouteDecision, RouteType
 from src.rag.retriever import HybridRetriever, dedupe_retrieved_chunks
 from src.rag.reranker import CrossEncoderReranker
+from src.rag.smart_reranker import SmartReranker
 from src.rag.types import RetrievalScope, RetrievedChunk
 from src.schemas.query import QueryResponse
 
@@ -49,15 +50,21 @@ class InferenceEngine:
         self.settings = settings
         self.retriever = retriever
         self.graph_retriever = graph_retriever or GraphRetriever(settings)
-        self.reranker = reranker or CrossEncoderReranker(settings)
+        base_reranker = reranker or CrossEncoderReranker(settings)
+        self.reranker = (
+            SmartReranker(base_reranker=base_reranker, confidence_threshold=settings.smart_reranker_threshold)
+            if settings.smart_reranker_enabled
+            else base_reranker
+        )
         self.llm = llm or build_llm(settings)
         self.response_parser = response_parser or ResponseParser()
         self.confidence_scorer = confidence_scorer or ConfidenceScorer(settings)
         self.query_processor = query_processor or QueryProcessor()
         self.query_router = query_router or QueryRouter()
         self.claim_verifier = claim_verifier or ClaimVerifier()
-        self.query_rewriter: LLMQueryRewriter | None = (
-            LLMQueryRewriter(self.llm) if settings.query_rewriter_enabled else None
+        self.crag_evaluator = CRAGEvaluator(
+            correct_threshold=settings.crag_correct_threshold,
+            incorrect_threshold=settings.crag_incorrect_threshold,
         )
         self.intent_classifier = IntentClassifier(llm=self.llm)
 
@@ -69,20 +76,26 @@ class InferenceEngine:
         top_k: int | None = None,
         answer_language: str | None = None,
         memory_context: str | None = None,
+        rag_flags: dict[str, bool] | None = None,
     ) -> QueryResponse:
+        flags = rag_flags or {}
         intent = await self.intent_classifier.classify(query)
         if intent == QueryIntent.CHITCHAT:
             return await self._answer_chitchat(query)
         if intent == QueryIntent.OFF_TOPIC:
             return self._refuse_off_topic()
 
-        route_decision = self.query_router.route(query)
+        route_decision = (
+            await self.query_router.route_with_llm(query, llm=self.llm)
+            if self.settings.llm_router_enabled
+            else self.query_router.route(query)
+        )
         retrieval_limit = self._scaled_limit(self.settings.rerank_input_k, route_decision)
         final_limit = self._scaled_limit(top_k or self.settings.final_top_k, route_decision)
-        query_rewriter = self.query_rewriter if route_decision.use_multi_query else None
-
         processed = await self.query_processor.process_async(
-            query, answer_language=answer_language, rewriter=query_rewriter
+            query,
+            answer_language=answer_language,
+            hyde_enabled=self.settings.hyde_enabled,
         )
 
         try:
@@ -135,18 +148,26 @@ class InferenceEngine:
             )
 
         candidates = dedupe_retrieved_chunks((graph_chunks + retrieved) if route_decision.graph_priority else (retrieved + graph_chunks))
-        if hasattr(self.reranker, "rerank_multilingual"):
-            reranked = self.reranker.rerank_multilingual(
-                queries=processed.retrieval_queries,
-                chunks=candidates,
-                limit=final_limit,
-                use_mmr=route_decision.use_mmr,
-            )
+        use_reranker = flags.get("reranker_enabled", self.settings.reranker_enabled)
+        if use_reranker:
+            if hasattr(self.reranker, "rerank_multilingual"):
+                reranked = self.reranker.rerank_multilingual(
+                    queries=processed.retrieval_queries,
+                    chunks=candidates,
+                    limit=final_limit,
+                    use_mmr=route_decision.use_mmr,
+                )
+            else:
+                reranked = self.reranker.rerank(query=query, chunks=candidates, limit=final_limit)
         else:
-            reranked = self.reranker.rerank(query=query, chunks=candidates, limit=final_limit)
-        context_chunks = self._pack_context_chunks(reranked)
+            reranked = candidates[:final_limit]
+        if self.settings.crag_evaluator_enabled:
+            reranked = self.crag_evaluator.evaluate(chunks=reranked)
+
+        substantive = self._filter_substantive_chunks(reranked)
+        context_chunks = self._pack_context_chunks(substantive)
         confidence = self.confidence_scorer.score(reranked)
-        should_refuse, refusal_reason = self.confidence_scorer.should_refuse(chunks=reranked, confidence=confidence)
+        should_refuse, refusal_reason = self.confidence_scorer.should_refuse(chunks=reranked, confidence=confidence, query=query)
 
         # Summarization: cross-encoder inherently scores low (query = instruction, not content match).
         # Any retrieved evidence is sufficient — only refuse when nothing was found at all.
@@ -155,7 +176,7 @@ class InferenceEngine:
             if refusal_reason not in (None, "partial_confidence"):
                 refusal_reason = None
 
-        citations = self.response_parser.citations_from_chunks(context_chunks)
+        citations = self.response_parser.citations_from_chunks(context_chunks, focus_text=query)
         if should_refuse:
             return QueryResponse(
                 answer=REFUSAL_ANSWER,
@@ -196,12 +217,33 @@ class InferenceEngine:
                 refusal_reason=f"Answer generation failed: {type(exc).__name__}. Check that the LLM service (Ollama/OpenAI) is running.",
             )
 
+        _refusal_prefix = "Tôi không tìm thấy đủ bằng chứng"
         if not answer.strip():
             answer = REFUSAL_ANSWER
             should_refuse = True
             refusal_reason = "LLM returned an empty grounded answer"
-        else:
+        elif context_chunks and answer.strip().startswith(_refusal_prefix):
+            # Model refused despite having evidence — retry once with explicit override
+            retry_prompt = (
+                prompt
+                + "\n\nIMPORTANT: The evidence above IS relevant. "
+                "Do NOT output the refusal phrase. "
+                "If the question contains a false assumption, correct it using the evidence. "
+                "You MUST produce an answer with citations."
+            )
+            try:
+                answer = await self.llm.generate(prompt=retry_prompt)
+            except Exception:
+                pass
+            if not answer.strip() or answer.strip().startswith(_refusal_prefix):
+                should_refuse = True
+                refusal_reason = "LLM refused despite evidence"
+                answer = REFUSAL_ANSWER
+
+        if not should_refuse:
             answer = self.response_parser.inject_citations(answer, context_chunks)
+            if self.settings.self_rag_reflection_enabled:
+                answer = await self._self_reflect_claims(answer=answer, chunks=context_chunks)
             verification = self.claim_verifier.verify(
                 claim=answer,
                 evidence=[evidence for chunk in context_chunks for evidence in chunk.evidence],
@@ -259,13 +301,17 @@ class InferenceEngine:
             yield f"event: done\ndata: {response.model_dump_json()}\n\n"
             return
 
-        route_decision = self.query_router.route(query)
+        route_decision = (
+            await self.query_router.route_with_llm(query, llm=self.llm)
+            if self.settings.llm_router_enabled
+            else self.query_router.route(query)
+        )
         retrieval_limit = self._scaled_limit(self.settings.rerank_input_k, route_decision)
         final_limit = self._scaled_limit(top_k or self.settings.final_top_k, route_decision)
-        query_rewriter = self.query_rewriter if route_decision.use_multi_query else None
-
         processed = await self.query_processor.process_async(
-            query, answer_language=answer_language, rewriter=query_rewriter
+            query,
+            answer_language=answer_language,
+            hyde_enabled=self.settings.hyde_enabled,
         )
 
         # ── Retrieval ────────────────────────────────────────────────────────
@@ -300,25 +346,32 @@ class InferenceEngine:
         candidates = dedupe_retrieved_chunks(
             (graph_chunks + retrieved) if route_decision.graph_priority else (retrieved + graph_chunks)
         )
-        if hasattr(self.reranker, "rerank_multilingual"):
-            reranked = self.reranker.rerank_multilingual(
-                queries=processed.retrieval_queries,
-                chunks=candidates,
-                limit=final_limit,
-                use_mmr=route_decision.use_mmr,
-            )
+        if self.settings.reranker_enabled:
+            if hasattr(self.reranker, "rerank_multilingual"):
+                reranked = self.reranker.rerank_multilingual(
+                    queries=processed.retrieval_queries,
+                    chunks=candidates,
+                    limit=final_limit,
+                    use_mmr=route_decision.use_mmr,
+                )
+            else:
+                reranked = self.reranker.rerank(query=query, chunks=candidates, limit=final_limit)
         else:
-            reranked = self.reranker.rerank(query=query, chunks=candidates, limit=final_limit)
+            reranked = candidates[:final_limit]
 
-        context_chunks = self._pack_context_chunks(reranked)
+        if self.settings.crag_evaluator_enabled:
+            reranked = self.crag_evaluator.evaluate(chunks=reranked)
+
+        substantive = self._filter_substantive_chunks(reranked)
+        context_chunks = self._pack_context_chunks(substantive)
         confidence = self.confidence_scorer.score(reranked)
-        should_refuse, refusal_reason = self.confidence_scorer.should_refuse(chunks=reranked, confidence=confidence)
+        should_refuse, refusal_reason = self.confidence_scorer.should_refuse(chunks=reranked, confidence=confidence, query=query)
         if route_decision.route_type == RouteType.SUMMARIZATION and reranked:
             should_refuse = False
             if refusal_reason not in (None, "partial_confidence"):
                 refusal_reason = None
 
-        citations = self.response_parser.citations_from_chunks(context_chunks)
+        citations = self.response_parser.citations_from_chunks(context_chunks, focus_text=query)
 
         if should_refuse:
             response = QueryResponse(
@@ -359,6 +412,8 @@ class InferenceEngine:
         answer = accumulated.strip() or REFUSAL_ANSWER
         if accumulated.strip():
             answer = self.response_parser.inject_citations(answer, context_chunks)
+            if self.settings.self_rag_reflection_enabled:
+                answer = await self._self_reflect_claims(answer=answer, chunks=context_chunks)
             verification = self.claim_verifier.verify(
                 claim=answer,
                 evidence=[ev for chunk in context_chunks for ev in chunk.evidence],
@@ -421,6 +476,53 @@ class InferenceEngine:
             refusal_reason="off_topic",
         )
 
+    _SELF_REFLECT_PROMPT = """\
+You are a claim verifier. Given evidence passages and a draft answer, identify sentences that make factual claims NOT supported by the evidence.
+
+Evidence:
+{evidence}
+
+Draft answer:
+{answer}
+
+For each sentence in the draft answer that is NOT supported by the evidence above, output it on its own line prefixed with "UNSUPPORTED: ".
+If every sentence is supported, output only: ALL_SUPPORTED
+
+Output:\
+"""
+
+    async def _self_reflect_claims(self, *, answer: str, chunks: list[RetrievedChunk]) -> str:
+        """Self-RAG: hedge unsupported claims before returning the final answer."""
+        evidence_text = self.response_parser.format_evidence_for_prompt(chunks)
+        prompt = self._SELF_REFLECT_PROMPT.format(
+            evidence=evidence_text[:3000],
+            answer=answer[:2000],
+        )
+        try:
+            raw = await self.llm.generate(prompt=prompt)
+            if "ALL_SUPPORTED" in raw:
+                return answer
+            unsupported = [
+                line[len("UNSUPPORTED: "):].strip()
+                for line in raw.splitlines()
+                if line.startswith("UNSUPPORTED: ")
+            ]
+            if not unsupported:
+                return answer
+            modified = answer
+            for sentence in unsupported:
+                if sentence and sentence in modified:
+                    modified = modified.replace(
+                        sentence,
+                        f"[⚠️ Chưa có đủ bằng chứng: {sentence}]",
+                        1,
+                    )
+            logger.info("Self-RAG hedged %d unsupported claims", len(unsupported))
+            return modified
+        except Exception as exc:
+            logger.warning("Self-RAG reflection failed", extra={"error": str(exc)})
+            return answer
+
     _LANGUAGE_NAMES: dict[str, str] = {
         "vi": "tiếng Việt",
         "en": "English",
@@ -431,6 +533,13 @@ class InferenceEngine:
         "ko": "Korean",
     }
 
+    _ROUTE_PROMPT: dict[RouteType, str] = {
+        RouteType.SUMMARIZATION: "summarization.txt",
+        RouteType.COMPARISON: "comparison.txt",
+        RouteType.CLAIM_CHECK: "claim_check.txt",
+        RouteType.GRAPH_RELATION: "graph_relation.txt",
+    }
+
     def _build_prompt(
         self,
         *,
@@ -439,12 +548,12 @@ class InferenceEngine:
         answer_language: str,
         memory_context: str = "",
         route_type: RouteType = RouteType.GENERAL,
+        plan_type: str | None = None,
     ) -> str:
-        prompt_file = (
-            "summarization.txt"
-            if route_type == RouteType.SUMMARIZATION
-            else "qa_grounded.txt"
-        )
+        if plan_type == "multi_source_general":
+            prompt_file = "multi_source.txt"
+        else:
+            prompt_file = self._ROUTE_PROMPT.get(route_type, "qa_grounded.txt")
         template_path = project_root() / "backend" / "src" / "prompts" / prompt_file
         template = template_path.read_text(encoding="utf-8")
         lang_name = self._LANGUAGE_NAMES.get(answer_language, answer_language)
@@ -456,12 +565,64 @@ class InferenceEngine:
             memory_context=formatted_memory,
             query=query,
             answer_language=lang_name,
+            num_sources=str(len(chunks)),
         )
-        return template.format_map(values)
+        prompt = template.format_map(values)
+        language_lock = self._language_lock(answer_language)
+        return f"{language_lock}\n\n{prompt}\n\n{language_lock}\nFINAL ANSWER:"
+
+    @staticmethod
+    def _language_lock(answer_language: str) -> str:
+        if answer_language == "vi":
+            return (
+                "LANGUAGE LOCK:\n"
+                "- Final answer language: Vietnamese.\n"
+                "- Even if the question, evidence, or examples are English, write the final answer in Vietnamese.\n"
+                "- Do not copy English example sentences into the final answer.\n"
+                "- Keep standard technical terms such as Dropout, Overfitting, Precision, Recall, and F1-score when useful, "
+                "but the explanation around them must be Vietnamese."
+            )
+        return (
+            f"LANGUAGE LOCK:\n"
+            f"- Final answer language: {answer_language}.\n"
+            f"- Even if the question, evidence, or examples use another language, write the final answer in {answer_language}."
+        )
 
     @staticmethod
     def _scaled_limit(base: int, decision: RouteDecision) -> int:
         return max(1, math.ceil(base * decision.top_k_multiplier))
+
+    @staticmethod
+    def _filter_substantive_chunks(chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
+        """Remove TOC entries, table metadata, resource tips, and content-free chunks."""
+        import re
+        _TOC_NUM_RE = re.compile(r"^\d+\.\s+\d+\.\s")           # "06. 6. Hồi quy..."
+        _TABLE_ROW_RE = re.compile(r"^Hàng \d+", re.IGNORECASE)  # "Hàng 20 của bảng..."
+        _TOC_CHAPTER_RE = re.compile(r"^trang\s+\d+", re.IGNORECASE)
+        _MARKDOWN_TABLE_RE = re.compile(r"^\|")                   # markdown table rows
+        _RESOURCE_TIP_RE = re.compile(                            # learning tips/resource lists
+            r"^(Ghi nhớ|Note:|Starter Pack|Tập trung|Người mới|nên bắt đầu|"
+            r"scikit-learn User Guide|Dive into Deep|Xem thêm tại|Link:|URL:)",
+            re.IGNORECASE,
+        )
+
+        filtered = []
+        for chunk in chunks:
+            text = chunk.content.strip()
+            if _TOC_NUM_RE.match(text):
+                continue
+            if _TABLE_ROW_RE.match(text):
+                continue
+            if _TOC_CHAPTER_RE.match(text):
+                continue
+            if _MARKDOWN_TABLE_RE.match(text):
+                continue
+            if _RESOURCE_TIP_RE.match(text):
+                continue
+            if len(text) < 40:
+                continue
+            filtered.append(chunk)
+        return filtered if filtered else chunks  # fallback: keep all if nothing passes
 
     @staticmethod
     def _pack_context_chunks(chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
@@ -478,6 +639,16 @@ class InferenceEngine:
                 continue
             first = path.evidence_refs[0]
             content = "\n".join(ref.snippet_original for ref in path.evidence_refs)
+            entities = [
+                node.removeprefix("entity:").replace("-", " ")
+                for node in path.path
+                if node.startswith("entity:")
+            ]
+            relations = [
+                node.removeprefix("relation:")
+                for node in path.path
+                if node.startswith("relation:")
+            ]
             chunks.append(
                 RetrievedChunk(
                     chunk_id=f"graph-path-{index}",
@@ -492,6 +663,11 @@ class InferenceEngine:
                     source_pages=sorted({ref.page for ref in path.evidence_refs}),
                     bboxes=[ref.bbox for ref in path.evidence_refs if ref.bbox is not None],
                     evidence=path.evidence_refs,
+                    metadata={
+                        "graph_path": path.path,
+                        "entity_labels": entities,
+                        "relation_types": relations,
+                    },
                     graph_score=path.confidence,
                     fused_score=min(1.0, path.confidence + 0.25) if priority else path.confidence,
                 )

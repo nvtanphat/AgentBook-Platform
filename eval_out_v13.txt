@@ -1,0 +1,146 @@
+
+=================================================================
+  E2E Eval (RAGAS-style metrics) — user_demo
+  API: http://localhost:8000  timeout=300s/query
+=================================================================
+
+[ 1/20] [factual] Accuracy, Precision, Recall và F1-score là gì?
+        [answered] 107.9s  conf=0.694  faith=1.00  cit_cov=1.00  cit_valid=1.00
+        ans_rel=0.710  sem_faith=0.616  grounded=1.00  ctx_prec=1.00  sents=4
+        answer[:80]: Accuracy là tỷ lệ số mẫu được dự đoán đúng so với tổng số mẫu dự đoán — trong ph
+
+[ 2/20] [factual] Confusion matrix dùng để làm gì?
+        [answered] 89.6s  conf=0.569  faith=1.00  cit_cov=1.00  cit_valid=1.00
+        ans_rel=0.718  sem_faith=0.640  grounded=1.00  ctx_prec=1.00  sents=5
+        answer[:80]: Confusion matrix được sử dụng để đánh giá hiệu suất của mô hình classification[2
+
+[ 3/20] [factual] Overfitting là gì và làm sao để tránh?
+        [answered] 99.1s  conf=0.537  faith=0.83  cit_cov=1.00  cit_valid=1.00
+        ans_rel=0.763  sem_faith=0.754  grounded=1.00  ctx_prec=1.00  sents=6
+        answer[:80]: Overfitting là khi mô hình học tập quá tốt từ dữ liệu train, đến mức nó không th
+
+[ 4/20] [factual] What is supervised learning?
+        [answered] 70.1s  conf=0.545  faith=1.00  cit_cov=1.00  cit_valid=1.00
+        ans_rel=0.741  sem_faith=0.607  grounded=1.00  ctx_prec=1.00  sents=1
+        answer[:80]: Supervised learning involves training a model on labeled data, where the algorit
+
+[ 5/20] [factual] Machine learning là gì?
+        [answered] 104.5s  conf=0.687  faith=1.00  cit_cov=1.00  cit_valid=1.00
+        ans_rel=0.782  sem_faith=0.827  grounded=1.00  ctx_prec=1.00  sents=1
+        answer[:80]: Machine Learning là quy trình máy tính học các quy luật từ dữ liệu thay vì phải 
+
+[ 6/20] [summarization] Tóm tắt các bước cơ bản để xây dựng một mô hình machine
+        [answered] 170.5s  conf=0.590  faith=1.00  cit_cov=1.00  cit_valid=1.00
+        ans_rel=0.758  sem_faith=0.606  grounded=1.00  ctx_prec=1.00  sents=6
+        answer[:80]: Lộ trình học Machine Learning cơ bản bao gồm Thu thập dữ liệu, Làm sạch dữ liệu,
+
+[ 7/20] [summarization] Các metric đánh giá mô hình phân loại phổ biến là gì?
+        [answered] 115.1s  conf=0.528  faith=1.00  cit_cov=1.00  cit_valid=1.00
+        ans_rel=0.579  sem_faith=0.635  grounded=1.00  ctx_prec=1.00  sents=9
+        answer[:80]: Overfitting là khi mô hình học tập quá tốt từ dữ liệu train, đến mức nó không th
+
+[ 8/20] [comparison] Precision và Recall khác nhau như thế nào?
+        [answered] 124.1s  conf=0.602  faith=1.00  cit_cov=1.00  cit_valid=1.00
+        ans_rel=0.738  sem_faith=0.642  grounded=1.00  ctx_prec=1.00  sents=5
+        answer[:80]: Precision và Recall đều là các chỉ số đánh giá mô hình phân loại trong Machine L
+
+[ 9/20] [comparison] Supervised learning và unsupervised learning khác nhau 
+        [answered] 102.8s  conf=0.502  faith=1.00  cit_cov=1.00  cit_valid=1.00
+        ans_rel=0.798  sem_faith=0.538  grounded=1.00  ctx_prec=1.00  sents=4
+        answer[:80]: Supervised learning sử dụng tập dữ liệu có nhãn để huấn luyện mô hình, trong khi
+
+[10/20] [graph_relation] F1-score liên quan đến Precision và Recall như thế nào?
+        [answered] 96.4s  conf=0.681  faith=0.67  cit_cov=1.00  cit_valid=1.00
+        ans_rel=0.763  sem_faith=0.566  grounded=1.00  ctx_prec=1.00  sents=3
+        answer[:80]: F1-score là trung bình điều hòa giữa Precision và Recall, được chỉ ra trong tài 
+
+[11/20] [graph_relation] Dữ liệu training ảnh hưởng như thế nào đến hiệu suất mô
+        [answered] 91.4s  conf=0.510  faith=1.00  cit_cov=1.00  cit_valid=1.00
+        ans_rel=0.723  sem_faith=0.515  grounded=1.00  ctx_prec=1.00  sents=3
+        answer[:80]: Dữ liệu training ảnh hưởng mạnh mẽ đến hiệu suất mô hình thông qua quá trình huấ
+
+[12/20] [claim_check] F1-score là trung bình cộng của Precision và Recall đún
+        [answered] 87.8s  conf=0.674  faith=0.75  cit_cov=1.00  cit_valid=1.00
+        ans_rel=0.853  sem_faith=0.546  grounded=1.00  ctx_prec=1.00  sents=4
+        answer[:80]: F1-score là trung bình cộng của Precision và Recall đúng không[2]? [1]. Theo tài
+
+[13/20] [claim_check] Accuracy luôn là metric tốt nhất để đánh giá mô hình kh
+        [refused] 96.1s  conf=0.575  faith=0.00  cit_cov=0.00  cit_valid=1.00
+        ans_rel=0.376  sem_faith=0.462  grounded=1.00  ctx_prec=1.00  sents=1
+        answer[:80]: Tôi không tìm thấy đủ bằng chứng trong tài liệu được cung cấp để trả lời câu hỏi
+
+[14/20] [off_topic_should_refuse] Thủ đô của nước Pháp là gì?
+        [refused] 87.6s  conf=0.500  faith=0.00  cit_cov=0.00  cit_valid=1.00
+        ans_rel=0.280  sem_faith=0.415  grounded=1.00  ctx_prec=1.00  sents=1
+        answer[:80]: Tôi không tìm thấy đủ bằng chứng trong tài liệu được cung cấp để trả lời câu hỏi
+
+[15/20] [off_topic_should_refuse] Hôm nay thời tiết thế nào?
+        [refused] 48.3s  conf=0.500  faith=0.00  cit_cov=0.00  cit_valid=1.00
+        ans_rel=0.401  sem_faith=0.561  grounded=1.00  ctx_prec=1.00  sents=1
+        answer[:80]: Tôi không tìm thấy đủ bằng chứng trong tài liệu được cung cấp để trả lời câu hỏi
+
+[16/20] [false_premise] Tại sao F1-score là tổng của Precision và Recall?
+        [answered] 83.0s  conf=0.614  faith=1.00  cit_cov=1.00  cit_valid=1.00  fp_corrected=False
+        ans_rel=0.819  sem_faith=0.533  grounded=1.00  ctx_prec=1.00  sents=2
+        answer[:80]: F1-score là trung bình điều hòa giữa Precision và Recall[1]. Điều này cho thấy F
+
+[17/20] [false_premise] Vì sao mô hình có accuracy cao luôn tốt hơn mô hình có 
+        [refused] 103.6s  conf=0.512  faith=0.00  cit_cov=0.00  cit_valid=1.00  fp_corrected=False
+        ans_rel=0.370  sem_faith=0.415  grounded=1.00  ctx_prec=1.00  sents=1
+        answer[:80]: Tôi không tìm thấy đủ bằng chứng trong tài liệu được cung cấp để trả lời câu hỏi
+
+[18/20] [cross_lingual] What metrics are used to evaluate a classification mode
+        [answered] 86.1s  conf=0.505  faith=1.00  cit_cov=1.00  cit_valid=1.00
+        ans_rel=0.546  sem_faith=0.579  grounded=1.00  ctx_prec=1.00  sents=4
+        answer[:80]: Accuracy là tỷ lệ số mẫu được dự đoán đúng so với tổng số mẫu dự đoán — trong ph
+
+[19/20] [cross_lingual] What is the difference between precision and recall?
+        [answered] 83.9s  conf=0.590  faith=1.00  cit_cov=1.00  cit_valid=1.00
+        ans_rel=0.645  sem_faith=0.624  grounded=1.00  ctx_prec=1.00  sents=4
+        answer[:80]: Precision và Recall đều là các chỉ số đánh giá hiệu suất của mô hình phân loại t
+
+[20/20] [anaphora] Nó khác với accuracy như thế nào?
+        [refused] 98.8s  conf=0.511  faith=0.00  cit_cov=0.00  cit_valid=1.00
+        ans_rel=0.371  sem_faith=0.481  grounded=1.00  ctx_prec=1.00  sents=1
+        answer[:80]: Tôi không tìm thấy đủ bằng chứng trong tài liệu được cung cấp để trả lời câu hỏi
+
+
+=================================================================
+  E2E EVAL REPORT (RAGAS-style)
+=================================================================
+  Tổng queries:           20
+  Answered:               20/20
+  Errors/Timeout:         0
+  Avg elapsed:            97.3s/query
+─────────────────────────────────────────────────────────────────
+  RAG QUERIES (15 answered non-refused)
+    Faithfulness (cit.):  0.950  (% câu có [N] marker)
+    Citation coverage:    1.000  (% đoạn có citation)
+    Citation validity:    1.000  (% [N] trong range citations)
+    Answer relevance:     0.729  (cosine query↔answer)
+    Semantic faithfulness:0.615  (cosine answer↔citation)
+    Grounded ratio:       1.000  (% câu sem≥0.4 vs citation)
+    Context precision:    1.000  (% chunks score≥0.4)
+    Avg confidence:       0.589
+    Avg sentences/answer: 4.1
+─────────────────────────────────────────────────────────────────
+  OFF-TOPIC (2 queries)
+    Correctly refused:    2/2
+  FALSE PREMISE (2 queries)
+    Correction detected:  0/2
+  FALSE REFUSALS (in-scope refused): 3
+─────────────────────────────────────────────────────────────────
+  BY QUERY TYPE
+    anaphora                       answered=0/1  faith=0.00  rel=0.37
+    claim_check                    answered=1/2  faith=0.38  rel=0.61
+    comparison                     answered=2/2  faith=1.00  rel=0.77
+    cross_lingual                  answered=2/2  faith=1.00  rel=0.60
+    factual                        answered=5/5  faith=0.97  rel=0.74
+    false_premise                  answered=1/2  faith=0.50  rel=0.59
+    graph_relation                 answered=2/2  faith=0.83  rel=0.74
+    off_topic_should_refuse        answered=0/2  faith=0.00  rel=0.34
+    summarization                  answered=2/2  faith=1.00  rel=0.67
+─────────────────────────────────────────────────────────────────
+  Saved: D:\GenAI\DoAn01\backend\eval_results\e2e_eval.jsonl
+=================================================================
+

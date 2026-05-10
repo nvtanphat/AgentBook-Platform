@@ -1,0 +1,290 @@
+[
+  {
+    "config_name": "agentic",
+    "config_label": "Agentic RAG (default config, multi-step)",
+    "rag_flags": {},
+    "avg_top_score": 0.605,
+    "avg_faithfulness": 1.0,
+    "avg_context_precision": 1.0,
+    "avg_elapsed_s": 135.1,
+    "answered_count": 7,
+    "off_topic_correct": 1,
+    "off_topic_total": 1,
+    "results": [
+      {
+        "query_type": "factual",
+        "query": "Regularization là gì và tại sao cần dùng?",
+        "elapsed_s": 110.7,
+        "top_score": 0.6335010928249639,
+        "faithfulness": 1.0,
+        "context_precision": 1.0,
+        "refused": false,
+        "off_topic_ok": null
+      },
+      {
+        "query_type": "factual",
+        "query": "L1 và L2 regularization khác nhau như thế nào?",
+        "elapsed_s": 144.9,
+        "top_score": 0.5868126202124267,
+        "faithfulness": 1.0,
+        "context_precision": 1.0,
+        "refused": false,
+        "off_topic_ok": null
+      },
+      {
+        "query_type": "summarization",
+        "query": "Tóm tắt các kỹ thuật regularization phổ biến",
+        "elapsed_s": 151.7,
+        "top_score": 0.5398561654289983,
+        "faithfulness": 1.0,
+        "context_precision": 1.0,
+        "refused": false,
+        "off_topic_ok": null
+      },
+      {
+        "query_type": "comparison",
+        "query": "So sánh L1 và L2 regularization",
+        "elapsed_s": 157.0,
+        "top_score": 0.6521614972551628,
+        "faithfulness": 1.0,
+        "context_precision": 1.0,
+        "refused": false,
+        "off_topic_ok": null
+      },
+      {
+        "query_type": "claim_check",
+        "query": "Dropout có giúp giảm overfitting không?",
+        "elapsed_s": 137.0,
+        "top_score": 0.720732834336477,
+        "faithfulness": 1.0,
+        "context_precision": 1.0,
+        "refused": false,
+        "off_topic_ok": null
+      },
+      {
+        "query_type": "cross_lingual",
+        "query": "What is the difference between L1 and L2 regularization?",
+        "elapsed_s": 135.4,
+        "top_score": 0.5864303788121591,
+        "faithfulness": 1.0,
+        "context_precision": 1.0,
+        "refused": false,
+        "off_topic_ok": null
+      },
+      {
+        "query_type": "off_topic_should_refuse",
+        "query": "Thủ đô của nước Pháp là gì?",
+        "elapsed_s": 118.6,
+        "top_score": 0.5000246779472746,
+        "faithfulness": 0.0,
+        "context_precision": 1.0,
+        "refused": true,
+        "off_topic_ok": true
+      },
+      {
+        "query_type": "false_premise",
+        "query": "Tại sao L2 regularization tạo ra sparse weights?",
+        "elapsed_s": 125.8,
+        "top_score": 0.5151435094044393,
+        "faithfulness": 1.0,
+        "context_precision": 1.0,
+        "refused": false,
+        "off_topic_ok": null
+      }
+    ]
+  },
+  {
+    "config_name": "baseline",
+    "config_label": "Baseline (inference engine, reranker ON, no rewriter)",
+    "rag_flags": {
+      "agentic_rag_enabled": false,
+      "query_rewriter_enabled": false
+    },
+    "avg_top_score": 0.605,
+    "avg_faithfulness": 0.792,
+    "avg_context_precision": 1.0,
+    "avg_elapsed_s": 133.7,
+    "answered_count": 6,
+    "off_topic_correct": 1,
+    "off_topic_total": 1,
+    "results": [
+      {
+        "query_type": "factual",
+        "query": "Regularization là gì và tại sao cần dùng?",
+        "elapsed_s": 125.1,
+        "top_score": 0.6335010928249639,
+        "faithfulness": 0.714,
+        "context_precision": 1.0,
+        "refused": false,
+        "off_topic_ok": null
+      },
+      {
+        "query_type": "factual",
+        "query": "L1 và L2 regularization khác nhau như thế nào?",
+        "elapsed_s": 150.0,
+        "top_score": 0.5868126202124267,
+        "faithfulness": 1.0,
+        "context_precision": 1.0,
+        "refused": false,
+        "off_topic_ok": null
+      },
+      {
+        "query_type": "summarization",
+        "query": "Tóm tắt các kỹ thuật regularization phổ biến",
+        "elapsed_s": 143.8,
+        "top_score": 0.5398561654289983,
+        "faithfulness": 1.0,
+        "context_precision": 1.0,
+        "refused": false,
+        "off_topic_ok": null
+      },
+      {
+        "query_type": "comparison",
+        "query": "So sánh L1 và L2 regularization",
+        "elapsed_s": 145.7,
+        "top_score": 0.6521614972551628,
+        "faithfulness": 1.0,
+        "context_precision": 1.0,
+        "refused": false,
+        "off_topic_ok": null
+      },
+      {
+        "query_type": "claim_check",
+        "query": "Dropout có giúp giảm overfitting không?",
+        "elapsed_s": 129.6,
+        "top_score": 0.720732834336477,
+        "faithfulness": 1.0,
+        "context_precision": 1.0,
+        "refused": false,
+        "off_topic_ok": null
+      },
+      {
+        "query_type": "cross_lingual",
+        "query": "What is the difference between L1 and L2 regularization?",
+        "elapsed_s": 134.4,
+        "top_score": 0.5864303788121591,
+        "faithfulness": 0.833,
+        "context_precision": 1.0,
+        "refused": false,
+        "off_topic_ok": null
+      },
+      {
+        "query_type": "off_topic_should_refuse",
+        "query": "Thủ đô của nước Pháp là gì?",
+        "elapsed_s": 117.2,
+        "top_score": 0.5000246779472746,
+        "faithfulness": 0.0,
+        "context_precision": 1.0,
+        "refused": true,
+        "off_topic_ok": true
+      },
+      {
+        "query_type": "false_premise",
+        "query": "Tại sao L2 regularization tạo ra sparse weights?",
+        "elapsed_s": 123.7,
+        "top_score": 0.5151435094044393,
+        "faithfulness": 0.0,
+        "context_precision": 1.0,
+        "refused": true,
+        "off_topic_ok": null
+      }
+    ]
+  },
+  {
+    "config_name": "multi_query",
+    "config_label": "Multi-Query Rewriter (inference engine, rewriter ON)",
+    "rag_flags": {
+      "agentic_rag_enabled": false,
+      "query_rewriter_enabled": true
+    },
+    "avg_top_score": 0.605,
+    "avg_faithfulness": 0.911,
+    "avg_context_precision": 1.0,
+    "avg_elapsed_s": 132.0,
+    "answered_count": 7,
+    "off_topic_correct": 1,
+    "off_topic_total": 1,
+    "results": [
+      {
+        "query_type": "factual",
+        "query": "Regularization là gì và tại sao cần dùng?",
+        "elapsed_s": 122.2,
+        "top_score": 0.6335010928249639,
+        "faithfulness": 0.375,
+        "context_precision": 1.0,
+        "refused": false,
+        "off_topic_ok": null
+      },
+      {
+        "query_type": "factual",
+        "query": "L1 và L2 regularization khác nhau như thế nào?",
+        "elapsed_s": 149.3,
+        "top_score": 0.5868126202124267,
+        "faithfulness": 1.0,
+        "context_precision": 1.0,
+        "refused": false,
+        "off_topic_ok": null
+      },
+      {
+        "query_type": "summarization",
+        "query": "Tóm tắt các kỹ thuật regularization phổ biến",
+        "elapsed_s": 141.1,
+        "top_score": 0.5398561654289983,
+        "faithfulness": 1.0,
+        "context_precision": 1.0,
+        "refused": false,
+        "off_topic_ok": null
+      },
+      {
+        "query_type": "comparison",
+        "query": "So sánh L1 và L2 regularization",
+        "elapsed_s": 148.9,
+        "top_score": 0.6521614972551628,
+        "faithfulness": 1.0,
+        "context_precision": 1.0,
+        "refused": false,
+        "off_topic_ok": null
+      },
+      {
+        "query_type": "claim_check",
+        "query": "Dropout có giúp giảm overfitting không?",
+        "elapsed_s": 123.9,
+        "top_score": 0.720732834336477,
+        "faithfulness": 1.0,
+        "context_precision": 1.0,
+        "refused": false,
+        "off_topic_ok": null
+      },
+      {
+        "query_type": "cross_lingual",
+        "query": "What is the difference between L1 and L2 regularization?",
+        "elapsed_s": 127.0,
+        "top_score": 0.5864303788121591,
+        "faithfulness": 1.0,
+        "context_precision": 1.0,
+        "refused": false,
+        "off_topic_ok": null
+      },
+      {
+        "query_type": "off_topic_should_refuse",
+        "query": "Thủ đô của nước Pháp là gì?",
+        "elapsed_s": 119.5,
+        "top_score": 0.5000246779472746,
+        "faithfulness": 0.0,
+        "context_precision": 1.0,
+        "refused": true,
+        "off_topic_ok": true
+      },
+      {
+        "query_type": "false_premise",
+        "query": "Tại sao L2 regularization tạo ra sparse weights?",
+        "elapsed_s": 124.3,
+        "top_score": 0.5151435094044393,
+        "faithfulness": 1.0,
+        "context_precision": 1.0,
+        "refused": false,
+        "off_topic_ok": null
+      }
+    ]
+  }
+]

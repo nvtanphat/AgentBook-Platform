@@ -62,11 +62,36 @@ def _merge_two_chunks(a: TextChunk, b: TextChunk) -> TextChunk:
     })
 
 
-def _can_merge(a: TextChunk, b: TextChunk, target_tokens: int) -> bool:
-    return a.modality != "table" and b.modality != "table" and a.token_count + b.token_count <= target_tokens
+def _same_single_page(a: TextChunk, b: TextChunk) -> bool:
+    return len(a.source_pages) == 1 and a.source_pages == b.source_pages
 
 
-def _merge_tiny_chunks(chunks: list[TextChunk], min_tokens: int, target_tokens: int) -> list[TextChunk]:
+def _can_merge(
+    a: TextChunk,
+    b: TextChunk,
+    target_tokens: int,
+    max_blocks: int = 0,
+    *,
+    allow_same_page_block_overflow: bool = False,
+) -> bool:
+    if a.modality == "table" or b.modality == "table":
+        return False
+    if a.token_count + b.token_count > target_tokens:
+        return False
+    exceeds_block_budget = max_blocks > 0 and len(a.source_block_ids) + len(b.source_block_ids) > max_blocks
+    if exceeds_block_budget and not (allow_same_page_block_overflow and _same_single_page(a, b)):
+        return False
+    return True
+
+
+def _merge_tiny_chunks(
+    chunks: list[TextChunk],
+    min_tokens: int,
+    target_tokens: int,
+    max_blocks: int = 0,
+    *,
+    allow_same_page_block_overflow: bool = False,
+) -> list[TextChunk]:
     """
     Bidirectional iterative merge to eliminate sub-minimum chunks.
 
@@ -89,7 +114,13 @@ def _merge_tiny_chunks(chunks: list[TextChunk], min_tokens: int, target_tokens: 
         # --- forward pass ---
         result: list[TextChunk] = []
         for chunk in chunks:
-            if result and result[-1].token_count < min_tokens and _can_merge(result[-1], chunk, target_tokens):
+            if result and result[-1].token_count < min_tokens and _can_merge(
+                result[-1],
+                chunk,
+                target_tokens,
+                max_blocks,
+                allow_same_page_block_overflow=allow_same_page_block_overflow,
+            ):
                 result[-1] = _merge_two_chunks(result[-1], chunk)
                 changed = True
             else:
@@ -100,7 +131,13 @@ def _merge_tiny_chunks(chunks: list[TextChunk], min_tokens: int, target_tokens: 
         if (
             len(chunks) >= 2
             and chunks[-1].token_count < min_tokens
-            and _can_merge(chunks[-2], chunks[-1], target_tokens)
+            and _can_merge(
+                chunks[-2],
+                chunks[-1],
+                target_tokens,
+                max_blocks,
+                allow_same_page_block_overflow=allow_same_page_block_overflow,
+            )
         ):
             chunks[-2] = _merge_two_chunks(chunks[-2], chunks[-1])
             chunks.pop()
@@ -112,8 +149,25 @@ def _merge_tiny_chunks(chunks: list[TextChunk], min_tokens: int, target_tokens: 
         while i < len(chunks):
             c = chunks[i]
             if c.token_count < min_tokens and c.modality != "table":
-                prev_ok = i > 0 and _can_merge(result[-1], c, target_tokens) if result else False
-                next_ok = i + 1 < len(chunks) and _can_merge(c, chunks[i + 1], target_tokens)
+                prev_ok = (
+                    i > 0
+                    and _can_merge(
+                        result[-1],
+                        c,
+                        target_tokens,
+                        max_blocks,
+                        allow_same_page_block_overflow=allow_same_page_block_overflow,
+                    )
+                    if result
+                    else False
+                )
+                next_ok = i + 1 < len(chunks) and _can_merge(
+                    c,
+                    chunks[i + 1],
+                    target_tokens,
+                    max_blocks,
+                    allow_same_page_block_overflow=allow_same_page_block_overflow,
+                )
                 if prev_ok and next_ok:
                     # merge into whichever gives the smaller combined chunk
                     if result[-1].token_count <= chunks[i + 1].token_count:
@@ -173,6 +227,8 @@ class LayoutAwareChunker:
             [c for c in chunks if c.content.strip() and c.token_count > 0],
             self.settings.chunk_min_token_count,
             self.settings.chunk_target_token_count,
+            self.settings.chunk_max_blocks_per_chunk,
+            allow_same_page_block_overflow=True,
         )
 
     def _append_block(
@@ -268,8 +324,9 @@ class LayoutAwareChunker:
             return False
         if self._is_heading_only(current):
             return False
-        min_reasonable_tokens = max(1, self.settings.chunk_target_token_count // 2)
-        return current_tokens >= min_reasonable_tokens
+        # Always enforce block count — short-block sources (PPTX) must be split even
+        # when the token budget hasn't been hit yet.
+        return True
 
     @staticmethod
     def _is_heading_only(blocks: list[EvidenceBlock]) -> bool:
@@ -574,8 +631,9 @@ class SemanticChunker:
             block_tokens = self._layout._count_tokens(block.snippet_original)
             hard_break = i in split_before
             token_overflow = bool(current) and current_tokens + block_tokens > self.settings.chunk_target_token_count
+            block_overflow = bool(current) and len(current) >= self.settings.chunk_max_blocks_per_chunk
 
-            if (hard_break or token_overflow) and current:
+            if (hard_break or token_overflow or block_overflow) and current:
                 chunks.append(self._make_chunk(evidence_map, current))
                 if hard_break:
                     current = []
@@ -597,6 +655,8 @@ class SemanticChunker:
             [c for c in chunks if c.content.strip() and c.token_count > 0],
             self.settings.chunk_min_token_count,
             self.settings.chunk_target_token_count,
+            self.settings.chunk_max_blocks_per_chunk,
+            allow_same_page_block_overflow=True,
         )
 
     def _make_chunk(self, evidence_map: EvidenceMap, blocks: list[EvidenceBlock]) -> TextChunk:

@@ -23,16 +23,8 @@ class OllamaLLM(BaseLLM):
             limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
         )
 
-    def _prepare_prompt(self, prompt: str) -> str:
-        """Prepend /no_think for qwen3 models to disable chain-of-thought output."""
-        if "qwen3" in self.settings.llm_local_model.lower():
-            return "/no_think\n" + prompt
-        return prompt
-
     async def generate(self, *, prompt: str) -> str:
-        max_retries = 2
-        prompt = self._prepare_prompt(prompt)
-        # Use /api/chat for better thinking-mode control (qwen3, deepseek-r1, etc.)
+        max_retries = 1
         url = f"{self.settings.ollama_base_url.rstrip('/')}/api/chat"
         logger.info(f"Calling Ollama at {url} with model {self.settings.llm_local_model}, prompt length: {len(prompt)}")
 
@@ -42,7 +34,6 @@ class OllamaLLM(BaseLLM):
                     url,
                     json={
                         "model": self.settings.llm_local_model,
-                        "think": False,
                         "stream": False,
                         "messages": [{"role": "user", "content": prompt}],
                         "options": {
@@ -55,7 +46,6 @@ class OllamaLLM(BaseLLM):
                 response.raise_for_status()
                 payload = response.json()
                 raw = str(payload.get("message", {}).get("content", "")).strip()
-                # Strip any residual <think>...</think> blocks (fallback for older Ollama)
                 result = _THINK_TAG_RE.sub("", raw).strip()
                 logger.info(f"Ollama generation successful, response length: {len(result)}")
                 return result
@@ -76,14 +66,12 @@ class OllamaLLM(BaseLLM):
         return ""
 
     async def stream(self, *, prompt: str) -> AsyncGenerator[str, None]:
-        prompt = self._prepare_prompt(prompt)
         try:
             async with self._client.stream(
                 "POST",
                 f"{self.settings.ollama_base_url.rstrip('/')}/api/chat",
                 json={
                     "model": self.settings.llm_local_model,
-                    "think": False,
                     "stream": True,
                     "messages": [{"role": "user", "content": prompt}],
                     "options": {

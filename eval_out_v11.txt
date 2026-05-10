@@ -1,0 +1,116 @@
+
+=================================================================
+  E2E Eval (RAGAS-style metrics) — user_demo
+  API: http://localhost:8000  timeout=300s/query
+=================================================================
+
+[ 1/20] [factual] Accuracy, Precision, Recall và F1-score là gì?
+        [answered] 199.1s  conf=0.709  faith=0.25  cit_cov=0.75  cit_valid=1.00
+        ans_rel=0.774  sem_faith=0.554  grounded=1.00  ctx_prec=1.00  sents=60
+        answer[:80]: Okay, let's tackle this problem step by step. The user wants me to answer the qu
+
+[ 2/20] [factual] Confusion matrix dùng để làm gì?
+        [answered] 217.3s  conf=0.569  faith=0.79  cit_cov=1.00  cit_valid=1.00
+        ans_rel=0.666  sem_faith=0.614  grounded=1.00  ctx_prec=1.00  sents=57
+        answer[:80]: Okay, let's tackle this problem step by step[1]. The user is asking about the pu
+
+[ 3/20] [factual] Overfitting là gì và làm sao để tránh?
+        [answered] 213.9s  conf=0.537  faith=0.81  cit_cov=1.00  cit_valid=1.00
+        ans_rel=0.687  sem_faith=0.642  grounded=1.00  ctx_prec=1.00  sents=77
+        answer[:80]: Okay, let's tackle this problem[1]. The user is asking about overfitting and how
+
+[ 4/20] [factual] What is supervised learning?
+        ERROR: ConnectionError: ('Connection aborted.', ConnectionResetError(10054, 'An existing connection was forcibly closed by the remote host', None, 10054, None))
+
+[ 5/20] [factual] Machine learning là gì?
+        ERROR: ConnectionError: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/v1/query/ask (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000002CC7DAC7BC0>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))
+
+[ 6/20] [summarization] Tóm tắt các bước cơ bản để xây dựng một mô hình machine
+        ERROR: ConnectionError: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/v1/query/ask (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000002CC7DB60530>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))
+
+[ 7/20] [summarization] Các metric đánh giá mô hình phân loại phổ biến là gì?
+        ERROR: ConnectionError: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/v1/query/ask (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000002CC7DB60E60>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))
+
+[ 8/20] [comparison] Precision và Recall khác nhau như thế nào?
+        ERROR: ConnectionError: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/v1/query/ask (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000002CC7DAC7CB0>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))
+
+[ 9/20] [comparison] Supervised learning và unsupervised learning khác nhau 
+        ERROR: ConnectionError: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/v1/query/ask (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000002CC7DAC54C0>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))
+
+[10/20] [graph_relation] F1-score liên quan đến Precision và Recall như thế nào?
+        ERROR: ConnectionError: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/v1/query/ask (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000002CC7DAC6060>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))
+
+[11/20] [graph_relation] Dữ liệu training ảnh hưởng như thế nào đến hiệu suất mô
+        ERROR: ConnectionError: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/v1/query/ask (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000002CC7DAC7680>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))
+
+[12/20] [claim_check] F1-score là trung bình cộng của Precision và Recall đún
+        ERROR: ConnectionError: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/v1/query/ask (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000002CC7DB603E0>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))
+
+[13/20] [claim_check] Accuracy luôn là metric tốt nhất để đánh giá mô hình kh
+        ERROR: ConnectionError: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/v1/query/ask (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000002CC7DB616D0>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))
+
+[14/20] [off_topic_should_refuse] Thủ đô của nước Pháp là gì?
+        ERROR: ConnectionError: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/v1/query/ask (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000002CC7DAC77A0>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))
+
+[15/20] [off_topic_should_refuse] Hôm nay thời tiết thế nào?
+        [refused] 71.6s  conf=0.500  faith=0.00  cit_cov=0.00  cit_valid=1.00
+        ans_rel=0.401  sem_faith=0.561  grounded=1.00  ctx_prec=1.00  sents=1
+        answer[:80]: Tôi không tìm thấy đủ bằng chứng trong tài liệu được cung cấp để trả lời câu hỏi
+
+[16/20] [false_premise] Tại sao F1-score là tổng của Precision và Recall?
+        [refused] 268.2s  conf=0.614  faith=0.00  cit_cov=0.00  cit_valid=1.00  fp_corrected=False
+        ans_rel=0.350  sem_faith=0.469  grounded=1.00  ctx_prec=1.00  sents=1
+        answer[:80]: Tôi không tìm thấy đủ bằng chứng trong tài liệu được cung cấp để trả lời câu hỏi
+
+[17/20] [false_premise] Vì sao mô hình có accuracy cao luôn tốt hơn mô hình có 
+        ERROR: ConnectionError: ('Connection aborted.', ConnectionResetError(10054, 'An existing connection was forcibly closed by the remote host', None, 10054, None))
+
+[18/20] [cross_lingual] What metrics are used to evaluate a classification mode
+        ERROR: ConnectionError: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/v1/query/ask (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000002CC7DAC5850>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))
+
+[19/20] [cross_lingual] What is the difference between precision and recall?
+        ERROR: ConnectionError: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/v1/query/ask (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000002CC7DAC69C0>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))
+
+[20/20] [anaphora] Nó khác với accuracy như thế nào?
+        ERROR: ConnectionError: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/v1/query/ask (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000002CC7DB62450>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))
+
+
+=================================================================
+  E2E EVAL REPORT (RAGAS-style)
+=================================================================
+  Tổng queries:           20
+  Answered:               5/20
+  Errors/Timeout:         15
+  Avg elapsed:            194.0s/query
+─────────────────────────────────────────────────────────────────
+  RAG QUERIES (3 answered non-refused)
+    Faithfulness (cit.):  0.615  (% câu có [N] marker)
+    Citation coverage:    0.917  (% đoạn có citation)
+    Citation validity:    1.000  (% [N] trong range citations)
+    Answer relevance:     0.709  (cosine query↔answer)
+    Semantic faithfulness:0.603  (cosine answer↔citation)
+    Grounded ratio:       1.000  (% câu sem≥0.4 vs citation)
+    Context precision:    1.000  (% chunks score≥0.4)
+    Avg confidence:       0.605
+    Avg sentences/answer: 64.7
+─────────────────────────────────────────────────────────────────
+  OFF-TOPIC (2 queries)
+    Correctly refused:    1/2
+  FALSE PREMISE (1 queries)
+    Correction detected:  0/1
+  FALSE REFUSALS (in-scope refused): 1
+─────────────────────────────────────────────────────────────────
+  BY QUERY TYPE
+    anaphora                       answered=0/1  faith=0.00  rel=0.00
+    claim_check                    answered=0/2  faith=0.00  rel=0.00
+    comparison                     answered=0/2  faith=0.00  rel=0.00
+    cross_lingual                  answered=0/2  faith=0.00  rel=0.00
+    factual                        answered=3/5  faith=0.61  rel=0.71
+    false_premise                  answered=0/2  faith=0.00  rel=0.35
+    graph_relation                 answered=0/2  faith=0.00  rel=0.00
+    off_topic_should_refuse        answered=0/2  faith=0.00  rel=0.40
+    summarization                  answered=0/2  faith=0.00  rel=0.00
+─────────────────────────────────────────────────────────────────
+  Saved: D:\GenAI\DoAn01\backend\eval_results\e2e_eval.jsonl
+=================================================================
+

@@ -137,9 +137,20 @@ class Settings(BaseSettings):
     final_top_k: int = 5
     rrf_k: int = 60
     rerank_input_k: int = 20
+    max_chunks_per_doc: int = 3
     graph_max_hops: int = 2
-    query_rewriter_enabled: bool = True
     agentic_rag_enabled: bool = True
+    agentic_planner_llm_enabled: bool = False
+    agentic_max_retrieval_iterations: int = 2
+    agentic_anaphora_resolution_enabled: bool = True
+    smart_reranker_enabled: bool = False
+    smart_reranker_threshold: float = 0.7
+    hyde_enabled: bool = False
+    llm_router_enabled: bool = False
+    crag_evaluator_enabled: bool = False
+    crag_correct_threshold: float = 0.55
+    crag_incorrect_threshold: float = 0.25
+    self_rag_reflection_enabled: bool = False
     min_reranker_score: float = 0.35
     min_evidence_confidence: float = 0.55
     min_graph_confidence: float = 0.55
@@ -265,8 +276,8 @@ def get_settings() -> Settings:
         rrf_k=retrieval_section.get("rrf_k", 60),
         rerank_input_k=retrieval_section.get("rerank_input_k", 15),
         graph_max_hops=min(int(retrieval_section.get("graph_max_hops", 2)), 2),
-        query_rewriter_enabled=env_bool("QUERY_REWRITER_ENABLED", retrieval_section.get("query_rewriter_enabled", True)),
         agentic_rag_enabled=env_bool("AGENTIC_RAG_ENABLED", retrieval_section.get("agentic_rag_enabled", True)),
+        agentic_planner_llm_enabled=env_bool("AGENTIC_PLANNER_LLM_ENABLED", retrieval_section.get("agentic_planner_llm_enabled", False)),
         api_auth_enabled=env_bool("API_AUTH_ENABLED", str(env_value("APP_ENV", "development")).lower() == "production"),
         api_key=env_value("API_KEY", None),
         min_ocr_text_quality=refusal_config.get("min_ocr_text_quality", 0.35),
