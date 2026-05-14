@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 from beanie import PydanticObjectId
@@ -33,6 +34,7 @@ from src.schemas.material import (
 from src.services.material_service import MaterialService
 
 router = APIRouter(prefix="/materials", tags=["materials"])
+logger = logging.getLogger(__name__)
 
 STATUS_PROGRESS = {
     "uploaded": 10,
@@ -121,11 +123,14 @@ async def upload_material(
             head=streamed.head,
         )
     except UploadValidationError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        logger.exception("Upload validation failed")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid upload request.") from exc
     except LookupError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        logger.exception("Upload target not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Upload target not found.") from exc
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        logger.exception("Invalid upload request")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid upload request.") from exc
     finally:
         if streamed is not None:
             streamed.temp_path.unlink(missing_ok=True)
@@ -158,7 +163,8 @@ async def batch_upload_materials(
     except ValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.errors()) from exc
     except (json.JSONDecodeError, ValueError) as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        logger.exception("Invalid batch metadata")
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="metadata must be valid JSON matching the upload schema") from exc
 
     for item in metadata_items:
         verify_owner_access(request, item.owner_id, settings)
@@ -184,7 +190,8 @@ async def batch_upload_materials(
             )
             results.append(MaterialBatchUploadItem(filename=filename, success=True, data=data))
         except (UploadValidationError, LookupError, ValueError) as exc:
-            results.append(MaterialBatchUploadItem(filename=filename, success=False, error=str(exc)))
+            logger.exception("Batch material upload item failed", extra={"filename": filename})
+            results.append(MaterialBatchUploadItem(filename=filename, success=False, error="Material upload failed. Please retry later."))
         finally:
             if streamed is not None:
                 streamed.temp_path.unlink(missing_ok=True)
@@ -391,9 +398,11 @@ async def retry_material(
     try:
         result = await material_service.retry_material(material_id=material_id, owner_id=owner_id)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        logger.exception("Invalid retry request", extra={"material_id": material_id, "owner_id": owner_id})
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid retry request.") from exc
     except LookupError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        logger.exception("Retry target not found", extra={"material_id": material_id, "owner_id": owner_id})
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Material not found.") from exc
     return APIResponse(success=True, message="Pipeline retry queued", data=result, error=None)
 
 
@@ -408,7 +417,9 @@ async def delete_material(
     try:
         counts = await material_service.delete_material(material_id=material_id, owner_id=owner_id)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        logger.exception("Invalid material deletion request", extra={"material_id": material_id, "owner_id": owner_id})
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid material deletion request.") from exc
     except LookupError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        logger.exception("Material deletion target not found", extra={"material_id": material_id, "owner_id": owner_id})
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Material not found.") from exc
     return APIResponse(success=True, message="Material deleted successfully", data=counts, error=None)

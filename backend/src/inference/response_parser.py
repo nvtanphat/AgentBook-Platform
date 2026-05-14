@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import math
 import re
 
@@ -28,6 +29,13 @@ def _citation_confidence(chunk: RetrievedChunk) -> float:
 _ORDERED_LIST_RE = re.compile(r"^(\s*)(\d+)\.\s", re.MULTILINE)
 _SAME_CITATION_SENTENCE_RE = re.compile(r"\[(\d+)\]([.!?])(\s+)(?=[^.!?]*\[\1\][.!?])")
 _TOC_ENTRY_RE = re.compile(r"^trang\s+\d+\s*[-–]", re.IGNORECASE)
+
+
+def _normalize_token(token: str) -> str:
+    token = token.lower()
+    if len(token) > 4 and token.endswith("s"):
+        return token[:-1]
+    return token
 
 
 def _fix_numbered_lists(text: str) -> str:
@@ -65,21 +73,30 @@ def _collapse_repeated_sentence_citations(text: str) -> str:
 
 
 class ResponseParser:
-    _MIN_CITATION_OVERLAP = 3  # require ≥3 content-word overlaps to suppress spurious citations
+    _MIN_CITATION_OVERLAP = 2  # require content-word overlap to suppress spurious citations
     _REFUSAL_RE = re.compile(
         r"(kh[oô]ng\s+t[iì]m\s+th[aấ]y|kh[oô]ng\s+[dđ][uủ]|not\s+enough\s+evidence|cannot\s+answer|can't\s+answer)",
         re.IGNORECASE,
     )
 
     def format_evidence_for_prompt(self, chunks: list[RetrievedChunk]) -> str:
+        return self._format_evidence_xml(chunks)
+
+    @staticmethod
+    def _format_evidence_xml(chunks: list[RetrievedChunk]) -> str:
         lines: list[str] = []
         for index, chunk in enumerate(chunks, start=1):
             doc_name = chunk.evidence[0].document_name if chunk.evidence else chunk.document_name
             pages = sorted({e.page for e in chunk.evidence}) if chunk.evidence else chunk.source_pages
             page_str = f"trang {pages[0]}" if len(pages) == 1 else f"trang {pages[0]}-{pages[-1]}"
+            safe_doc_name = html.escape(doc_name or "", quote=True)
+            safe_page_str = html.escape(page_str, quote=True)
+            safe_content = html.escape(chunk.content or "")
             lines.append(
-                f"[{index}] Nguồn: {doc_name} ({page_str})\n"
-                f"{chunk.content}"
+                f'<EVIDENCE id="{index}" citation="[{index}]" '
+                f'source="{safe_doc_name}" pages="{safe_page_str}">\n'
+                f"{safe_content}\n"
+                f"</EVIDENCE>"
             )
         return "\n\n".join(lines)
 
@@ -143,7 +160,7 @@ class ResponseParser:
 
     @staticmethod
     def _token_set(text: str) -> set[str]:
-        return set(_WORD_RE.findall((text or "").lower()))
+        return {_normalize_token(token) for token in _WORD_RE.findall((text or "").lower())}
 
     def _select_primary_evidence(self, evidence: list, *, focus_text: str | None) -> object | None:
         if not evidence:
@@ -164,17 +181,17 @@ class ResponseParser:
     def inject_citations(self, answer: str, chunks: list[RetrievedChunk]) -> str:
         """Ensure every sentence has a valid [N] citation.
 
-        - If LLM added no [N] at all: inject best-matching citation on every sentence.
-        - If LLM added some [N] but missed sentences: fill in the gaps.
-        - Clamp any [N] where N > len(chunks) to [1] (invalid citation range).
+        - If LLM added no [N] at all: inject a best-matching citation only
+          when the sentence has enough lexical overlap with retrieved evidence.
+        - If LLM added some [N] but missed sentences: fill only grounded gaps.
+        - Preserve invalid citation markers so downstream grounding checks can
+          detect and repair them instead of silently laundering them to [1].
         """
         answer = _fix_numbered_lists(answer)
         if not chunks:
             return answer
         if self._REFUSAL_RE.search(answer):
             return answer
-
-        num_sources = len(chunks)
 
         # Token sets per chunk for best-match injection.
         chunk_tokens: list[set[str]] = []
@@ -183,17 +200,19 @@ class ResponseParser:
                 combined = " ".join(e.snippet_original for e in chunk.evidence)
             else:
                 combined = chunk.content
-            chunk_tokens.append(set(_WORD_RE.findall(combined.lower())))
+            chunk_tokens.append(self._token_set(combined))
 
         _citation_num_re = re.compile(r"\[(\d+)\]")
 
-        def _best_tag(sentence: str) -> str:
-            sent_tokens = set(_WORD_RE.findall(sentence.lower()))
+        def _best_tag(sentence: str) -> str | None:
+            sent_tokens = self._token_set(sentence)
             best_idx, best_score = 0, 0
             for idx, ctokens in enumerate(chunk_tokens):
                 score = len(sent_tokens & ctokens)
                 if score > best_score:
                     best_score, best_idx = score, idx
+            if best_score < self._MIN_CITATION_OVERLAP:
+                return None
             return f"[{best_idx + 1}]"
 
         def _process_sentence(text: str) -> str:
@@ -203,6 +222,8 @@ class ResponseParser:
             has_citation = bool(_citation_num_re.search(stripped))
             if not has_citation:
                 tag = _best_tag(stripped)
+                if tag is None:
+                    return text
                 if stripped[-1] in ".!?":
                     text = text.rstrip()[:-1] + tag + text.rstrip()[-1]
                 else:
@@ -228,10 +249,9 @@ class ResponseParser:
             result_paragraphs.append("".join(out_parts))
 
         result = "\n\n".join(result_paragraphs)
+        return _collapse_repeated_sentence_citations(result)
 
-        # Clamp out-of-range citation numbers to [1].
-        def _clamp(m: re.Match) -> str:
-            n = int(m.group(1))
-            return f"[{n}]" if 1 <= n <= num_sources else "[1]"
-
-        return _collapse_repeated_sentence_citations(_citation_num_re.sub(_clamp, result))
+    @staticmethod
+    def invalid_citation_numbers(answer: str, citation_count: int) -> list[int]:
+        markers = [int(match.group(1)) for match in re.finditer(r"\[(\d+)\]", answer or "")]
+        return sorted({marker for marker in markers if marker < 1 or marker > citation_count})

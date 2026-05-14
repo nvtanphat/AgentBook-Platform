@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -31,6 +32,8 @@ class ClaimVerifier:
     # Only match numbers >= 10 or decimals/percentages to avoid false positives
     # from list ordinals (1. 2. 3.) and citation markers ([1]).
     NUMBER_PATTERN = re.compile(r"\b(?:[1-9]\d+(?:\.\d+)?%?|\d+\.\d+%?)\b")
+    CITATION_PATTERN = re.compile(r"\[\d+\]")
+    SENTENCE_PATTERN = re.compile(r"[^.!?\n]+[.!?]?")
     NEGATION_PATTERN = re.compile(r"\b(?:not|no|never|khong|không|khong phai|không phải|does not|do not|did not)\b", re.IGNORECASE)
     DIRECTIONAL_PAIRS = [
         (
@@ -53,6 +56,8 @@ class ClaimVerifier:
             nli_enabled = os.getenv("AGENTBOOK_CLAIM_NLI_ENABLED", "").strip().lower() in {"1", "true", "yes"}
         self.nli_enabled = nli_enabled
         self._nli_model = None
+        self._nli_model_load_lock = asyncio.Lock()
+        self._nli_predict_semaphore = asyncio.Semaphore(1)
 
     def verify(self, *, claim: str, evidence: list[EvidenceBlock]) -> ClaimVerificationResult:
         if not evidence:
@@ -62,10 +67,91 @@ class ClaimVerifier:
                 was_refused=True,
                 refusal_reason="no evidence available to verify the claim",
             )
+        if self.nli_enabled:
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                return asyncio.run(self._verify_atomic_claims_async(claim=claim, evidence=evidence))
+        return self._verify_atomic_claims(claim=claim, evidence=evidence)
+
+    async def averify(self, *, claim: str, evidence: list[EvidenceBlock]) -> ClaimVerificationResult:
+        if not evidence:
+            return ClaimVerificationResult(
+                verdict=ClaimVerdict.NOT_ENOUGH_EVIDENCE,
+                confidence=0.0,
+                was_refused=True,
+                refusal_reason="no evidence available to verify the claim",
+            )
+        return await self._verify_atomic_claims_async(claim=claim, evidence=evidence)
+
+    def _verify_atomic_claims(self, *, claim: str, evidence: list[EvidenceBlock]) -> ClaimVerificationResult:
+        atomic_claims = self._split_atomic_claims(claim)
+        if not atomic_claims:
+            stripped = self.CITATION_PATTERN.sub("", claim).strip()
+            atomic_claims = [stripped] if stripped else []
+        atomic_claims = self._restore_citation_signal(source=claim, claims=atomic_claims)
+        results = [self._verify_single_claim(claim=item, evidence=evidence) for item in atomic_claims if item]
+        return self._aggregate_atomic_results(results=results, evidence=evidence)
+
+    async def _verify_atomic_claims_async(self, *, claim: str, evidence: list[EvidenceBlock]) -> ClaimVerificationResult:
+        atomic_claims = self._split_atomic_claims(claim)
+        if not atomic_claims:
+            stripped = self.CITATION_PATTERN.sub("", claim).strip()
+            atomic_claims = [stripped] if stripped else []
+        atomic_claims = self._restore_citation_signal(source=claim, claims=atomic_claims)
+        results = [await self._verify_single_claim_async(claim=item, evidence=evidence) for item in atomic_claims if item]
+        return self._aggregate_atomic_results(results=results, evidence=evidence)
+
+    def _aggregate_atomic_results(
+        self,
+        *,
+        results: list[ClaimVerificationResult],
+        evidence: list[EvidenceBlock],
+    ) -> ClaimVerificationResult:
+        if not results:
+            return ClaimVerificationResult(
+                verdict=ClaimVerdict.NOT_ENOUGH_EVIDENCE,
+                citations=evidence,
+                confidence=0.0,
+                was_refused=True,
+                refusal_reason="no verifiable atomic claims found",
+            )
+
+        contradicted = [item for item in results if item.verdict == ClaimVerdict.CONTRADICTED]
+        if contradicted:
+            return ClaimVerificationResult(
+                verdict=ClaimVerdict.CONTRADICTED,
+                corrected_facts=[fact for item in contradicted for fact in item.corrected_facts],
+                citations=self._dedupe_citations([citation for item in contradicted for citation in item.citations]),
+                confidence=max(item.confidence for item in contradicted),
+                was_refused=False,
+            )
+
+        unsupported = [item for item in results if item.verdict == ClaimVerdict.NOT_ENOUGH_EVIDENCE]
+        if unsupported:
+            return ClaimVerificationResult(
+                verdict=ClaimVerdict.NOT_ENOUGH_EVIDENCE,
+                corrected_facts=[fact for item in unsupported for fact in item.corrected_facts],
+                citations=self._dedupe_citations([citation for item in results for citation in item.citations]),
+                confidence=min(item.confidence for item in unsupported),
+                was_refused=True,
+                refusal_reason="one or more atomic claims are not directly supported by the evidence",
+            )
+
+        return ClaimVerificationResult(
+            verdict=ClaimVerdict.SUPPORTED,
+            citations=self._dedupe_citations([citation for item in results for citation in item.citations]),
+            confidence=sum(item.confidence for item in results) / len(results),
+            was_refused=False,
+        )
+
+    def _verify_single_claim(self, *, claim: str, evidence: list[EvidenceBlock]) -> ClaimVerificationResult:
         nli_result = self._verify_nli(claim=claim, evidence=evidence)
         if nli_result is not None:
             return nli_result
+        return self._verify_single_claim_without_nli(claim=claim, evidence=evidence)
 
+    def _verify_single_claim_without_nli(self, *, claim: str, evidence: list[EvidenceBlock]) -> ClaimVerificationResult:
         claim_numbers = set(self.NUMBER_PATTERN.findall(claim))
         evidence_text = "\n".join(item.snippet_original for item in evidence)
         evidence_numbers = set(self.NUMBER_PATTERN.findall(evidence_text))
@@ -79,7 +165,15 @@ class ClaimVerifier:
             )
         claim_terms = self._important_terms(claim)
         evidence_terms = self._important_terms(evidence_text)
-        if claim_terms and len(claim_terms & evidence_terms) >= max(1, min(3, len(claim_terms))):
+        shared_terms = claim_terms & evidence_terms
+        if self.CITATION_PATTERN.search(claim) and len(shared_terms) >= 2:
+            return ClaimVerificationResult(
+                verdict=ClaimVerdict.SUPPORTED,
+                citations=evidence,
+                confidence=0.58,
+                was_refused=False,
+            )
+        if claim_terms and len(shared_terms) >= max(1, min(3, len(claim_terms))):
             return ClaimVerificationResult(
                 verdict=ClaimVerdict.SUPPORTED,
                 citations=evidence,
@@ -94,26 +188,56 @@ class ClaimVerifier:
             refusal_reason="evidence does not directly support or contradict the claim",
         )
 
-    def _verify_nli(self, *, claim: str, evidence: list[EvidenceBlock]) -> ClaimVerificationResult | None:
-        if not self.nli_enabled:
-            return None
-        model = self._load_nli_model()
-        if model is None:
-            return None
-        evidence_ranked = sorted(
-            evidence,
-            key=lambda item: len(self._important_terms(claim) & self._important_terms(item.snippet_original)),
-            reverse=True,
-        )[:5]
-        if not evidence_ranked:
-            return None
-        pairs = [(item.snippet_original, claim) for item in evidence_ranked]
-        try:
-            raw_scores = model.predict(pairs)
-        except Exception as exc:
-            logger.warning("NLI claim verification failed", extra={"error": str(exc), "error_type": type(exc).__name__})
-            return None
+    async def _verify_single_claim_async(self, *, claim: str, evidence: list[EvidenceBlock]) -> ClaimVerificationResult:
+        nli_result = await self._verify_nli_async(claim=claim, evidence=evidence)
+        if nli_result is not None:
+            return nli_result
+        return self._verify_single_claim_without_nli(claim=claim, evidence=evidence)
 
+    @classmethod
+    def _split_atomic_claims(cls, text: str) -> list[str]:
+        cleaned = cls.CITATION_PATTERN.sub("", text or "")
+        cleaned = re.sub(r"\[[^\]]*(?:source|nguồn|nguá»“n)[^\]]*\]", "", cleaned, flags=re.IGNORECASE)
+        claims: list[str] = []
+        for sentence in cls.SENTENCE_PATTERN.findall(cleaned):
+            item = sentence.strip().strip("-*• ")
+            if len(item) < 12 or item.startswith(">"):
+                continue
+            claims.append(item)
+        return claims
+
+    @classmethod
+    def _restore_citation_signal(cls, *, source: str, claims: list[str]) -> list[str]:
+        match = cls.CITATION_PATTERN.search(source or "")
+        if match is None:
+            return claims
+        citation = match.group(0)
+        return [claim if cls.CITATION_PATTERN.search(claim) else f"{claim} {citation}" for claim in claims]
+
+    @staticmethod
+    def _dedupe_citations(citations: list[EvidenceBlock]) -> list[EvidenceBlock]:
+        deduped: list[EvidenceBlock] = []
+        seen: set[tuple[str, int | None, str | None]] = set()
+        for citation in citations:
+            key = (citation.material_id, citation.page, citation.block_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(citation)
+        return deduped
+
+    def _verify_nli(self, *, claim: str, evidence: list[EvidenceBlock]) -> ClaimVerificationResult | None:
+        if self.nli_enabled:
+            logger.debug("NLI verifier skipped in sync verify(); use averify() for semaphore-guarded NLI execution.")
+        return None
+
+    def _nli_result_from_scores(
+        self,
+        *,
+        model,
+        raw_scores,
+        evidence_ranked: list[EvidenceBlock],
+    ) -> ClaimVerificationResult | None:
         rows = raw_scores.tolist() if hasattr(raw_scores, "tolist") else raw_scores
         if rows and isinstance(rows[0], (float, int)):
             rows = [rows]
@@ -148,6 +272,40 @@ class ClaimVerifier:
             )
         return None
 
+    async def _verify_nli_async(self, *, claim: str, evidence: list[EvidenceBlock]) -> ClaimVerificationResult | None:
+        if not self.nli_enabled:
+            return None
+        model = await self._aload_nli_model()
+        if model is None:
+            return None
+        evidence_ranked = self._rank_evidence_for_claim(claim=claim, evidence=evidence)
+        if not evidence_ranked:
+            return None
+        pairs = [(item.snippet_original, claim) for item in evidence_ranked]
+        try:
+            async with self._nli_predict_semaphore:
+                raw_scores = await asyncio.to_thread(model.predict, pairs)
+        except Exception as exc:
+            logger.warning("NLI claim verification failed", extra={"error": str(exc), "error_type": type(exc).__name__})
+            return None
+        return self._nli_result_from_scores(model=model, raw_scores=raw_scores, evidence_ranked=evidence_ranked)
+
+    async def _aload_nli_model(self):
+        if self._nli_model is not None:
+            return self._nli_model
+        async with self._nli_model_load_lock:
+            if self._nli_model is None:
+                await asyncio.to_thread(self._load_nli_model)
+            return self._nli_model
+
+    def _rank_evidence_for_claim(self, *, claim: str, evidence: list[EvidenceBlock]) -> list[EvidenceBlock]:
+        claim_terms = self._important_terms(claim)
+        return sorted(
+            evidence,
+            key=lambda item: len(claim_terms & self._important_terms(item.snippet_original)),
+            reverse=True,
+        )[:5]
+
     def _load_nli_model(self):
         if self._nli_model is not None:
             return self._nli_model
@@ -173,7 +331,14 @@ class ClaimVerifier:
     @staticmethod
     def _important_terms(text: str) -> set[str]:
         stopwords = {"the", "and", "or", "is", "are", "la", "là", "va", "và", "cua", "của", "trong", "khong", "không"}
-        return {token.lower() for token in re.findall(r"[\w\-]{4,}", text, flags=re.UNICODE) if token.lower() not in stopwords}
+        terms: set[str] = set()
+        for token in re.findall(r"[\w\-]{4,}", text, flags=re.UNICODE):
+            normalized = token.lower()
+            if len(normalized) > 4 and normalized.endswith("s"):
+                normalized = normalized[:-1]
+            if normalized not in stopwords:
+                terms.add(normalized)
+        return terms
 
     @classmethod
     def _semantic_contradiction(cls, *, claim: str, evidence_text: str) -> bool:

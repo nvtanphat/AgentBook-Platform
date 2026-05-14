@@ -68,3 +68,38 @@ class SmartReranker:
             limit=limit,
             use_mmr=use_mmr,
         )
+
+    async def arerank(self, *, query: str, chunks: list["RetrievedChunk"], limit: int | None = None):
+        """Async conditional reranking for request handlers."""
+        if not self.should_rerank(chunks):
+            return chunks[:limit or len(chunks)]
+
+        if hasattr(self.base_reranker, "arerank"):
+            return await self.base_reranker.arerank(query=query, chunks=chunks, limit=limit)
+        return self.base_reranker.rerank(query=query, chunks=chunks, limit=limit)
+
+    async def arerank_multilingual(
+        self,
+        *,
+        queries: list[str],
+        chunks: list["RetrievedChunk"],
+        limit: int | None = None,
+        use_mmr: bool = False,
+    ):
+        """Async conditional multilingual reranking for request handlers."""
+        if not self.should_rerank(chunks):
+            return chunks[:limit or len(chunks)]
+
+        if hasattr(self.base_reranker, "arerank_multilingual"):
+            return await self.base_reranker.arerank_multilingual(
+                queries=queries,
+                chunks=chunks,
+                limit=limit,
+                use_mmr=use_mmr,
+            )
+        return self.base_reranker.rerank_multilingual(
+            queries=queries,
+            chunks=chunks,
+            limit=limit,
+            use_mmr=use_mmr,
+        )

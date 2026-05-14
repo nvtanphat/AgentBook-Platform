@@ -4,12 +4,14 @@ import asyncio
 import json
 import logging
 import re
+import unicodedata
 from time import perf_counter
 from typing import AsyncGenerator, cast
 
 from src.agentic.service import AgenticRagService
 from beanie import PydanticObjectId
 
+from src.core.background import spawn_background_task
 from src.core.config import Settings
 from src.inference.confidence_scorer import ConfidenceScorer
 from src.inference.inference_engine import InferenceEngine
@@ -23,6 +25,7 @@ from src.rag.reranker import CrossEncoderReranker
 from src.rag.retriever import HybridRetriever
 from src.rag.types import RetrievalScope
 from src.rag.vector_store import get_qdrant_client_for_settings
+from src.guardrails.claim_verifier import ClaimVerdict
 from src.guardrails.contradiction_detector import ContradictionDetector
 from src.schemas.query import (
     CompareMatrixCell,
@@ -73,12 +76,13 @@ class QueryService:
         scope.ensure_scoped()
         conversation_id = self._conversation_id(request.conversation_id)
         memory_context = await self.memory_service.build_context(scope=scope, conversation_id=conversation_id)
+        effective_query = self._resolve_lightweight_anaphora(request.query, memory_context)
         started = perf_counter()
         flags = request.rag_flags
         use_agentic = flags.get("agentic_rag_enabled", self.settings.agentic_rag_enabled)
         if use_agentic:
             response = await self.agentic_rag.answer(
-                query=request.query,
+                query=effective_query,
                 scope=scope,
                 top_k=request.top_k,
                 answer_language=request.answer_language,
@@ -86,7 +90,7 @@ class QueryService:
             )
         else:
             response = await self.inference_engine.answer(
-                query=request.query,
+                query=effective_query,
                 scope=scope,
                 top_k=request.top_k,
                 answer_language=request.answer_language,
@@ -95,8 +99,9 @@ class QueryService:
             )
         latency_ms = int((perf_counter() - started) * 1000)
         await self._log_query(request=request, response=response, latency_ms=latency_ms)
-        asyncio.create_task(
-            self.memory_service.update_after_query(scope=scope, conversation_id=conversation_id)
+        spawn_background_task(
+            self.memory_service.update_after_query(scope=scope, conversation_id=conversation_id),
+            name="memory-update-after-query",
         )
         return response
 
@@ -105,6 +110,7 @@ class QueryService:
         scope.ensure_scoped()
         conversation_id = self._conversation_id(request.conversation_id)
         memory_context = await self.memory_service.build_context(scope=scope, conversation_id=conversation_id)
+        effective_query = self._resolve_lightweight_anaphora(request.query, memory_context)
         started = perf_counter()
         final_response: QueryResponse | None = None
 
@@ -117,7 +123,7 @@ class QueryService:
             async def run_agentic() -> None:
                 try:
                     response = await self.agentic_rag.answer(
-                        query=request.query,
+                        query=effective_query,
                         scope=scope,
                         top_k=request.top_k,
                         answer_language=request.answer_language,
@@ -126,9 +132,10 @@ class QueryService:
                     )
                     await queue.put(("done", response))
                 except Exception as exc:
-                    await queue.put(("error", f"Server error: {type(exc).__name__}"))
+                    logger.exception("Agentic streaming query failed", extra={"owner_id": request.owner_id})
+                    await queue.put(("error", "Query pipeline failed. Please retry later."))
 
-            task = asyncio.create_task(run_agentic())
+            task = spawn_background_task(run_agentic(), name="agentic-stream-answer")
             try:
                 while True:
                     event_type, payload = await queue.get()
@@ -152,7 +159,7 @@ class QueryService:
         else:
             _DONE_PREFIX = "event: done\ndata: "
             async for chunk in self.inference_engine.answer_stream(
-                query=request.query,
+                query=effective_query,
                 scope=scope,
                 top_k=request.top_k,
                 answer_language=request.answer_language,
@@ -168,11 +175,13 @@ class QueryService:
 
         latency_ms = int((perf_counter() - started) * 1000)
         if final_response is not None:
-            asyncio.create_task(
-                self._log_query(request=request, response=final_response, latency_ms=latency_ms)
+            spawn_background_task(
+                self._log_query(request=request, response=final_response, latency_ms=latency_ms),
+                name="stream-query-log",
             )
-        asyncio.create_task(
-            self.memory_service.update_after_query(scope=scope, conversation_id=conversation_id)
+        spawn_background_task(
+            self.memory_service.update_after_query(scope=scope, conversation_id=conversation_id),
+            name="stream-memory-update",
         )
 
     async def compare(self, request: CompareRequest) -> CompareResponse:
@@ -502,7 +511,9 @@ class QueryService:
         _LANG_NAMES = {"vi": "tiếng Việt", "en": "English"}
         lang_name = _LANG_NAMES.get(answer_language, answer_language)
         evidence = self.response_parser.format_evidence_for_prompt(chunks)
+        evidence_safety = self.inference_engine._evidence_safety_rules()
         prompt = (
+            f"{evidence_safety}\n\n"
             f"Bạn là Noelys, trợ lý tri thức học tập của Noelys.\n"
             f"Dựa trên BẰNG CHỨNG bên dưới, trả lời ngắn gọn (1-3 câu) bằng {lang_name}:\n"
             f"Về chủ đề '{topic}', khía cạnh '{dimension}' là gì?\n\n"
@@ -512,7 +523,14 @@ class QueryService:
         )
         try:
             answer = await self.inference_engine.llm.generate(prompt=prompt)
-            return answer.strip() or chunks[0].content
+            answer = self.response_parser.inject_citations(answer.strip(), chunks)
+            verification = await self.inference_engine.claim_verifier.averify(
+                claim=answer,
+                evidence=[evidence for chunk in chunks for evidence in chunk.evidence],
+            )
+            if verification.verdict in {ClaimVerdict.CONTRADICTED, ClaimVerdict.NOT_ENOUGH_EVIDENCE}:
+                return "KhÃ´ng tÃ¬m tháº¥y thÃ´ng tin vá» khÃ­a cáº¡nh nÃ y."
+            return answer or chunks[0].content
         except Exception:
             return chunks[0].content
 
@@ -566,9 +584,34 @@ class QueryService:
         text = " ".join((value or "default").split())
         return text[:128] or "default"
 
+    _ANAPHORA_START_RE = re.compile(
+        r"^(it|this|that|they|them|the former|the latter|"
+        r"no|chung|ho|day|do|dieu nay|dieu do|cai nay|cai do)\b",
+        re.IGNORECASE,
+    )
+    _RECENT_USER_RE = re.compile(r"-\s*(?:Người dùng|Nguoi dung|User):\s*(.+?)(?=\s+-\s*(?:Trợ lý|Tro ly|Assistant):|$)", re.IGNORECASE)
+
+    @classmethod
+    def _resolve_lightweight_anaphora(cls, query: str, memory_context: str) -> str:
+        """Make short follow-up questions retrievable without an extra LLM call."""
+        normalized_query = cls._ascii_fold(query.strip())
+        if not memory_context.strip() or not cls._ANAPHORA_START_RE.search(normalized_query):
+            return query
+        previous_queries = [item.strip() for item in cls._RECENT_USER_RE.findall(memory_context) if item.strip()]
+        if not previous_queries:
+            return query
+        previous = previous_queries[-1]
+        if cls._ascii_fold(previous) == normalized_query:
+            return query
+        return f"{previous}\nFollow-up question: {query}"
+
+    @staticmethod
+    def _ascii_fold(value: str) -> str:
+        normalized = unicodedata.normalize("NFD", value.lower())
+        return "".join(char for char in normalized if unicodedata.category(char) != "Mn").replace("đ", "d")
+
     @staticmethod
     def _to_query_log_bbox(bbox) -> BoundingBox | None:
         if bbox is None:
             return None
         return BoundingBox(x1=bbox.x1, y1=bbox.y1, x2=bbox.x2, y2=bbox.y2)
-

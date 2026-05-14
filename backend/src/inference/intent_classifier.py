@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from enum import Enum
 
 from src.core.base_llm import BaseLLM
@@ -29,6 +30,15 @@ _DOMAIN_SIGNALS = re.compile(
 )
 
 _QUESTION_MARK = re.compile(r"[?？]")
+_REAL_TIME_OFF_TOPIC_RE = re.compile(
+    r"\b("
+    r"weather|forecast|temperature|rain|raining|sunny|"
+    r"thoi tiet|du bao thoi tiet|nhiet do|troi mua|"
+    r"stock price|gia vang|ty gia|exchange rate|"
+    r"current news|tin tuc|thoi su"
+    r")\b",
+    re.IGNORECASE,
+)
 
 _CLASSIFY_PROMPT = """\
 Bạn là classifier cho hệ thống hỏi đáp tài liệu học tập Noelys.
@@ -81,6 +91,9 @@ class IntentClassifier:
     @staticmethod
     def _heuristic(query: str) -> QueryIntent | None:
         text = query.strip()
+        normalized = IntentClassifier._ascii_fold(text)
+        if _REAL_TIME_OFF_TOPIC_RE.search(normalized):
+            return QueryIntent.OFF_TOPIC
         tokens = text.split()
         n = len(tokens)
         has_question = _QUESTION_MARK.search(text) is not None
@@ -96,6 +109,11 @@ class IntentClassifier:
             return QueryIntent.OFF_TOPIC
 
         return None
+
+    @staticmethod
+    def _ascii_fold(value: str) -> str:
+        normalized = unicodedata.normalize("NFD", value.lower())
+        return "".join(char for char in normalized if unicodedata.category(char) != "Mn").replace("đ", "d")
 
     async def _llm_classify(self, query: str) -> QueryIntent:
         prompt = _CLASSIFY_PROMPT.format(query=query[:300])

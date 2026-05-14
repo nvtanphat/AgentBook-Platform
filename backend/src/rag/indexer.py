@@ -31,6 +31,8 @@ class QdrantMongoIndexer:
         self.settings = settings
         self.qdrant_client = qdrant_client
         self.embedder = embedder or BGEM3Embedder(settings)
+        self._embedding_semaphore = asyncio.Semaphore(1)
+        self._qdrant_semaphore = asyncio.Semaphore(4)
 
     async def index(
         self,
@@ -43,7 +45,7 @@ class QdrantMongoIndexer:
     ) -> list[Chunk]:
         material_ids = _collect_material_ids(chunks=chunks, entities=entities, events=events, relations=relations)
         if material_ids:
-            self._ensure_collection()
+            await self._ensure_collection_async()
             await self._cleanup_existing_material_artifacts(material_ids)
         stored_chunks: list[Chunk] = []
         if chunks:
@@ -55,7 +57,7 @@ class QdrantMongoIndexer:
                     "collection": self.settings.qdrant_collection_name,
                 },
             )
-            self._ensure_collection()
+            await self._ensure_collection_async()
             for batch_number, chunk_batch in enumerate(
                 batched(chunks, max(1, self.settings.index_batch_size)),
                 start=1,
@@ -63,13 +65,14 @@ class QdrantMongoIndexer:
                 if should_continue is not None and not await should_continue():
                     raise LookupError("Indexing aborted because the material no longer exists")
                 embed_texts = [chunk.contextualized_content or chunk.content for chunk in chunk_batch]
-                embeddings = await asyncio.to_thread(self.embedder.encode, embed_texts)
+                async with self._embedding_semaphore:
+                    embeddings = await asyncio.to_thread(self.embedder.encode, embed_texts)
                 if should_continue is not None and not await should_continue():
                     raise LookupError("Indexing aborted because the material no longer exists")
                 batch_stored_chunks = await self._store_chunks(chunk_batch)
                 if should_continue is not None and not await should_continue():
                     raise LookupError("Indexing aborted because the material no longer exists")
-                self._upsert_qdrant(batch_stored_chunks, chunk_batch, embeddings)
+                await self._upsert_qdrant_async(batch_stored_chunks, chunk_batch, embeddings)
                 stored_chunks.extend(batch_stored_chunks)
                 logger.info(
                     "Indexed chunk batch",
@@ -86,6 +89,19 @@ class QdrantMongoIndexer:
         await self._store_graph(entities=entities, events=events, relations=relations)
         return stored_chunks
 
+    async def _ensure_collection_async(self) -> None:
+        async with self._qdrant_semaphore:
+            await asyncio.to_thread(self._ensure_collection)
+
+    async def _upsert_qdrant_async(
+        self,
+        stored_chunks: list[Chunk],
+        chunks: list[TextChunk],
+        embeddings: list[EmbeddedText],
+    ) -> None:
+        async with self._qdrant_semaphore:
+            await asyncio.to_thread(self._upsert_qdrant, stored_chunks, chunks, embeddings)
+
     async def _cleanup_existing_material_artifacts(self, material_ids: set[str]) -> None:
         material_oids = []
         for material_id in material_ids:
@@ -99,20 +115,22 @@ class QdrantMongoIndexer:
             await Event.find({"evidence_refs.material_id": {"$in": material_oids}}).delete()
             await Relation.find({"evidence_refs.material_id": {"$in": material_oids}}).delete()
         try:
-            self.qdrant_client.delete(
-                collection_name=self.settings.qdrant_collection_name,
-                points_selector=models.FilterSelector(
-                    filter=models.Filter(
-                        must=[
-                            models.FieldCondition(
-                                key="material_id",
-                                match=models.MatchAny(any=list(material_ids)),
-                            )
-                        ]
-                    )
-                ),
-                wait=True,
-            )
+            async with self._qdrant_semaphore:
+                await asyncio.to_thread(
+                    self.qdrant_client.delete,
+                    collection_name=self.settings.qdrant_collection_name,
+                    points_selector=models.FilterSelector(
+                        filter=models.Filter(
+                            must=[
+                                models.FieldCondition(
+                                    key="material_id",
+                                    match=models.MatchAny(any=list(material_ids)),
+                                )
+                            ]
+                        )
+                    ),
+                    wait=True,
+                )
         except Exception as exc:
             logger.debug(
                 "Qdrant cleanup before re-index failed or collection is empty",

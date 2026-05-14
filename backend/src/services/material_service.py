@@ -8,6 +8,7 @@ from uuid import uuid4
 from beanie import PydanticObjectId
 from qdrant_client import QdrantClient, models as qdrant_models
 
+from src.core.background import spawn_background_task
 from src.core.config import Settings
 from src.core.security import (
     ensure_child_path,
@@ -233,7 +234,7 @@ class MaterialService:
         target_dir.mkdir(parents=True, exist_ok=True)
         target_path = ensure_child_path(root, target_dir / filename)
         target_path.write_bytes(payload)
-        return str(target_path.relative_to(root.parent)).replace("\\", "/")
+        return str(target_path.relative_to(self.settings.data_dir)).replace("\\", "/")
 
     def _move_raw_file(
         self,
@@ -252,7 +253,7 @@ class MaterialService:
         target_dir.mkdir(parents=True, exist_ok=True)
         target_path = ensure_child_path(root, target_dir / filename)
         temp_path.replace(target_path)
-        return str(target_path.relative_to(root.parent)).replace("\\", "/")
+        return str(target_path.relative_to(self.settings.data_dir)).replace("\\", "/")
 
     @staticmethod
     async def _mark_enqueue_failed(*, material: Material, job: PipelineJob, error: str) -> None:
@@ -270,7 +271,6 @@ class MaterialService:
 
     async def _enqueue_parse_index(self, *, material_id: str, job_id: str) -> None:
         if self.settings.celery_task_always_eager:
-            import asyncio
             from src.services.parse_index_pipeline import ParseIndexPipeline
 
             async def _run_bg() -> None:
@@ -285,7 +285,7 @@ class MaterialService:
                             extra={"material_id": material_id, "job_id": job_id},
                         )
 
-            asyncio.create_task(_run_bg())
+            spawn_background_task(_run_bg(), name="parse-index-eager")
             return
 
         try:
@@ -298,6 +298,7 @@ class MaterialService:
                 "Set AGENTBOOK_CELERY_TASK_ALWAYS_EAGER=true to run synchronously without a broker.",
                 extra={"material_id": material_id, "job_id": job_id, "error": str(exc)},
             )
+            raise
 
     async def retry_material(self, *, material_id: str, owner_id: str) -> dict:
         try:
@@ -327,7 +328,15 @@ class MaterialService:
             stage=PipelineStatus.UPLOADED.value,
         )
         await job.insert()
-        await self._enqueue_parse_index(material_id=str(material.id), job_id=job.job_id)
+        try:
+            await self._enqueue_parse_index(material_id=str(material.id), job_id=job.job_id)
+        except Exception:
+            logger.exception(
+                "Failed to enqueue parse/index retry",
+                extra={"material_id": str(material.id), "job_id": job.job_id},
+            )
+            await self._mark_enqueue_failed(material=material, job=job, error="Failed to enqueue parse/index retry")
+            raise
         return {"material_id": material_id, "job_id": job.job_id, "status": material.status}
 
     async def delete_material(self, *, material_id: str, owner_id: str) -> dict[str, int]:
@@ -361,12 +370,7 @@ class MaterialService:
             logger.warning("Qdrant delete failed for material", extra={"material_id": material_id, "error": str(exc)})
 
         # Delete raw file from disk
-        if material.storage_path:
-            raw_file = self.settings.raw_data_dir.parent / material.storage_path
-            try:
-                raw_file.unlink(missing_ok=True)
-            except Exception:
-                pass
+        self._delete_data_file(material.storage_path)
 
         # Delete parsed JSON artifact (processed data) from disk
         self._delete_data_file(material.extra_metadata.get("parsed_artifact_path"))
@@ -432,12 +436,7 @@ class MaterialService:
         # Delete raw files and parsed JSON artifacts from disk
         materials = await Material.find(Material.collection_id == cid, Material.owner_id == owner_id).to_list()
         for material in materials:
-            if material.storage_path:
-                raw_file = self.settings.raw_data_dir.parent / material.storage_path
-                try:
-                    raw_file.unlink(missing_ok=True)
-                except Exception:
-                    pass
+            self._delete_data_file(material.storage_path)
             self._delete_data_file(material.extra_metadata.get("parsed_artifact_path"))
 
         # Delete MongoDB documents

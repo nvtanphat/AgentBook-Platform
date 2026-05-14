@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 
 from beanie.operators import In
@@ -17,6 +18,7 @@ from src.schemas.common import APIResponse
 from src.services.material_service import MaterialService
 
 router = APIRouter(prefix="/collections", tags=["collections"])
+logger = logging.getLogger(__name__)
 
 
 def _empty_summary(collection: KnowledgeCollection) -> CollectionSummary:
@@ -214,7 +216,9 @@ async def delete_collection(
     try:
         counts = await service.delete_collection(collection_id=collection_id, owner_id=owner_id)
     except LookupError as exc:
-        return APIResponse(success=False, message=str(exc), data=None, error=str(exc))
+        logger.exception("Collection deletion failed", extra={"owner_id": owner_id, "collection_id": collection_id})
+        return APIResponse(success=False, message="Collection deletion failed. Please retry later.", data=None, error="Collection deletion failed.")
     except ValueError as exc:
-        return APIResponse(success=False, message=str(exc), data=None, error=str(exc))
+        logger.exception("Invalid collection deletion request", extra={"owner_id": owner_id, "collection_id": collection_id})
+        return APIResponse(success=False, message="Invalid collection deletion request.", data=None, error="Invalid collection deletion request.")
     return APIResponse(success=True, message="Collection deleted successfully", data=counts, error=None)

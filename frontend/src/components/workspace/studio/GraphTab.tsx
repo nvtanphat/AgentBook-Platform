@@ -340,6 +340,15 @@ type SelectedRelation = {
 // ─── Color map (mirrors GraphCanvas) ─────────────────────────────────────────
 
 const TYPE_COLORS: Record<string, { bg: string; border: string; text: string }> = {
+  // Core entity types (from new LLM extractor)
+  model:        { bg: "#e0f2fe", border: "#0284c7", text: "#0369a1" },
+  algorithm:    { bg: "#f0fdf4", border: "#22c55e", text: "#15803d" },
+  metric:       { bg: "#fef9c3", border: "#ca8a04", text: "#92400e" },
+  dataset:      { bg: "#fdf4ff", border: "#a855f7", text: "#7e22ce" },
+  framework:    { bg: "#cffafe", border: "#06b6d4", text: "#155e75" },
+  author:       { bg: "#ede9fe", border: "#8b5cf6", text: "#6d28d9" },
+  field:        { bg: "#fff1f2", border: "#f43f5e", text: "#9f1239" },
+  // Legacy / general types
   concept:      { bg: "#dbeafe", border: "#3b82f6", text: "#1d4ed8" },
   person:       { bg: "#ede9fe", border: "#8b5cf6", text: "#6d28d9" },
   event:        { bg: "#d1fae5", border: "#10b981", text: "#065f46" },
@@ -353,16 +362,23 @@ const TYPE_COLORS: Record<string, { bg: string; border: string; text: string }> 
 };
 
 const MINDMAP_TYPE_LABELS: Record<string, string> = {
-  concept: "Khái niệm",
-  technology: "Công nghệ",
-  method: "Phương pháp",
-  person: "Nhân vật",
+  model:        "Mô hình AI/ML",
+  algorithm:    "Thuật toán",
+  metric:       "Độ đo",
+  dataset:      "Bộ dữ liệu",
+  framework:    "Framework",
+  author:       "Tác giả",
+  field:        "Lĩnh vực",
+  concept:      "Khái niệm",
+  technology:   "Công nghệ",
+  method:       "Phương pháp",
+  person:       "Nhân vật",
   organization: "Tổ chức",
-  org: "Tổ chức",
-  location: "Địa điểm",
-  event: "Sự kiện",
-  date: "Mốc thời gian",
-  entity: "Thực thể",
+  org:          "Tổ chức",
+  location:     "Địa điểm",
+  event:        "Sự kiện",
+  date:         "Mốc thời gian",
+  entity:       "Thực thể",
 };
 
 function displayMindmapType(typeName: string) {
@@ -374,7 +390,7 @@ function typeColor(type: string) {
   return TYPE_COLORS[key] ?? { bg: "#f1f5f9", border: "#94a3b8", text: "#475569" };
 }
 
-const LEGEND_TYPES = ["concept", "technology", "method", "person", "organization", "location"] as const;
+const LEGEND_TYPES = ["model", "algorithm", "metric", "dataset", "framework", "concept", "organization", "author"] as const;
 
 // ─── Node info card ───────────────────────────────────────────────────────────
 

@@ -22,16 +22,16 @@ class ReasoningStep(BaseModel):
 
 
 class QueryRequest(BaseModel):
-    owner_id: str = Field(min_length=1)
+    owner_id: str = Field(min_length=1, max_length=128)
     collection_id: str | None = None
-    material_ids: list[str] = Field(default_factory=list)
-    conversation_id: str = "default"
-    query: str = Field(min_length=1)
-    top_k: int | None = None
+    material_ids: list[str] = Field(default_factory=list, max_length=50)
+    conversation_id: str = Field(default="default", min_length=1, max_length=128)
+    query: str = Field(min_length=1, max_length=4000)
+    top_k: int | None = Field(default=None, ge=1, le=20)
     answer_language: str | None = None
     # Per-request technique overrides for ablation testing.
     # Keys: reranker_enabled, agentic_rag_enabled
-    rag_flags: dict[str, bool] = Field(default_factory=dict)
+    rag_flags: dict[Literal["reranker_enabled", "agentic_rag_enabled"], bool] = Field(default_factory=dict)
 
 
 class QueryResponse(BaseModel):
@@ -93,12 +93,12 @@ class AgentTrace(BaseModel):
 
 
 class CompareRequest(BaseModel):
-    owner_id: str = Field(min_length=1)
+    owner_id: str = Field(min_length=1, max_length=128)
     collection_id: str | None = None
-    material_ids: list[str] = Field(default_factory=list)
-    topic: str = Field(min_length=1)
-    dimensions: list[str] = Field(default_factory=lambda: ["definition", "intuition", "example", "limitation"])
-    top_k: int | None = None
+    material_ids: list[str] = Field(default_factory=list, max_length=50)
+    topic: str = Field(min_length=1, max_length=1000)
+    dimensions: list[str] = Field(default_factory=lambda: ["definition", "intuition", "example", "limitation"], max_length=12)
+    top_k: int | None = Field(default=None, ge=1, le=20)
     answer_language: str = "vi"
 
 
@@ -145,12 +145,12 @@ class CompareResponse(BaseModel):
 
 
 class SummaryRequest(BaseModel):
-    owner_id: str = Field(min_length=1)
+    owner_id: str = Field(min_length=1, max_length=128)
     collection_id: str | None = None
     material_id: str | None = None
-    material_ids: list[str] = Field(default_factory=list)
-    scope: str = "document"
-    top_k: int | None = None
+    material_ids: list[str] = Field(default_factory=list, max_length=50)
+    scope: str = Field(default="document", min_length=1, max_length=64)
+    top_k: int | None = Field(default=None, ge=1, le=20)
     answer_language: str = "vi"
 
 
@@ -164,12 +164,12 @@ class SummaryResponse(BaseModel):
 
 
 class StudyGuideRequest(BaseModel):
-    owner_id: str = Field(min_length=1)
+    owner_id: str = Field(min_length=1, max_length=128)
     collection_id: str | None = None
     material_id: str | None = None
-    scope: str = "collection"
-    format: str = "outline"
-    top_k: int | None = None
+    scope: str = Field(default="collection", min_length=1, max_length=64)
+    format: str = Field(default="outline", min_length=1, max_length=64)
+    top_k: int | None = Field(default=None, ge=1, le=20)
     answer_language: str = "vi"
 
 

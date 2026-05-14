@@ -47,17 +47,12 @@ export default function AppShell() {
       {/* ── Premium Header ── */}
       <header className="app-header flex h-14 shrink-0 items-center justify-between px-5">
         <div className="flex items-center gap-3">
-          {/* Logo */}
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg" style={{ background: 'linear-gradient(135deg, #006591 0%, #0ea5e9 100%)' }}>
-            <svg
-              className="w-5 h-5 text-white"
-              viewBox="0 0 24 24"
-              fill="none"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <path d="M5 18V6L19 18V6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
-              <path d="M7 20H17" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"/>
+          {/* Premium Vector Logo */}
+          <div className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-[11px] bg-gradient-to-br from-[#006591] via-[#0ea5e9] to-[#14b8a6] shadow-[0_4px_12px_rgba(14,165,233,0.3)] border border-white/20">
+            <svg className="w-[20px] h-[20px] text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M5 21V5a2 2 0 0 1 2-2h1l8 14h1a2 2 0 0 0 2-2V3" />
             </svg>
+            <div className="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-white animate-pulse" />
           </div>
           <div>
             <h1 className="font-heading text-[15px] font-bold leading-tight text-text tracking-tight">Noelys</h1>

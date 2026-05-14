@@ -31,10 +31,10 @@ class AdminMetricsResponse(BaseModel):
 
 
 class FeedbackRequest(BaseModel):
-    owner_id: str = Field(min_length=1)
-    query_log_id: str = Field(min_length=1)
-    rating: str = Field(min_length=1)
-    comment: str | None = None
+    owner_id: str = Field(min_length=1, max_length=128)
+    query_log_id: str = Field(min_length=1, max_length=64)
+    rating: str = Field(min_length=1, max_length=32)
+    comment: str | None = Field(default=None, max_length=2000)
 
 
 class FeedbackResponse(BaseModel):

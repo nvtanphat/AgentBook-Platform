@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 from beanie import PydanticObjectId
 
 from src.core.config import Settings
+from src.core.model_factory import build_llm
 from src.models.common import PipelineStatus, utc_now
 from src.models.material import Material, replace_material_pages
 from src.models.pipeline_job import PipelineJob
@@ -65,7 +66,8 @@ class ParseIndexPipeline:
         self.handwriting_reader = handwriting_reader or HandwritingReader(settings=settings)
         self.normalizer = normalizer or LayoutNormalizer()
         self.evidence_mapper = evidence_mapper or EvidenceMapper()
-        self.entity_extractor = entity_extractor or EntityExtractor()
+        _llm = build_llm(settings)
+        self.entity_extractor = entity_extractor or EntityExtractor(llm=_llm)
         self.entity_resolver = entity_resolver or EntityResolver()
         self.event_extractor = event_extractor or EventExtractor()
         self.cross_modal_linker = cross_modal_linker or CrossModalLinker()
@@ -120,10 +122,13 @@ class ParseIndexPipeline:
                 document_name=material.original_name,
             )
             chunker = self._resolve_chunker()
-            chunks = chunker.build_chunks(evidence_map)
+            if isinstance(chunker, SemanticChunker):
+                chunks = await chunker.build_chunks_async(evidence_map)
+            else:
+                chunks = chunker.build_chunks(evidence_map)
             chunks = [c for c in chunks if len((c.content or "").strip()) >= 50]
             run_chunk_qa(chunks, material_id=str(material.id))
-            entities = self.entity_resolver.resolve(self.entity_extractor.extract(evidence_map))
+            entities = self.entity_resolver.resolve(await self.entity_extractor.extract_async(evidence_map))
             events, relations = self.event_extractor.extract(evidence_map, entities)
             cm_entities, cm_relations = self.cross_modal_linker.link(evidence_map, entities)
             entities = list(entities) + cm_entities
@@ -182,12 +187,27 @@ class ParseIndexPipeline:
             logger.critical(
                 "Pipeline OOM - process may be unstable; reduce batch sizes or free RAM",
                 extra={"material_id": material_id, "job_id": job_id, "stage": job.stage},
+                exc_info=True,
             )
-            await self._fail(material=material, job=job, failed_stage=job.stage, error="Out of memory - retry after freeing RAM")
+            await self._fail(
+                material=material,
+                job=job,
+                failed_stage=job.stage,
+                error="The processing pipeline failed. Please retry or inspect server logs.",
+            )
             raise
         except Exception as exc:
             failed_stage = getattr(exc, "failed_stage", None) or job.stage
-            await self._fail(material=material, job=job, failed_stage=failed_stage, error=str(exc))
+            logger.exception(
+                "Parse/index pipeline failed",
+                extra={"material_id": material_id, "job_id": job_id, "stage": failed_stage},
+            )
+            await self._fail(
+                material=material,
+                job=job,
+                failed_stage=failed_stage,
+                error="The processing pipeline failed. Please retry or inspect server logs.",
+            )
             raise
 
     @staticmethod
@@ -529,7 +549,10 @@ class ParseIndexPipeline:
         storage_path = Path(material.storage_path)
         if storage_path.is_absolute():
             return storage_path
-        return self.settings.data_dir / storage_path
+        target = self.settings.data_dir / storage_path
+        if not target.exists():
+            target = self.settings.data_dir.parent / storage_path
+        return target
 
     async def _write_processed_artifacts(self, material: Material, parsed: ParsedDocument) -> None:
         output_dir = self.settings.processed_data_dir / material.owner_id / str(material.collection_id)

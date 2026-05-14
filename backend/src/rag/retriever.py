@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import asyncio
 import re
 import time
 from dataclasses import dataclass, field
@@ -101,16 +102,21 @@ class HybridRetriever:
         self.settings = settings
         self.qdrant_client = qdrant_client
         self.embedder = embedder or BGEM3Embedder(settings)
+        self._embedding_semaphore = asyncio.Semaphore(1)
+        self._qdrant_semaphore = asyncio.Semaphore(4)
 
     async def retrieve(self, *, query: str, scope: RetrievalScope, limit: int | None = None) -> list[RetrievedChunk]:
         scope.ensure_scoped()
         embedding = _get_cached_embedding(query)
         if embedding is None:
-            embeddings = self.embedder.encode([query])
-            if not embeddings:
-                return []
-            embedding = embeddings[0]
-            _set_cached_embedding(query, embedding)
+            async with self._embedding_semaphore:
+                embedding = _get_cached_embedding(query)
+                if embedding is None:
+                    embeddings = await asyncio.to_thread(self.embedder.encode, [query])
+                    if not embeddings:
+                        return []
+                    embedding = embeddings[0]
+                    _set_cached_embedding(query, embedding)
         else:
             logger.debug("Embedding cache hit", extra={"query_preview": query[:60]})
         query_filter = self._scope_filter(scope)
@@ -145,7 +151,7 @@ class HybridRetriever:
                 extra={"owner_id": scope.owner_id, "query_preview": query[:60]},
             )
 
-        semantic_points = self._query_with_rrf(
+        semantic_points = await self._query_with_rrf_async(
             embedding=embedding,
             prefetches=prefetches,
             has_sparse=has_sparse_signal,
@@ -155,7 +161,7 @@ class HybridRetriever:
         lexical_points = (
             []
             if has_sparse_signal and semantic_points
-            else self._lexical_fallback_points(query=query, scope_filter=query_filter, limit=limit or self.settings.rerank_input_k)
+            else await self._lexical_fallback_points_async(query=query, scope_filter=query_filter, limit=limit or self.settings.rerank_input_k)
         )
         if lexical_points:
             points = list(lexical_points)
@@ -164,9 +170,44 @@ class HybridRetriever:
         else:
             points = semantic_points
         hydrated = await self._hydrate_points(points)
-        # Filter out noise chunks (headers, page numbers, titles) with very short content
-        hydrated = [c for c in hydrated if len((c.content or "").strip()) >= 40]
+        # Keep short but meaningful chunks. Ingestion already handles most noise;
+        # a fixed length threshold here can drop valid atomic facts.
+        hydrated = [c for c in hydrated if _has_retrievable_content(c.content)]
         return self._diversify(hydrated, max_per_doc=self.settings.max_chunks_per_doc)
+
+    async def _lexical_fallback_points_async(
+        self,
+        *,
+        query: str,
+        scope_filter: models.Filter,
+        limit: int,
+    ) -> list[models.ScoredPoint]:
+        async with self._qdrant_semaphore:
+            return await asyncio.to_thread(
+                self._lexical_fallback_points,
+                query=query,
+                scope_filter=scope_filter,
+                limit=limit,
+            )
+
+    async def _query_with_rrf_async(
+        self,
+        *,
+        embedding,
+        prefetches: list[models.Prefetch],
+        has_sparse: bool,
+        query_filter: models.Filter,
+        limit: int,
+    ) -> list[models.ScoredPoint]:
+        async with self._qdrant_semaphore:
+            return await asyncio.to_thread(
+                self._query_with_rrf,
+                embedding=embedding,
+                prefetches=prefetches,
+                has_sparse=has_sparse,
+                query_filter=query_filter,
+                limit=limit,
+            )
 
     def _lexical_fallback_points(
         self,
@@ -437,3 +478,10 @@ def _lexical_score(query: str, content: str) -> float:
     content_terms = set(re.findall(r"[\w@%]+", content_lower, flags=re.UNICODE))
     overlap = len(query_terms & content_terms)
     return 1.0 + overlap
+
+
+def _has_retrievable_content(content: str | None) -> bool:
+    text = (content or "").strip()
+    if not text:
+        return False
+    return bool(re.search(r"[\wÀ-ɏḀ-ỿ]{2,}", text, flags=re.UNICODE))

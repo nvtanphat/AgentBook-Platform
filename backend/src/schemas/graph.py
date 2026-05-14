@@ -32,9 +32,9 @@ class GraphResponse(BaseModel):
 
 
 class MindmapRequest(BaseModel):
-    owner_id: str = Field(min_length=1)
+    owner_id: str = Field(min_length=1, max_length=128)
     collection_id: str | None = None
-    material_ids: list[str] = Field(default_factory=list)
-    root_topic: str | None = None
+    material_ids: list[str] = Field(default_factory=list, max_length=50)
+    root_topic: str | None = Field(default=None, max_length=1000)
     detail_level: Literal["overview", "detailed"] = "overview"
     use_llm: bool = False

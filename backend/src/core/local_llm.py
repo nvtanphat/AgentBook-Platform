@@ -26,7 +26,10 @@ class OllamaLLM(BaseLLM):
     async def generate(self, *, prompt: str) -> str:
         max_retries = 1
         url = f"{self.settings.ollama_base_url.rstrip('/')}/api/chat"
-        logger.info(f"Calling Ollama at {url} with model {self.settings.llm_local_model}, prompt length: {len(prompt)}")
+        logger.info(
+            "Calling local LLM",
+            extra={"url": url, "model": self.settings.llm_local_model, "prompt_length": len(prompt)},
+        )
 
         for attempt in range(max_retries):
             try:
@@ -42,25 +45,30 @@ class OllamaLLM(BaseLLM):
                         },
                     },
                 )
-                logger.info(f"Ollama response status: {response.status_code}")
+                logger.info("Local LLM response received", extra={"status_code": response.status_code})
                 response.raise_for_status()
                 payload = response.json()
                 raw = str(payload.get("message", {}).get("content", "")).strip()
                 result = _THINK_TAG_RE.sub("", raw).strip()
-                logger.info(f"Ollama generation successful, response length: {len(result)}")
+                logger.info("Local LLM generation succeeded", extra={"response_length": len(result)})
                 return result
             except httpx.HTTPStatusError as exc:
                 logger.error(
-                    f"Ollama HTTP error (attempt {attempt + 1}/{max_retries}): status={exc.response.status_code}, body={exc.response.text[:500]}"
+                    "Local LLM HTTP error",
+                    extra={"attempt": attempt + 1, "max_retries": max_retries, "status_code": exc.response.status_code},
                 )
                 if attempt == max_retries - 1:
                     raise
             except httpx.TimeoutException as exc:
-                logger.error(f"Ollama timeout (attempt {attempt + 1}/{max_retries}): {exc}")
+                logger.error("Local LLM timeout", extra={"attempt": attempt + 1, "max_retries": max_retries})
                 if attempt == max_retries - 1:
                     raise
             except Exception as exc:
-                logger.error(f"Ollama request failed (attempt {attempt + 1}/{max_retries}): {type(exc).__name__} - {exc}", exc_info=True)
+                logger.error(
+                    "Local LLM request failed",
+                    exc_info=True,
+                    extra={"attempt": attempt + 1, "max_retries": max_retries, "error_type": type(exc).__name__},
+                )
                 if attempt == max_retries - 1:
                     raise
         return ""
@@ -104,13 +112,13 @@ class OllamaLLM(BaseLLM):
                     except json.JSONDecodeError:
                         continue
         except httpx.HTTPStatusError as exc:
-            logger.error(f"Ollama stream HTTP error: {exc.response.status_code} - {exc.response.text[:200]}")
+            logger.error("Local LLM stream HTTP error", extra={"status_code": exc.response.status_code})
             raise
         except httpx.TimeoutException as exc:
-            logger.error(f"Ollama stream timeout: {exc}")
+            logger.error("Local LLM stream timeout")
             raise
         except Exception as exc:
-            logger.error(f"Ollama stream failed: {type(exc).__name__} - {exc}")
+            logger.error("Local LLM stream failed", extra={"error_type": type(exc).__name__})
             raise
 
     async def close(self) -> None:

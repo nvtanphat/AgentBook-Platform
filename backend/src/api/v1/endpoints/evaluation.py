@@ -1,26 +1,29 @@
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
-from src.dependencies import get_settings
-from src.evaluation.ragas_evaluator import RAGASEvaluator, RAGASMetrics
+from src.dependencies import get_settings, require_admin_access
+from src.evaluation.ragas_evaluator import RAGASEvaluator
 from src.rag.embedder import BGEM3Embedder
 
 router = APIRouter(prefix="/evaluation", tags=["evaluation"])
 
 _evaluator = RAGASEvaluator()
+_embed_semaphore = asyncio.Semaphore(1)
 
 
 class EvalSample(BaseModel):
-    query: str
-    answer: str
+    query: str = Field(min_length=1, max_length=4000)
+    answer: str = Field(min_length=1, max_length=12000)
     was_refused: bool = False
-    chunk_scores: list[float] = Field(default_factory=list, description="Reranker/fused scores of retrieved chunks")
+    chunk_scores: list[float] = Field(default_factory=list, max_length=100, description="Reranker/fused scores of retrieved chunks")
 
 
 class EvalBatchRequest(BaseModel):
-    samples: list[EvalSample]
+    samples: list[EvalSample] = Field(min_length=1, max_length=200)
 
 
 class EvalResponse(BaseModel):
@@ -33,7 +36,7 @@ class EvalResponse(BaseModel):
 
 
 class EmbedRequest(BaseModel):
-    texts: list[str] = Field(min_length=1)
+    texts: list[str] = Field(min_length=1, max_length=32)
 
 
 class EmbedResponse(BaseModel):
@@ -41,10 +44,15 @@ class EmbedResponse(BaseModel):
 
 
 @router.post("/embed", response_model=EmbedResponse)
-async def embed_texts(body: EmbedRequest, settings=Depends(get_settings)) -> EmbedResponse:
+async def embed_texts(
+    body: EmbedRequest,
+    settings=Depends(get_settings),
+    _: None = Depends(require_admin_access),
+) -> EmbedResponse:
     """Embed texts using BGE-M3 dense vectors. Used for semantic eval metrics."""
     embedder = BGEM3Embedder(settings)
-    results = embedder.encode(body.texts)
+    async with _embed_semaphore:
+        results = await asyncio.to_thread(embedder.encode, body.texts)
     return EmbedResponse(embeddings=[r.dense for r in results])
 
 
@@ -52,6 +60,7 @@ async def embed_texts(body: EmbedRequest, settings=Depends(get_settings)) -> Emb
 async def run_ragas_evaluation(
     body: EvalBatchRequest,
     settings=Depends(get_settings),
+    _: None = Depends(require_admin_access),
 ) -> EvalResponse:
     """
     Run lightweight RAGAS-style evaluation on a batch of QA samples.

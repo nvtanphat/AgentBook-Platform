@@ -14,6 +14,7 @@ from slowapi.errors import RateLimitExceeded
 from qdrant_client import models
 
 from src.api.v1.router import api_router
+from src.core.background import shutdown_background_tasks
 from src.core.config import get_settings, project_root
 from src.core.rate_limit import limiter
 from src.database import close_database, init_database
@@ -155,6 +156,7 @@ async def lifespan(app: FastAPI):
         await _recover_stuck_materials()
         await _reenqueue_uploaded_materials(settings)
     yield
+    await shutdown_background_tasks()
     await close_query_service()
     close_cached_qdrant_client()
     await close_database()

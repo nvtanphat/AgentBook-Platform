@@ -45,6 +45,10 @@ def verify_owner_access(request: Request, owner_id: str, settings: Settings | No
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="owner_id does not match authenticated owner")
 
 
+def require_admin_access(request: Request, settings: Settings = Depends(get_app_settings)) -> None:
+    verify_owner_access(request, "admin", settings)
+
+
 def _owner_from_authorization(header: str | None, *, secret: str) -> str | None:
     if not header or not header.startswith("Bearer "):
         return None
@@ -53,18 +57,19 @@ def _owner_from_authorization(header: str | None, *, secret: str) -> str | None:
         return None
     try:
         payload = _verify_hs256_jwt(token=token, secret=secret)
-    except ValueError:
+    except Exception:
         return None
     owner_id = payload.get("sub") or payload.get("owner_id")
     if not isinstance(owner_id, str) or not owner_id:
         return None
+    if "exp" not in payload:
+        return None
     exp = payload.get("exp")
-    if exp is not None:
-        try:
-            if float(exp) < time.time():
-                return None
-        except (TypeError, ValueError):
+    try:
+        if float(exp) < time.time():
             return None
+    except (TypeError, ValueError):
+        return None
     return owner_id
 
 

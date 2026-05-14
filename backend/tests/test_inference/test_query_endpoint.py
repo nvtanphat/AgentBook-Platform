@@ -58,6 +58,11 @@ class FakeQueryService:
         yield f"event: done\ndata: {response.model_dump_json()}\n\n"
 
 
+class FailingQueryService:
+    async def ask(self, request):
+        raise RuntimeError("sensitive backend path /tmp/secret")
+
+
 def test_query_ask_endpoint_uses_service_override(monkeypatch) -> None:
     monkeypatch.setenv("AGENTBOOK_TESTING", "true")
     get_settings.cache_clear()
@@ -78,6 +83,51 @@ def test_query_ask_endpoint_uses_service_override(monkeypatch) -> None:
         assert body["success"] is True
         assert body["data"]["answer"] == "grounded"
         assert body["data"]["answer_language"] == "vi"
+    finally:
+        app.dependency_overrides.clear()
+        get_settings.cache_clear()
+
+
+def test_query_ask_endpoint_hides_internal_errors(monkeypatch) -> None:
+    monkeypatch.setenv("AGENTBOOK_TESTING", "true")
+    get_settings.cache_clear()
+    app.dependency_overrides[get_query_service] = lambda: FailingQueryService()
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/v1/query/ask",
+                json={
+                    "owner_id": "user_demo",
+                    "collection_id": "65f000000000000000000002",
+                    "query": "Dropout la gi?",
+                    "answer_language": "vi",
+                },
+            )
+        assert response.status_code == 500
+        assert response.json()["detail"] == "Query pipeline failed. Please retry later."
+        assert "secret" not in response.text
+    finally:
+        app.dependency_overrides.clear()
+        get_settings.cache_clear()
+
+
+def test_query_ask_rejects_unbounded_top_k(monkeypatch) -> None:
+    monkeypatch.setenv("AGENTBOOK_TESTING", "true")
+    get_settings.cache_clear()
+    app.dependency_overrides[get_query_service] = lambda: FakeQueryService()
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/v1/query/ask",
+                json={
+                    "owner_id": "user_demo",
+                    "collection_id": "65f000000000000000000002",
+                    "query": "Dropout la gi?",
+                    "top_k": 9999,
+                    "answer_language": "vi",
+                },
+            )
+        assert response.status_code == 422
     finally:
         app.dependency_overrides.clear()
         get_settings.cache_clear()

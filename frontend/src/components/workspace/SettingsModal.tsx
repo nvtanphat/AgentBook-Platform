@@ -1,19 +1,19 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { AlertCircle, CheckCircle2, Loader2, X, Zap } from "lucide-react";
-import { API_BASE_URL, CollectionSummary, checkHealth, getAdminMetrics, listCollections } from "../../api/client";
+import { API_BASE_URL, API_V1_BASE_URL, CollectionSummary, checkHealth, getAdminMetrics, listCollections } from "../../api/client";
 import { useWorkspace } from "../../state/workspace";
 import { useSearchParams, useNavigate } from "react-router-dom";
 
 // ─── Pipeline settings API ────────────────────────────────────────────────────
 
 async function fetchPipelineSettings(): Promise<{ contextual_retrieval_enabled: boolean }> {
-  const res = await fetch(`${API_BASE_URL}/admin/settings`);
+  const res = await fetch(`${API_V1_BASE_URL}/admin/settings`);
   if (!res.ok) throw new Error("Failed to load pipeline settings");
   return res.json();
 }
 
 async function patchPipelineSettings(patch: { contextual_retrieval_enabled?: boolean }): Promise<void> {
-  const res = await fetch(`${API_BASE_URL}/admin/settings`, {
+  const res = await fetch(`${API_V1_BASE_URL}/admin/settings`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch),

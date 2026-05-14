@@ -68,18 +68,27 @@ type ContextMenuState = {
 } | null;
 
 const TYPE_COLORS: Record<string, { bg: string; border: string; text: string }> = {
-  concept: { bg: "#dbeafe", border: "#3b82f6", text: "#1d4ed8" },
-  person: { bg: "#ede9fe", border: "#8b5cf6", text: "#6d28d9" },
-  event: { bg: "#d1fae5", border: "#10b981", text: "#065f46" },
-  location: { bg: "#fef3c7", border: "#f59e0b", text: "#92400e" },
-  date: { bg: "#fce7f3", border: "#ec4899", text: "#9d174d" },
-  technology: { bg: "#cffafe", border: "#06b6d4", text: "#155e75" },
-  method: { bg: "#f0fdf4", border: "#22c55e", text: "#15803d" },
+  // Core entity types (from new LLM extractor)
+  model:        { bg: "#e0f2fe", border: "#0284c7", text: "#0369a1" },
+  algorithm:    { bg: "#f0fdf4", border: "#22c55e", text: "#15803d" },
+  metric:       { bg: "#fef9c3", border: "#ca8a04", text: "#92400e" },
+  dataset:      { bg: "#fdf4ff", border: "#a855f7", text: "#7e22ce" },
+  framework:    { bg: "#cffafe", border: "#06b6d4", text: "#155e75" },
+  author:       { bg: "#ede9fe", border: "#8b5cf6", text: "#6d28d9" },
+  field:        { bg: "#fff1f2", border: "#f43f5e", text: "#9f1239" },
+  // Legacy / general types
+  concept:      { bg: "#dbeafe", border: "#3b82f6", text: "#1d4ed8" },
+  person:       { bg: "#ede9fe", border: "#8b5cf6", text: "#6d28d9" },
+  event:        { bg: "#d1fae5", border: "#10b981", text: "#065f46" },
+  location:     { bg: "#fef3c7", border: "#f59e0b", text: "#92400e" },
+  date:         { bg: "#fce7f3", border: "#ec4899", text: "#9d174d" },
+  technology:   { bg: "#cffafe", border: "#06b6d4", text: "#155e75" },
+  method:       { bg: "#f0fdf4", border: "#22c55e", text: "#15803d" },
   organization: { bg: "#fee2e2", border: "#ef4444", text: "#991b1b" },
-  org: { bg: "#fee2e2", border: "#ef4444", text: "#991b1b" },
-  entity: { bg: "#fef9c3", border: "#ca8a04", text: "#92400e" },
-  root: { bg: "#1e3a8a", border: "#1e3a8a", text: "#ffffff" },
-  cluster: { bg: "#f1f5f9", border: "#64748b", text: "#1e293b" },
+  org:          { bg: "#fee2e2", border: "#ef4444", text: "#991b1b" },
+  entity:       { bg: "#fef9c3", border: "#ca8a04", text: "#92400e" },
+  root:         { bg: "#1e3a8a", border: "#1e3a8a", text: "#ffffff" },
+  cluster:      { bg: "#f1f5f9", border: "#64748b", text: "#1e293b" },
 };
 
 function typeColor(type: string) {

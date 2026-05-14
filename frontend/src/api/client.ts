@@ -1,5 +1,5 @@
 export const API_BASE_URL = (import.meta.env.VITE_AGENTBOOK_API_URL ?? "http://127.0.0.1:8000").replace(/\/$/, "");
-const API_V1_BASE_URL = `${API_BASE_URL}/api/v1`;
+export const API_V1_BASE_URL = `${API_BASE_URL}/api/v1`;
 const AUTH_TOKEN_STORAGE_KEY = "prism.auth.token";
 
 function authHeaders(): HeadersInit {

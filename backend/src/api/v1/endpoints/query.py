@@ -36,11 +36,13 @@ async def ask(
     try:
         result = await query_service.ask(body)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        logger.warning("Invalid query request", extra={"owner_id": body.owner_id, "collection_id": body.collection_id})
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid query request.") from exc
     except Exception as exc:
+        logger.exception("Query pipeline failed", extra={"owner_id": body.owner_id, "collection_id": body.collection_id})
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Query pipeline error ({type(exc).__name__}): {exc}",
+            detail="Query pipeline failed. Please retry later.",
         ) from exc
     return APIResponse(success=True, message="Query answered successfully", data=result, error=None)
 
@@ -59,9 +61,11 @@ async def ask_stream(
             async for line in query_service.ask_stream(body):
                 yield line
         except ValueError as exc:
-            yield f"event: error\ndata: {json.dumps({'message': str(exc)})}\n\n"
+            logger.warning("Invalid streaming query request", extra={"owner_id": body.owner_id, "collection_id": body.collection_id})
+            yield f"event: error\ndata: {json.dumps({'message': 'Invalid query request.'})}\n\n"
         except Exception as exc:
-            yield f"event: error\ndata: {json.dumps({'message': f'Server error: {type(exc).__name__}'})}\n\n"
+            logger.exception("Streaming query pipeline failed", extra={"owner_id": body.owner_id, "collection_id": body.collection_id})
+            yield f"event: error\ndata: {json.dumps({'message': 'Query pipeline failed. Please retry later.'})}\n\n"
 
     return StreamingResponse(
         generate(),
@@ -81,10 +85,11 @@ async def compare(
     try:
         result = await query_service.compare(body)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        logger.warning("Invalid compare request", extra={"owner_id": body.owner_id, "collection_id": body.collection_id})
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid compare request.") from exc
     except Exception as exc:
         logger.exception("Compare pipeline failed")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Compare pipeline error ({type(exc).__name__}): {exc}") from exc
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Compare pipeline failed. Please retry later.") from exc
     return APIResponse(success=True, message="Comparison generated successfully", data=result, error=None)
 
 
@@ -98,9 +103,11 @@ async def summarize(
     try:
         result = await summary_service.summarize(body)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        logger.warning("Invalid summary request", extra={"owner_id": body.owner_id, "collection_id": body.collection_id})
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid summary request.") from exc
     except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Summary pipeline error ({type(exc).__name__}): {exc}") from exc
+        logger.exception("Summary pipeline failed", extra={"owner_id": body.owner_id, "collection_id": body.collection_id})
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Summary pipeline failed. Please retry later.") from exc
     return APIResponse(success=True, message="Summary generated successfully", data=result, error=None)
 
 
@@ -114,7 +121,9 @@ async def study_guide(
     try:
         result = await study_guide_service.build(body)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        logger.warning("Invalid study guide request", extra={"owner_id": body.owner_id, "collection_id": body.collection_id})
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid study guide request.") from exc
     except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Study guide pipeline error ({type(exc).__name__}): {exc}") from exc
+        logger.exception("Study guide pipeline failed", extra={"owner_id": body.owner_id, "collection_id": body.collection_id})
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Study guide pipeline failed. Please retry later.") from exc
     return APIResponse(success=True, message="Study guide generated successfully", data=result, error=None)

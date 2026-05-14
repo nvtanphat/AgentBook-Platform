@@ -50,7 +50,6 @@ function snippetCoversMostText(text: string, snippet?: string | null) {
 
 function HighlightedText({
   text,
-  keywords,
   exactSnippet,
   className,
 }: {
@@ -59,14 +58,6 @@ function HighlightedText({
   exactSnippet?: string | null;
   className?: string;
 }) {
-  if (snippetCoversMostText(text, exactSnippet)) {
-    return (
-      <mark className={`rounded bg-yellow-200/80 px-0.5 text-yellow-950 not-italic ${className ?? ""}`}>
-        {text}
-      </mark>
-    );
-  }
-
   const exactPattern = buildExactSnippetPattern(text, exactSnippet);
   if (exactPattern) {
     const exactParts = text.split(exactPattern);
@@ -87,29 +78,7 @@ function HighlightedText({
     }
   }
 
-  if (exactSnippet) return <span className={className}>{text}</span>;
-
-  if (keywords.size === 0) return <span className={className}>{text}</span>;
-
-  const pattern = new RegExp(
-    `(${Array.from(keywords).map(escapeRegExp).join("|")})`,
-    "gi"
-  );
-  const parts = text.split(pattern);
-
-  return (
-    <span className={className}>
-      {parts.map((part, i) =>
-        i % 2 === 1 ? (
-          <mark key={i} className="rounded bg-yellow-200/70 px-0.5 text-yellow-900 not-italic">
-            {part}
-          </mark>
-        ) : (
-          <span key={i}>{part}</span>
-        )
-      )}
-    </span>
-  );
+  return <span className={className}>{text}</span>;
 }
 
 // ─── Block type icon ──────────────────────────────────────────────────────────

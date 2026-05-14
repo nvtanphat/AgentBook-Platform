@@ -13,7 +13,7 @@ from beanie import PydanticObjectId
 
 from src.agentic.planner import AgenticPlanner, AgenticSubQuestion
 from src.guardrails.claim_verifier import ClaimVerdict
-from src.inference.inference_engine import REFUSAL_ANSWER, InferenceEngine
+from src.inference.inference_engine import PUBLIC_GENERATION_ERROR, PUBLIC_RETRIEVAL_ERROR, REFUSAL_ANSWER, InferenceEngine
 from src.inference.intent_classifier import QueryIntent
 from src.inference.reasoning_path_builder import build_reasoning_path
 from src.models.common import PipelineStatus
@@ -63,6 +63,7 @@ class AgenticRagService:
     def __init__(self, *, engine: InferenceEngine) -> None:
         self.engine = engine
         self.planner = AgenticPlanner()
+        self._rerank_fallback_semaphore = asyncio.Semaphore(1)
 
     async def answer(
         self,
@@ -134,16 +135,19 @@ class AgenticRagService:
             resolved_query,
             answer_language=answer_language,
         )
+        original_query = getattr(processed, "original_query", resolved_query)
+        use_multi_query = route.use_multi_query and bool(getattr(self.engine.settings, "multi_query_enabled", False))
+        retrieval_queries = processed.retrieval_queries if use_multi_query else [original_query]
 
         retrieved: list[RetrievedChunk] = []
         graph_chunks: list[RetrievedChunk] = []
         try:
             retrieved = await self._retrieve_multi_query(
-                queries=processed.retrieval_queries,
+                queries=retrieval_queries,
                 scope=scope,
                 limit=retrieval_limit,
                 steps=steps,
-                step_name="retrieve_multi_query" if route.use_multi_query else "retrieve_text",
+                step_name="retrieve_multi_query" if use_multi_query else "retrieve_text",
                 on_step=on_step,
             )
             if plan.use_per_source and expected_material_ids:
@@ -171,7 +175,7 @@ class AgenticRagService:
                 graph_chunks = await self._trace_graph(query=resolved_query, scope=scope, steps=steps, priority=route.graph_priority, on_step=on_step)
         except Exception as exc:
             logger.error("Agentic retrieval failed", exc_info=True, extra={"owner_id": scope.owner_id, "error": str(exc)})
-            failure_step = AgentTraceStep(name="retrieve_text", status="failed", warning=type(exc).__name__)
+            failure_step = AgentTraceStep(name="retrieve_text", status="failed", warning="retrieval_failed")
             trace = AgentTrace(
                 plan_type=plan.plan_type,
                 steps=[*steps, failure_step],
@@ -188,7 +192,7 @@ class AgenticRagService:
                 citations=[],
                 confidence=0.0,
                 was_refused=True,
-                refusal_reason=f"Retrieval failed: {type(exc).__name__}",
+                refusal_reason=PUBLIC_RETRIEVAL_ERROR,
                 agent_trace=trace,
             )
 
@@ -290,9 +294,9 @@ class AgenticRagService:
             on_step,
         )
 
-        reranked = self._rerank(
+        reranked = await self._arerank(
             query=resolved_query,
-            queries=processed.retrieval_queries,
+            queries=retrieval_queries,
             chunks=candidates,
             limit=final_limit,
             use_mmr=route.use_mmr,
@@ -353,7 +357,7 @@ class AgenticRagService:
                 citations=citations,
                 confidence=confidence,
                 was_refused=True,
-                refusal_reason=f"Answer generation failed: {type(exc).__name__}",
+                refusal_reason=PUBLIC_GENERATION_ERROR,
                 reasoning_path=build_reasoning_path(query=resolved_query, retrieved_chunks=retrieved, graph_chunks=graph_chunks, reranked_chunks=reranked, use_graph=route.use_graph),
                 coverage=coverage,
                 agent_trace=trace,
@@ -372,7 +376,7 @@ class AgenticRagService:
             on_step,
         )
         grounding = self._grounding_report(answer=answer, citation_count=len(citations))
-        verification = self.engine.claim_verifier.verify(
+        verification = await self._verify_claim(
             claim=answer,
             evidence=[evidence for chunk in context_chunks for evidence in chunk.evidence],
         )
@@ -401,7 +405,7 @@ class AgenticRagService:
             if repaired_answer.strip():
                 answer = self.engine.response_parser.inject_citations(repaired_answer, context_chunks)
                 grounding = self._grounding_report(answer=answer, citation_count=len(citations))
-                verification = self.engine.claim_verifier.verify(
+                verification = await self._verify_claim(
                     claim=answer,
                     evidence=[evidence for chunk in context_chunks for evidence in chunk.evidence],
                 )
@@ -432,7 +436,12 @@ class AgenticRagService:
             warning = "Answer is based on limited-confidence evidence."
             answer = answer + "\n\n> Cảnh báo: Câu trả lời dựa trên bằng chứng có độ tin cậy hạn chế. Vui lòng kiểm tra nguồn gốc."
 
-        if citations and answer_repair_attempted and not grounding.passed and verification.verdict == ClaimVerdict.NOT_ENOUGH_EVIDENCE:
+        if verification.verdict in {ClaimVerdict.CONTRADICTED, ClaimVerdict.NOT_ENOUGH_EVIDENCE}:
+            should_refuse = True
+            refusal_reason = f"claim_verification_{verification.verdict.value}"
+            answer = REFUSAL_ANSWER
+
+        if not should_refuse and citations and answer_repair_attempted and not grounding.passed and verification.verdict == ClaimVerdict.NOT_ENOUGH_EVIDENCE:
             should_refuse = True
             refusal_reason = "Không đủ bằng chứng đáng tin cậy để tạo câu trả lời có citation hợp lệ."
             answer = REFUSAL_ANSWER
@@ -499,7 +508,7 @@ class AgenticRagService:
         warnings: list[str] = []
         for result in results:
             if isinstance(result, Exception):
-                warnings.append(type(result).__name__)
+                warnings.append("retrieval_failed")
                 continue
             chunks.extend(result)
         await self._record_step(
@@ -589,7 +598,7 @@ class AgenticRagService:
         warnings: list[str] = []
         for sub_question, result in zip(text_only, results, strict=False):
             if isinstance(result, Exception):
-                warnings.append(f"{sub_question.text}: {type(result).__name__}")
+                warnings.append(f"{sub_question.text}: retrieval_failed")
                 continue
             if result:
                 covered.append(sub_question.text)
@@ -629,7 +638,7 @@ class AgenticRagService:
         except Exception as exc:
             await self._record_step(
                 steps,
-                AgentTraceStep(name="trace_graph", status="failed", query=query, tool="graph_retriever", duration_ms=self._elapsed_ms(started), warning=type(exc).__name__),
+                AgentTraceStep(name="trace_graph", status="failed", query=query, tool="graph_retriever", duration_ms=self._elapsed_ms(started), warning="graph_retrieval_failed"),
                 on_step,
             )
             return []
@@ -681,6 +690,15 @@ class AgenticRagService:
         except Exception:
             logger.warning("Agentic answer repair failed", exc_info=True)
             return ""
+
+    async def _verify_claim(self, *, claim: str, evidence: list) -> object:
+        verifier = self.engine.claim_verifier
+        if hasattr(verifier, "averify"):
+            return await verifier.averify(claim=claim, evidence=evidence)
+        result = verifier.verify(claim=claim, evidence=evidence)
+        if inspect.isawaitable(result):
+            return await result
+        return result
 
     @staticmethod
     def _evidence_quality_report(
@@ -814,10 +832,22 @@ class AgenticRagService:
             logger.debug("Gap reflection failed", extra={"error": str(exc)})
         return []
 
-    def _rerank(self, *, query: str, queries: list[str], chunks: list[RetrievedChunk], limit: int, use_mmr: bool) -> list[RetrievedChunk]:
+    async def _arerank(self, *, query: str, queries: list[str], chunks: list[RetrievedChunk], limit: int, use_mmr: bool) -> list[RetrievedChunk]:
+        if hasattr(self.engine.reranker, "arerank_multilingual"):
+            return await self.engine.reranker.arerank_multilingual(queries=queries, chunks=chunks, limit=limit, use_mmr=use_mmr)
         if hasattr(self.engine.reranker, "rerank_multilingual"):
-            return self.engine.reranker.rerank_multilingual(queries=queries, chunks=chunks, limit=limit, use_mmr=use_mmr)
-        return self.engine.reranker.rerank(query=query, chunks=chunks, limit=limit)
+            async with self._rerank_fallback_semaphore:
+                return await asyncio.to_thread(
+                    self.engine.reranker.rerank_multilingual,
+                    queries=queries,
+                    chunks=chunks,
+                    limit=limit,
+                    use_mmr=use_mmr,
+                )
+        if hasattr(self.engine.reranker, "arerank"):
+            return await self.engine.reranker.arerank(query=query, chunks=chunks, limit=limit)
+        async with self._rerank_fallback_semaphore:
+            return await asyncio.to_thread(self.engine.reranker.rerank, query=query, chunks=chunks, limit=limit)
 
     @staticmethod
     def _ensure_context_coverage(

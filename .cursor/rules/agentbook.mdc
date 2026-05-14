@@ -1,0 +1,89 @@
+---
+description: AgentBook project rules — architecture, layers, evidence trace, stack constraints
+globs: ["**/*.py", "**/*.ts", "**/*.tsx", "**/*.yaml", "**/*.yml"]
+alwaysApply: true
+---
+
+# AgentBook — Cursor Rules
+
+**Authoritative sources:**
+- `CLAUDE.md` — agent behavior rules (read first)
+- `AgentBook_Implementation_Plan.md` — product scope, API spec, DB schema
+
+---
+
+## Stack (do not change without user approval)
+
+Backend: FastAPI · Beanie + MongoDB Atlas · Qdrant · Celery + Redis · Docling · EasyOCR · BGE-M3 · BGE reranker · Qwen3 4B (Ollama) · OpenAI-compatible API fallback
+Frontend: React + TypeScript (Vite)
+Config: `.env` + `config/*.yaml` — ALL thresholds and top_k live here, never hardcoded
+
+---
+
+## Layer Rules (enforce strictly)
+
+| Path | Role |
+|---|---|
+| `backend/src/api/v1/endpoints/` | Thin handlers only — no business logic |
+| `backend/src/agentic/` | Bounded multi-step orchestration |
+| `backend/src/inference/` | LLM orchestration, intent, confidence, response parsing |
+| `backend/src/processing/` | Parsing, OCR, chunking, extraction, enrichment |
+| `backend/src/rag/` | Embedding, Qdrant, retrieval, reranking, CRAG |
+| `backend/src/guardrails/` | Refusal, claim verification, contradiction |
+| `backend/src/schemas/` | Pydantic v2 schemas — request / response / domain |
+| `backend/src/models/` | Beanie documents (MongoDB) |
+| `backend/src/tasks/` | All Celery async jobs |
+| `config/*.yaml` | All thresholds, prompts, limits |
+
+---
+
+## Evidence Trace (never drop these fields)
+
+Every chunk / citation must carry:
+`owner_id` · `collection_id` · `material_id` · `document_name` · `page` · `block_id` · `bbox` (if available, never invented) · `snippet_original` · `source_language` · confidence score
+
+Applies through: chunking → embedding → retrieval → reranking → answer synthesis → graph generation.
+
+---
+
+## Retrieval Pipeline
+
+1. Multi-Query expansion (`rag/query_processor.py`)
+2. BGE-M3 dense + sparse → RRF fusion
+3. BGE reranker / smart_reranker
+4. Structured `RetrievalResult` returned — never raw strings
+
+All Qdrant/MongoDB queries must filter `owner_id` + `collection_id`. Global retrieval is forbidden.
+
+---
+
+## Critical Don'ts
+
+- No `print()` — use structured logging
+- No hardcoded thresholds, top_k, API keys, or prompts
+- No unscoped DB/vector queries
+- No heavy logic in route handlers
+- No circular imports
+- No stretch features (Neo4j, CLIP, ReAct planners, audio, fine-tuning) unless user asks
+- Pydantic v2 style everywhere
+- Always validate LLM JSON output with `model_validate_json()`
+
+---
+
+## OCR / Handwriting
+
+- Printed scans → `processing/ocr_engine.py` (EasyOCR)
+- Handwriting → `processing/image_quality_checker.py` first, then `processing/handwriting_reader.py`
+- Low quality / low confidence → refuse, do not fabricate
+
+---
+
+## Cross-Lingual (VI query over EN docs)
+
+Keep `snippet_original` in English. Generate answer in Vietnamese. `snippet_translated` is optional.
+
+---
+
+## Upload Safety
+
+Allowlist: `pdf docx pptx png jpg jpeg csv xlsx` · 20 MB limit (from config) · MIME + magic-byte validation · path traversal guard · `owner_id`/`collection_id` isolation

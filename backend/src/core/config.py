@@ -139,10 +139,11 @@ class Settings(BaseSettings):
     rerank_input_k: int = 20
     max_chunks_per_doc: int = 3
     graph_max_hops: int = 2
-    agentic_rag_enabled: bool = True
+    agentic_rag_enabled: bool = False
     agentic_planner_llm_enabled: bool = False
     agentic_max_retrieval_iterations: int = 2
     agentic_anaphora_resolution_enabled: bool = True
+    multi_query_enabled: bool = False
     smart_reranker_enabled: bool = False
     smart_reranker_threshold: float = 0.7
     hyde_enabled: bool = False
@@ -191,6 +192,23 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_chunking_config(self) -> "Settings":
         """Validate chunking configuration constraints."""
+        if self.app_env.lower() == "production":
+            if not self.api_auth_enabled:
+                raise ValueError("api_auth_enabled must be true when app_env is production")
+            if not self.api_key:
+                raise ValueError("api_key must be configured when app_env is production")
+        for name, value, upper in [
+            ("dense_top_k", self.dense_top_k, 100),
+            ("sparse_top_k", self.sparse_top_k, 100),
+            ("graph_top_k", self.graph_top_k, 50),
+            ("final_top_k", self.final_top_k, 20),
+            ("rerank_input_k", self.rerank_input_k, 100),
+            ("reranker_max_pairs", self.reranker_max_pairs, 200),
+        ]:
+            if not 1 <= int(value) <= upper:
+                raise ValueError(f"{name} ({value}) must be between 1 and {upper}")
+        if self.llm_max_output_tokens < 1 or self.llm_max_output_tokens > 8192:
+            raise ValueError("llm_max_output_tokens must be between 1 and 8192")
         if self.chunk_min_token_count >= self.chunk_target_token_count:
             raise ValueError(
                 f"chunk_min_token_count ({self.chunk_min_token_count}) must be less than "
@@ -276,8 +294,9 @@ def get_settings() -> Settings:
         rrf_k=retrieval_section.get("rrf_k", 60),
         rerank_input_k=retrieval_section.get("rerank_input_k", 15),
         graph_max_hops=min(int(retrieval_section.get("graph_max_hops", 2)), 2),
-        agentic_rag_enabled=env_bool("AGENTIC_RAG_ENABLED", retrieval_section.get("agentic_rag_enabled", True)),
+        agentic_rag_enabled=env_bool("AGENTIC_RAG_ENABLED", retrieval_section.get("agentic_rag_enabled", False)),
         agentic_planner_llm_enabled=env_bool("AGENTIC_PLANNER_LLM_ENABLED", retrieval_section.get("agentic_planner_llm_enabled", False)),
+        multi_query_enabled=env_bool("MULTI_QUERY_ENABLED", retrieval_section.get("multi_query_enabled", False)),
         api_auth_enabled=env_bool("API_AUTH_ENABLED", str(env_value("APP_ENV", "development")).lower() == "production"),
         api_key=env_value("API_KEY", None),
         min_ocr_text_quality=refusal_config.get("min_ocr_text_quality", 0.35),

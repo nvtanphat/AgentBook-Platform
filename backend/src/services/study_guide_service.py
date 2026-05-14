@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import asyncio
 import logging
 import re
 
@@ -9,7 +10,9 @@ _MD_CLEAN = re.compile(r"[`_~]")
 from src.core.base_llm import BaseLLM
 from src.core.config import Settings
 from src.core.model_factory import build_llm
+from src.guardrails.claim_verifier import ClaimVerdict, ClaimVerifier
 from src.inference.confidence_scorer import ConfidenceScorer
+from src.inference.inference_engine import InferenceEngine
 from src.inference.response_parser import ResponseParser
 from src.rag.retriever import HybridRetriever
 from src.rag.reranker import CrossEncoderReranker
@@ -23,6 +26,8 @@ _REFUSAL_TEXT = "Tôi không tìm thấy đủ bằng chứng trong tài liệu 
 
 
 class StudyGuideService:
+    _rerank_semaphore = asyncio.Semaphore(1)
+
     def __init__(
         self,
         *,
@@ -32,6 +37,7 @@ class StudyGuideService:
         llm: BaseLLM | None = None,
         response_parser: ResponseParser | None = None,
         confidence_scorer: ConfidenceScorer | None = None,
+        claim_verifier: ClaimVerifier | None = None,
     ) -> None:
         self.settings = settings
         self.retriever = retriever or HybridRetriever(settings=settings, qdrant_client=get_qdrant_client_for_settings(settings))
@@ -39,6 +45,7 @@ class StudyGuideService:
         self.llm = llm or build_llm(settings)
         self.response_parser = response_parser or ResponseParser()
         self.confidence_scorer = confidence_scorer or ConfidenceScorer(settings)
+        self.claim_verifier = claim_verifier or ClaimVerifier()
 
     async def build(self, request: StudyGuideRequest) -> StudyGuideResponse:
         scope = RetrievalScope(
@@ -59,7 +66,13 @@ class StudyGuideService:
                 citations=[],
                 confidence=0.0,
             )
-        reranked = self.reranker.rerank(query=query, chunks=retrieved, limit=request.top_k or self.settings.final_top_k)
+        async with self._rerank_semaphore:
+            reranked = await asyncio.to_thread(
+                self.reranker.rerank,
+                query=query,
+                chunks=retrieved,
+                limit=request.top_k or self.settings.final_top_k,
+            )
         confidence = self.confidence_scorer.score(reranked)
         citations = self.response_parser.citations_from_chunks(reranked)
         if not reranked:
@@ -73,7 +86,9 @@ class StudyGuideService:
         _LANG_NAMES = {"vi": "tiếng Việt", "en": "English"}
         lang_name = _LANG_NAMES.get(request.answer_language, request.answer_language)
         evidence_text = self.response_parser.format_evidence_for_prompt(reranked)
+        evidence_safety = InferenceEngine._evidence_safety_rules()
         guide_prompt = (
+            f"{evidence_safety}\n\n"
             f"Bạn là Noelys, trợ lý tri thức học tập của Noelys.\n"
             f"Tạo Study Guide bằng {lang_name}, CHỈ từ BẰNG CHỨNG bên dưới. Không thêm kiến thức ngoài tài liệu.\n\n"
             f"Trả lời theo đúng cấu trúc sau (giữ nguyên các tiêu đề):\n\n"
@@ -101,6 +116,24 @@ class StudyGuideService:
             key_concepts = await self._extract_concepts_llm(evidence_text, request.owner_id)
 
         from src.inference.response_parser import _fix_numbered_lists
+        verification_text = "\n".join(
+            item
+            for item in [overview, "\n".join(key_concepts[:10]), "\n".join(outline[:12])]
+            if item.strip()
+        )
+        verification_text = self.response_parser.inject_citations(verification_text, reranked)
+        verification = await self.claim_verifier.averify(
+            claim=verification_text,
+            evidence=[evidence for chunk in reranked for evidence in chunk.evidence],
+        )
+        if verification.verdict in {ClaimVerdict.CONTRADICTED, ClaimVerdict.NOT_ENOUGH_EVIDENCE}:
+            return StudyGuideResponse(
+                overview=_REFUSAL_TEXT,
+                key_concepts=[],
+                outline=[],
+                citations=citations,
+                confidence=confidence,
+            )
         return StudyGuideResponse(
             overview=_fix_numbered_lists(overview or _REFUSAL_TEXT),
             key_concepts=key_concepts[:10],
@@ -144,7 +177,9 @@ class StudyGuideService:
         return overview.strip(), key_concepts, outline
 
     async def _extract_concepts_llm(self, evidence_text: str, owner_id: str) -> list[str]:
+        evidence_safety = InferenceEngine._evidence_safety_rules()
         prompt = (
+            f"{evidence_safety}\n\n"
             "Từ đoạn văn dưới đây, liệt kê 5-8 khái niệm quan trọng nhất.\n"
             "Yêu cầu: mỗi khái niệm 1-3 từ, mỗi dòng một khái niệm, bắt đầu bằng dấu gạch ngang (-).\n"
             "Chỉ liệt kê khái niệm, không giải thích.\n\n"

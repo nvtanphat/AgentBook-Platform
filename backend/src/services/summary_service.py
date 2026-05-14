@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from beanie import PydanticObjectId
@@ -7,7 +8,9 @@ from beanie import PydanticObjectId
 from src.core.base_llm import BaseLLM
 from src.core.config import Settings
 from src.core.model_factory import build_llm
+from src.guardrails.claim_verifier import ClaimVerdict, ClaimVerifier
 from src.inference.confidence_scorer import ConfidenceScorer
+from src.inference.inference_engine import InferenceEngine
 from src.inference.response_parser import ResponseParser
 from src.models.common import PipelineStatus
 from src.models.material import Material
@@ -23,6 +26,8 @@ _REFUSAL_TEXT = "Tôi không tìm thấy đủ bằng chứng trong tài liệu 
 
 
 class SummaryService:
+    _rerank_semaphore = asyncio.Semaphore(1)
+
     def __init__(
         self,
         *,
@@ -32,6 +37,7 @@ class SummaryService:
         llm: BaseLLM | None = None,
         response_parser: ResponseParser | None = None,
         confidence_scorer: ConfidenceScorer | None = None,
+        claim_verifier: ClaimVerifier | None = None,
     ) -> None:
         self.settings = settings
         self.retriever = retriever or HybridRetriever(settings=settings, qdrant_client=get_qdrant_client_for_settings(settings))
@@ -39,6 +45,7 @@ class SummaryService:
         self.llm = llm or build_llm(settings)
         self.response_parser = response_parser or ResponseParser()
         self.confidence_scorer = confidence_scorer or ConfidenceScorer(settings)
+        self.claim_verifier = claim_verifier or ClaimVerifier()
 
     async def summarize(self, request: SummaryRequest) -> SummaryResponse:
         material_ids = self._request_material_ids(request)
@@ -52,13 +59,13 @@ class SummaryService:
         try:
             retrieved = await self._retrieve_summary_chunks(query=query, request=request, scope=scope)
         except Exception as exc:
-            logger.error("Retrieval failed in SummaryService", exc_info=True, extra={"owner_id": request.owner_id, "error": str(exc)})
+            logger.exception("Retrieval failed in SummaryService", extra={"owner_id": request.owner_id})
             return SummaryResponse(
                 summary=_REFUSAL_TEXT,
                 citations=[],
                 confidence=0.0,
                 was_refused=True,
-                refusal_reason=f"Retrieval failed: {type(exc).__name__}",
+                refusal_reason="Summary pipeline failed. Please retry later.",
             )
         retrieved_material_ids = list({chunk.material_id for chunk in retrieved})
         expected_material_ids = material_ids or await self._indexed_material_ids_for_collection(request) or retrieved_material_ids
@@ -67,7 +74,8 @@ class SummaryService:
         if len({chunk.material_id for chunk in retrieved}) > 1:
             reranked = self._ensure_material_coverage(chunks=retrieved, selected=retrieved, limit=target_limit)
         else:
-            reranked = self.reranker.rerank(query=query, chunks=retrieved, limit=target_limit)
+            async with self._rerank_semaphore:
+                reranked = await asyncio.to_thread(self.reranker.rerank, query=query, chunks=retrieved, limit=target_limit)
             reranked = self._ensure_material_coverage(chunks=retrieved, selected=reranked, limit=target_limit)
         confidence = self.confidence_scorer.score(reranked)
         should_refuse, refusal_reason = self.confidence_scorer.should_refuse(chunks=reranked, confidence=confidence)
@@ -92,7 +100,10 @@ class SummaryService:
             )
         _LANG_NAMES = {"vi": "tiếng Việt", "en": "English"}
         lang_name = _LANG_NAMES.get(request.answer_language, request.answer_language)
+        evidence_text = self.response_parser.format_evidence_for_prompt(reranked)
+        evidence_safety = InferenceEngine._evidence_safety_rules()
         prompt = (
+            f"{evidence_safety}\n\n"
             f"Bạn là Noelys, trợ lý tri thức học tập của Noelys.\n"
             f"Tóm tắt nội dung bên dưới bằng {lang_name}, CHỈ dựa trên BẰNG CHỨNG được cung cấp.\n\n"
             f"QUY TẮC:\n"
@@ -102,20 +113,45 @@ class SummaryService:
             f"BẰNG CHỨNG:\n{self._format_summary_evidence(reranked)}\n\n"
             f"TÓM TẮT:"
         )
+        prompt = (
+            f"{evidence_safety}\n\n"
+            "You are Noelys, a learning knowledge assistant.\n"
+            f"Summarize the evidence below in {lang_name}. Use ONLY the supplied evidence.\n\n"
+            "Rules:\n"
+            "- Write 3-5 clear, connected sentences.\n"
+            "- Do not add outside knowledge or speculation.\n"
+            "- Focus on the main ideas, not minor details.\n\n"
+            f"EVIDENCE:\n{evidence_text}\n\n"
+            "SUMMARY:"
+        )
         try:
             summary = await self.llm.generate(prompt=prompt)
         except Exception as exc:
-            logger.error("LLM failed in SummaryService", exc_info=True, extra={"owner_id": request.owner_id, "error": str(exc)})
+            logger.exception("LLM failed in SummaryService", extra={"owner_id": request.owner_id})
             return SummaryResponse(
                 summary=_REFUSAL_TEXT,
                 citations=citations,
                 confidence=confidence,
                 was_refused=True,
-                refusal_reason=f"LLM generation failed: {type(exc).__name__}",
+                refusal_reason="Summary pipeline failed. Please retry later.",
                 coverage=coverage,
             )
         from src.inference.response_parser import _fix_numbered_lists
-        return SummaryResponse(summary=_fix_numbered_lists(summary), citations=citations, confidence=confidence, coverage=coverage)
+        summary = self.response_parser.inject_citations(_fix_numbered_lists(summary), reranked)
+        verification = await self.claim_verifier.averify(
+            claim=summary,
+            evidence=[evidence for chunk in reranked for evidence in chunk.evidence],
+        )
+        if verification.verdict in {ClaimVerdict.CONTRADICTED, ClaimVerdict.NOT_ENOUGH_EVIDENCE}:
+            return SummaryResponse(
+                summary=_REFUSAL_TEXT,
+                citations=citations,
+                confidence=confidence,
+                was_refused=True,
+                refusal_reason="Summary could not be verified against the retrieved evidence.",
+                coverage=coverage,
+            )
+        return SummaryResponse(summary=summary, citations=citations, confidence=confidence, coverage=coverage)
 
     async def _retrieve_summary_chunks(self, *, query: str, request: SummaryRequest, scope: RetrievalScope) -> list:
         material_ids = scope.material_ids or await self._indexed_material_ids_for_collection(request)

@@ -46,7 +46,7 @@ class CRAGEvaluator:
         incorrect: list[RetrievedChunk] = []
 
         for chunk in chunks:
-            score = chunk.reranker_score if getattr(chunk, "reranker_score", None) is not None else (chunk.fused_score or 0.0)
+            score = chunk.rerank_score if chunk.rerank_score is not None else (chunk.fused_score or 0.0)
             if score >= self.correct_threshold:
                 correct.append(chunk)
             elif score >= self.incorrect_threshold:

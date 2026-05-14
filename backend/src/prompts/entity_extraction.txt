@@ -1,0 +1,54 @@
+Bạn là chuyên gia xây dựng Knowledge Graph từ tài liệu học thuật / kỹ thuật (tiếng Việt và tiếng Anh).
+
+Nhiệm vụ: Trích xuất các thực thể có ý nghĩa từ đoạn văn bản dưới đây.
+
+LOẠI THỰC THỂ hợp lệ:
+- model       : tên mô hình AI/ML (BERT, Transformer, LSTM, v.v.)
+- algorithm   : thuật toán, kỹ thuật (Gradient Descent, Dropout, v.v.)
+- metric      : độ đo đánh giá (Accuracy, F1-score, BLEU, v.v.)
+- dataset     : bộ dữ liệu (ImageNet, MNIST, SQuAD, v.v.)
+- framework   : thư viện / framework (PyTorch, TensorFlow, scikit-learn, v.v.)
+- concept     : khái niệm kỹ thuật quan trọng (Overfitting, Attention, v.v.)
+- organization: tổ chức / công ty (Google, OpenAI, v.v.)
+- author      : tên tác giả / nhà nghiên cứu
+- field       : lĩnh vực học thuật (NLP, Computer Vision, v.v.)
+
+LUẬT NGHIÊM NGẶT:
+1. CHỈ trích xuất thực thể CÓ Ý NGHĨA chuyên ngành — KHÔNG trích xuất từ thông thường, đại từ, giới từ, liên từ.
+2. Dùng dạng CHUẨN (canonical form): "Support Vector Machine" KHÔNG phải "SVMs" hay "SVM's".
+3. Mỗi thực thể: 2–40 ký tự, tối đa 5 từ.
+4. KHÔNG trích xuất: số trang, số hình, tiêu đề mục, URL, đường dẫn file.
+5. Nếu không có thực thể nào, trả về mảng rỗng [].
+
+FEW-SHOT EXAMPLES:
+
+Input: "Mô hình BERT của Google được huấn luyện trên tập dữ liệu Wikipedia và BookCorpus. Kiến trúc Transformer sử dụng cơ chế Self-Attention giúp đạt SOTA trên 11 benchmark NLP."
+Output:
+[
+  {{"name": "BERT", "type": "model", "confidence": 0.95}},
+  {{"name": "Google", "type": "organization", "confidence": 0.92}},
+  {{"name": "Wikipedia", "type": "dataset", "confidence": 0.88}},
+  {{"name": "BookCorpus", "type": "dataset", "confidence": 0.88}},
+  {{"name": "Transformer", "type": "model", "confidence": 0.93}},
+  {{"name": "Self-Attention", "type": "concept", "confidence": 0.90}},
+  {{"name": "NLP", "type": "field", "confidence": 0.85}}
+]
+
+Input: "Dropout là kỹ thuật regularization giúp giảm overfitting bằng cách ngẫu nhiên tắt một số neuron trong quá trình huấn luyện. Kỹ thuật này được Srivastava et al. giới thiệu năm 2014."
+Output:
+[
+  {{"name": "Dropout", "type": "algorithm", "confidence": 0.95}},
+  {{"name": "Regularization", "type": "concept", "confidence": 0.88}},
+  {{"name": "Overfitting", "type": "concept", "confidence": 0.90}},
+  {{"name": "Srivastava", "type": "author", "confidence": 0.85}}
+]
+
+Input: "Bảng 3 cho thấy kết quả trên trang 12. Xem thêm ở phần 4.2."
+Output: []
+
+Bây giờ hãy trích xuất từ đoạn văn sau. Chỉ trả về JSON array, KHÔNG có text giải thích.
+
+TEXT:
+{text}
+
+OUTPUT (JSON array only):

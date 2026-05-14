@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from typing import TYPE_CHECKING
@@ -546,6 +547,7 @@ class SemanticChunker:
     """
 
     _STRATEGY = "semantic_breakpoint_v1"
+    _embedding_semaphore = asyncio.Semaphore(1)
 
     def __init__(self, settings: Settings, embedder: "BGEM3Embedder | None" = None) -> None:
         self.settings = settings
@@ -553,6 +555,14 @@ class SemanticChunker:
         self._layout = LayoutAwareChunker(settings)
 
     def build_chunks(self, evidence_map: EvidenceMap) -> list[TextChunk]:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(self.build_chunks_async(evidence_map))
+        logger.warning("SemanticChunker.build_chunks called inside an event loop; falling back to layout chunker")
+        return self._layout.build_chunks(evidence_map)
+
+    async def build_chunks_async(self, evidence_map: EvidenceMap) -> list[TextChunk]:
         blocks = [b for b in evidence_map.blocks if b.snippet_original.strip()]
         if not blocks:
             return []
@@ -566,12 +576,18 @@ class SemanticChunker:
             expanded.extend(self._layout._split_oversized_block(block))
         blocks = expanded
 
-        # 2. Embed all blocks in one batch
+        # 2. Embed blocks in bounded batches to avoid document-level OOM.
         texts = [b.snippet_original for b in blocks]
         try:
-            embeddings = self.embedder.encode(texts)
+            embeddings = await self._encode_block_texts_async(texts)
         except Exception:
             logger.exception("SemanticChunker: embedding failed — falling back to layout chunker")
+            return self._layout.build_chunks(evidence_map)
+        if len(embeddings) != len(texts):
+            logger.warning(
+                "SemanticChunker: embedding count mismatch — falling back to layout chunker",
+                extra={"texts": len(texts), "embeddings": len(embeddings)},
+            )
             return self._layout.build_chunks(evidence_map)
 
         dense_vecs = [e.dense for e in embeddings]
@@ -662,6 +678,16 @@ class SemanticChunker:
     def _make_chunk(self, evidence_map: EvidenceMap, blocks: list[EvidenceBlock]) -> TextChunk:
         chunk = self._layout._make_chunk(evidence_map, blocks)
         return chunk.model_copy(update={"chunk_strategy": self._STRATEGY})
+
+    async def _encode_block_texts_async(self, texts: list[str]):
+        batch_size = max(1, int(getattr(self.settings, "embedding_batch_size", 8)))
+        embeddings = []
+        for start in range(0, len(texts), batch_size):
+            batch = texts[start:start + batch_size]
+            async with self._embedding_semaphore:
+                batch_embeddings = await asyncio.to_thread(self.embedder.encode, batch)
+            embeddings.extend(batch_embeddings)
+        return embeddings
 
 
 def build_chunker(settings: Settings, embedder: "BGEM3Embedder | None" = None) -> LayoutAwareChunker | SemanticChunker:

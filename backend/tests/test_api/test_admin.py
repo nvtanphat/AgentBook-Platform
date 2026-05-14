@@ -52,3 +52,18 @@ def test_admin_feedback_endpoint(monkeypatch) -> None:
     finally:
         app.dependency_overrides.clear()
         get_settings.cache_clear()
+
+
+def test_admin_metrics_requires_valid_admin_token_when_auth_enabled(monkeypatch) -> None:
+    monkeypatch.setenv("AGENTBOOK_TESTING", "true")
+    monkeypatch.setenv("AGENTBOOK_API_AUTH_ENABLED", "true")
+    monkeypatch.setenv("AGENTBOOK_API_KEY", "secret")
+    get_settings.cache_clear()
+    app.dependency_overrides[get_admin_service] = lambda: FakeAdminService()
+    try:
+        with TestClient(app) as client:
+            response = client.get("/api/v1/admin/metrics")
+        assert response.status_code == 401
+    finally:
+        app.dependency_overrides.clear()
+        get_settings.cache_clear()
