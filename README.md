@@ -1,8 +1,20 @@
-# AgentBook
+<div align="center">
+  <h1>🚀 AgentBook</h1>
+  <p><strong>Evidence-grounded learning assistant for university study materials — agentic RAG with verified citations across PDFs, slides, tables, scans, handwriting, and audio.</strong></p>
 
-> Evidence-grounded learning assistant for university study materials — agentic RAG with verified citations across PDFs, slides, tables, scans, handwriting, and audio.
+  [![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
+  [![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+  [![Vite](https://img.shields.io/badge/Vite-646CFF?style=flat-square&logo=vite&logoColor=white)](https://vitejs.dev/)
+  [![React](https://img.shields.io/badge/React-20232A?style=flat-square&logo=react&logoColor=61DAFB)](https://react.dev/)
+  [![MongoDB](https://img.shields.io/badge/MongoDB-47A248?style=flat-square&logo=mongodb&logoColor=white)](https://www.mongodb.com/)
+  [![Qdrant](https://img.shields.io/badge/Qdrant-Vector_DB-EF4444?style=flat-square&logo=qdrant&logoColor=white)](https://qdrant.tech/)
+  [![Redis](https://img.shields.io/badge/Redis-DC382D?style=flat-square&logo=redis&logoColor=white)](https://redis.io/)
+  [![Ollama](https://img.shields.io/badge/Ollama-Local_LLM-white?style=flat-square&logo=ollama&logoColor=black)](https://ollama.com/)
+  [![License](https://img.shields.io/badge/License-Apache_2.0-green.svg?style=flat-square)](https://opensource.org/licenses/Apache-2.0)
+</div>
 
 AgentBook turns heterogeneous course materials into a queryable, citation-backed knowledge surface. Every sentence in an answer is traceable to a chunk on a specific page, block, or audio segment of the source document. The system is built for the bilingual Vietnamese–English educational setting: students can ask in Vietnamese over English textbooks (or vice versa) and receive grounded answers without losing the original-language evidence.
+
 
 ---
 
