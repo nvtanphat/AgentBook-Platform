@@ -1,109 +1,203 @@
-# 🚀 AgentBook
+# AgentBook
 
-An advanced educational RAG (Retrieval-Augmented Generation) assistant that enables students and educators to upload learning materials (PDFs, documents, slides, images, and audio files) into organized collections and query them with precise, visual citation evidence.
+> Evidence-grounded learning assistant for university study materials — agentic RAG with verified citations across PDFs, slides, tables, scans, handwriting, and audio.
 
----
-
-## 📖 Overview
-
-**AgentBook** is a local-first, highly robust document intelligence platform designed to handle complex, heterogeneous university materials. It processes and indexes diverse formats into a unified evidence schema, delivering millisecond-level retrieval and pixel-level citation accuracy on the UI.
-
-The platform is specially optimized for **bilingual (Vietnamese & English) higher-education contexts**, enabling users to ask questions in Vietnamese over English documents without losing context or encountering translation hallucinations.
+AgentBook turns heterogeneous course materials into a queryable, citation-backed knowledge surface. Every sentence in an answer is traceable to a chunk on a specific page, block, or audio segment of the source document. The system is built for the bilingual Vietnamese–English educational setting: students can ask in Vietnamese over English textbooks (or vice versa) and receive grounded answers without losing the original-language evidence.
 
 ---
 
-## ✨ Key Features
+## Highlights
 
-- **📄 Universal Document Ingestion:** Normalizes multiple document layouts into an invariant coordinate and evidence citation schema:
-  - **PDF Documents:** Extracts precise pixel-level bounding boxes (`bbox`) to highlight cited text/figures directly on the PDF viewer.
-  - **Word Documents (DOCX):** Parses reading-order context and hierarchical document structures.
-  - **Lecture Slides (PPTX):** Aggregates scattered text blocks into slide-level contextual chunks.
-  - **Tabular Data (XLSX/CSV):** Converts data rows into structured natural sentences while maintaining column headers.
-  - **Images & Diagrams:** Extracts visual information, diagrams, and equations using OCR and vision-language models.
-  - **Audio Lectures:** Transcribes and segments lecture recordings. Clicking an audio citation automatically plays the exact segment in the UI player.
-- **⚡ Fast Progressive Enrichment:** Decouples synchronous text indexing (which takes less than 5 seconds) from background asynchronous visual captioning and deep processing, allowing instant searchability upon upload.
-- **🛡️ Bilingual Quality Gate:** Fuses cross-lingual retrieval and Vietnamese query translation to search both languages, rank them using Reciprocal Rank Fusion (RRF), and formulate answers in Vietnamese using original English snippets.
-- **🤖 Deterministic Multi-Agent System:** Orchestrates specialized agents (Planner, Director, Critic, Guardrails) with bounded reasoning loops to ensure low-latency, deterministic, and safe responses.
+- **Universal ingestion** — PDF, DOCX, PPTX, XLSX, CSV, PNG/JPG (printed + handwritten), and audio (MP3/WAV/M4A/FLAC/OGG/WebM) flow through a single block-level evidence schema with bounding boxes, page numbers, and audio timestamps preserved end-to-end.
+- **Hybrid retrieval** — BGE-M3 dense + sparse vectors fused via RRF in Qdrant, smart reranking with a cross-encoder, optional multi-query rewriting for hard recall, and conditional graph traversal for relation questions.
+- **Agentic reasoning** — A bounded multi-agent pipeline (Planner → Director → CRAG Critic → Reranker → Synthesizer → Guardrails → Sentence-Level Coverage Gate) orchestrates retrieval and answer generation with explicit safety gates instead of free-form ReAct loops.
+- **Cross-lingual robustness** — Native VI↔EN handling: queries are routed in both languages, evidence is kept in its source language, and the claim verifier is automatically bypassed when answer-language differs from chunk-language to avoid spurious refusals.
+- **Calibrated refusal** — Off-topic / chitchat / low-confidence questions are refused in seconds via an intent classifier shortcut; on-topic questions with weak grounding surface a *partial* badge instead of fabricating content.
+- **Pixel-accurate evidence UI** — Citations link back to the original PDF region, slide block, table row, or audio segment; clicking a citation scrolls and highlights the source.
+- **Knowledge graph + mindmap** — Entities and relations extracted at ingestion time power a navigable concept graph and an LLM-summarised topical mindmap per collection.
 
 ---
 
-## 🏗️ Technical Stack
+## Architecture
 
-- **Backend Framework**: Python 3.11+, FastAPI (Async), Pydantic v2
-- **Database & State**: MongoDB (via Beanie ODM), Redis, Celery (Distributed task queue)
-- **Vector Search**: Qdrant (Fusing dense semantic embeddings and sparse lexical vectors)
-- **Inference & Models**: 
-  - Local [Ollama](https://ollama.com/) running `qwen2.5:3b` and `qwen2.5-vl:7b`
-  - BGE-M3 (dense + sparse embedding), BGE Reranker
-  - Docling, EasyOCR, Whisper (audio transcription)
-- **Frontend App**: React 18, TypeScript, Vite, React Flow, TailwindCSS
+```
+┌──────────────────────── Ingestion ────────────────────────┐
+│  Upload  →  Docling parse  →  OCR / handwriting / audio   │
+│           →  layout normalize  →  chunking (token-aware)  │
+│           →  contextual enrichment  →  entity + relation  │
+│             extraction  →  embedding (BGE-M3 dense+sparse)│
+│           →  Qdrant index  +  Mongo evidence store        │
+└────────────────────────────────────────────────────────────┘
+                                │
+┌──────────────────────── Query  ───────────────────────────┐
+│  Intent classifier  (chitchat/off-topic shortcut)         │
+│        │                                                  │
+│  Query processor  (anaphora, language detect, multi-query)│
+│        │                                                  │
+│  Planner agent  →  Director agent  (text / graph / per-   │
+│                                     source retrieval)     │
+│        │                                                  │
+│  CRAG Critic  →  Cross-encoder rerank  →  Synthesizer     │
+│        │                                                  │
+│  Guardrails  (NLI claim verifier, contradiction detector) │
+│        │                                                  │
+│  Sentence-Level Coverage  (SLEC drop / hedge / refuse)    │
+│        │                                                  │
+│  Response parser  (citation inject, acronym strip,        │
+│                    language-drift strip)                  │
+└────────────────────────────────────────────────────────────┘
+```
+
+See [`AgentBook_Implementation_Plan.md`](AgentBook_Implementation_Plan.md) for the full pipeline specification and [`CLAUDE.md`](CLAUDE.md) for engineering invariants.
 
 ---
 
-## 🚀 Quick Start
+## Tech Stack
 
-### 1. Prerequisites
-- **Node.js** v18+ & **Python** 3.11+
-- **Docker Desktop** (running Qdrant, MongoDB, Redis)
-- **Ollama** (installed and running with `qwen2.5:3b` and `qwen2.5-vl:7b`)
+| Layer | Components |
+|---|---|
+| **API** | FastAPI (async), Pydantic v2, Beanie ODM, Slowapi rate limiting |
+| **Storage** | MongoDB (documents + evidence + graph), Qdrant (hybrid vectors), Redis (cache + Celery broker) |
+| **Embeddings** | BGE-M3 dense + sparse (FlagEmbedding), BGE reranker |
+| **Parsing** | Docling (PDF/DOCX/PPTX), EasyOCR (printed scans), VLM fallback (handwriting), Faster-Whisper (audio) |
+| **LLM** | Local Ollama (`qwen2.5:3b`, `qwen2.5-vl:7b`) with OpenAI-compatible cloud fallback |
+| **Background** | Celery (eager mode supported for local dev), structured background tasks |
+| **Frontend** | React 18, TypeScript, Vite, TailwindCSS, React Flow, Zustand |
+| **Tooling** | Pytest (15 test suites), Ruff, MyPy-friendly typing |
 
-### 2. Configure Environment Variables
-Create a `backend/.env` file with your configuration:
+---
+
+## Quick Start
+
+### Prerequisites
+
+- Python 3.12 (3.11+ supported)
+- Node.js 18+
+- Docker Desktop (for Qdrant)
+- A MongoDB instance (local Docker or Atlas — connection string only)
+- [Ollama](https://ollama.com) running locally with the LLM models pulled:
+  ```bash
+  ollama pull qwen2.5:3b
+  ollama pull qwen2.5-vl:7b
+  ```
+  BGE-M3 embeddings and the BGE reranker download automatically on first use through FlagEmbedding.
+
+### 1. Configure environment
+
+Create `backend/.env` from `backend/.env.example` and set at least:
+
 ```env
-AGENTBOOK_APP_ENV=development
-MONGODB_URI=mongodb://localhost:27017
+MONGODB_URI=mongodb://localhost:27017      # or your Atlas URI
 AGENTBOOK_MONGODB_DATABASE=agentbook
 AGENTBOOK_QDRANT_URL=http://localhost:6333
 AGENTBOOK_LLM_DEFAULT_PROVIDER=local
 AGENTBOOK_LLM_LOCAL_MODEL=qwen2.5:3b
 AGENTBOOK_OLLAMA_BASE_URL=http://localhost:11434
-AGENTBOOK_RERANKER_ENABLED=true
-AGENTBOOK_AGENTIC_RAG_ENABLED=true
+AGENTBOOK_CELERY_TASK_ALWAYS_EAGER=true    # run pipelines inline (no broker needed)
 ```
 
-### 3. Start the Platform
-Run the unified start script in PowerShell to boot up the entire local infrastructure and applications:
+Per-feature thresholds, top-k, prompts, and routing live in [`config/*.yaml`](config/) — never edit them in code.
+
+### 2. Start the platform
+
 ```powershell
 .\start_all.ps1
 ```
-Access the application dashboard at: **[http://localhost:5173](http://localhost:5173)**.
+
+The script boots Qdrant (Docker), the FastAPI backend on `:8000`, and the Vite dev server on `:5173`.
+
+| Service | URL |
+|---|---|
+| Frontend | http://localhost:5173 |
+| API | http://localhost:8000 |
+| Swagger docs | http://localhost:8000/docs |
+| Qdrant dashboard | http://localhost:6333/dashboard |
+
+### 3. First query
+
+1. Open the frontend, create a collection, and upload a document.
+2. Wait for the status to flip to *indexed* (typically 30–120 s for a typical PDF on a laptop CPU).
+3. Ask a question — every claim in the answer carries a `[N]` marker linking back to the source chunk.
 
 ---
 
-## 🧪 Evaluation Dataset Generation
-AgentBook includes an evolutionary dataset synthesis pipeline to generate golden benchmark datasets. 
+## Repository Layout
 
-To automatically generate a benchmark dataset of Q&A pairs (factual, reasoning, and multi-hop questions) from your database, run:
-```powershell
-python scripts/generate_testset.py
 ```
-The output dataset will be saved in `benchmarks/vn_edurag_2000.json`.
-
----
-
-## 📂 Repository Structure
-
-```text
 .
 ├── backend/
 │   ├── src/
-│   │   ├── agentic/      # Multi-Agentic Blackboard Orchestration
-│   │   ├── api/          # FastAPI Routes & Endpoints
-│   │   ├── core/         # Settings, LLM Providers, App configs
-│   │   ├── inference/    # Core Reasoning Engine & Response Parsers
-│   │   ├── rag/          # Hybrid Retrievers & Vector Search
-│   │   └── ...           # Ingestion pipelines (Docling, Whisper)
-│   └── tests/            # Pytest test suites
-├── frontend/             # React/Vite UI with AudioCitationPlayer & ReactFlow Graphs
-├── config/               # Model, retrieval, and guardrail YAML configs
-├── benchmarks/           # Generated Q&A benchmark datasets
-├── scripts/              # Dataset generator scripts
-├── docker-compose.yml    # Infrastructure configuration
-└── start_all.ps1         # Unified startup script
+│   │   ├── agentic/              # Bounded multi-agent orchestration
+│   │   │   ├── agents/           # Planner, Director, CRAG Critic, Synthesizer, Guardrails, Critic
+│   │   │   ├── tools/            # Hybrid text search, graph search, NLI verifier
+│   │   │   ├── planner.py        # Rule-based plan builder
+│   │   │   ├── service.py        # Coordinator (state machine over the blackboard)
+│   │   │   └── state.py          # Shared AgentState
+│   │   ├── api/v1/endpoints/     # FastAPI routes (query, materials, collections, graph, …)
+│   │   ├── core/                 # Settings, LLM factory, rate limit, security
+│   │   ├── evaluation/           # RAGAS evaluator (faithfulness, relevance, precision)
+│   │   ├── guardrails/           # Claim verifier, sentence-coverage gate, refusal policy
+│   │   ├── inference/            # Inference engine, response parser, reasoning-path builder
+│   │   ├── models/               # Beanie documents (Material, Chunk, Entity, Relation, …)
+│   │   ├── processing/           # Docling, OCR, handwriting, chunking, entity / relation extraction
+│   │   ├── prompts/              # System + task prompts (qa_grounded, summarization, claim_check, …)
+│   │   ├── rag/                  # Embedding, Qdrant store, hybrid retriever, rerankers, CRAG
+│   │   ├── schemas/              # Pydantic request / response schemas
+│   │   ├── services/             # Material / query / summary / study-guide / memory orchestration
+│   │   └── tasks/                # Celery task definitions
+│   └── tests/                    # Pytest: agentic, api, evaluation, guardrails, integration, …
+├── frontend/
+│   └── src/
+│       ├── api/                  # Typed API client
+│       ├── components/           # Workspace UI, GraphCanvas, AudioCitationPlayer, EvidencePanel, …
+│       ├── pages/                # WorkspacePage and route shells
+│       └── state/                # Workspace store
+├── config/                       # YAML configs (model, retrieval, guardrails, logging)
+├── scripts/                      # reindex_material.py, smoke_test_api.py
+├── data/test data/               # Sample corpora + scripted test scenarios
+├── docker-compose.yml            # Qdrant container
+└── start_all.ps1                 # Unified dev launcher
 ```
 
 ---
 
-## 🛡️ License
+## Configuration Surface
 
-This project is licensed under the **Apache License 2.0**.
+All quality-affecting knobs live in [`config/*.yaml`](config/) and can be overridden by environment variables. The most relevant for tuning:
+
+| File | Knob | Purpose |
+|---|---|---|
+| `retrieval_config.yaml` | `dense_top_k`, `sparse_top_k`, `rerank_input_k`, `final_top_k` | Recall / context width |
+| `retrieval_config.yaml` | `agentic_rag_enabled`, `agentic_critic_enabled`, `agentic_max_retrieval_iterations` | Agentic pipeline shape |
+| `retrieval_config.yaml` | `multi_query_enabled`, `crag.evaluator_enabled` | Query expansion + CRAG triage |
+| `guardrails_config.yaml` | `sentence_coverage.supported_threshold` | SLEC strictness |
+| `guardrails_config.yaml` | `claim_verification.contradicted_majority_fraction` | NLI tolerance |
+| `guardrails_config.yaml` | `refusal.min_rerank_score`, `min_confidence_threshold` | Refusal floors |
+| `model_config.yaml` | `local_model`, `provider`, `temperature` | LLM routing |
+
+---
+
+## Testing
+
+```bash
+cd backend
+pytest                            # full suite
+pytest tests/test_agentic         # agentic-only
+pytest -k "test_retrieval"        # by name
+```
+
+End-to-end API smoke and ablation scripts (LEGACY vs AGENTIC paths, multimodal coverage, refusal correctness) live in [`scripts/smoke_test_api.py`](scripts/smoke_test_api.py).
+
+---
+
+## Documentation
+
+- [**Implementation Plan**](AgentBook_Implementation_Plan.md) — product scope, API contracts, data schemas
+- [**CLAUDE.md**](CLAUDE.md) — engineering invariants (evidence trace, owner / collection isolation, no hardcoded thresholds)
+- [**SOTA Recommendations**](SOTA_Recommendations.md) — research notes on retrieval and reasoning upgrades
+
+---
+
+## License
+
+Apache License 2.0.
