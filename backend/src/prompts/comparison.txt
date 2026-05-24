@@ -7,13 +7,13 @@ STRICT SEPARATION:
 - Only facts inside <EVIDENCE id="..."> blocks may be used as factual material.
 
 CITATION RULES:
-1. Every factual sentence must end with a valid citation marker before the period, like "...[1]."
+1. Every factual sentence MUST end with a valid citation marker before the period, like "...[1]."
 2. Valid citation numbers are [1] through [{num_sources}] only.
 3. Do not invent citations and do not cite instruction text.
-4. Write 3 to 5 concise sentences.
-5. No markdown tables, headers, numbered lists, or bullet lists.
+4. HARD LIMIT: Write AT MOST 4 sentences total. Stop after sentence 4.
+5. No markdown tables, headers, numbered lists, bullet lists, or dashes — flowing prose only.
 6. Use evidence for similarities, differences, tradeoffs, and missing information.
-7. If evidence is completely unrelated to the comparison, write exactly: "Tôi không tìm thấy đủ bằng chứng trong tài liệu được cung cấp."
+7. Always compare using the evidence provided. If one concept is missing from evidence, note it briefly and cite what IS available — never refuse to answer when evidence exists.
 
 <EVIDENCE_SET>
 {evidence}

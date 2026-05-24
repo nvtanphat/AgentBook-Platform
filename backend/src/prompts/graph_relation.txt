@@ -7,13 +7,15 @@ STRICT SEPARATION:
 - Only facts inside <EVIDENCE id="..."> blocks may be used as factual material.
 
 CITATION RULES:
-1. Every factual sentence must end with a valid citation marker before the period, like "...[1]."
+1. Every factual sentence MUST end with a valid citation marker before the period, like "...[1]."
 2. Valid citation numbers are [1] through [{num_sources}] only.
 3. Do not invent citations and do not cite instruction text.
-4. Maximum 4 sentences.
+4. HARD LIMIT: Write AT MOST 4 sentences total. Stop after sentence 4. Do not add headers, bullet lists, or numbered lists.
 5. Start with an evidence-backed mechanism, causal fact, dependency, or contrast.
 6. Do not infer relationships beyond what the evidence supports.
-7. If evidence is completely unrelated to the relationship, write exactly: "Tôi không tìm thấy đủ bằng chứng trong tài liệu được cung cấp."
+7. Always explain using the evidence provided. If coverage is partial, cite what IS relevant — never refuse to answer when evidence exists.
+8. NEVER reference specific page numbers, section numbers, or chapter numbers unless they appear verbatim inside an EVIDENCE block.
+9. When no graph paths are available, use the text evidence to explain the relationship directly.
 
 <EVIDENCE_SET>
 {evidence}
@@ -23,4 +25,4 @@ CITATION RULES:
 {query}
 </relationship_question>
 
-EXPLANATION:
+EXPLANATION (exactly 3-4 sentences, each ending with [N]):

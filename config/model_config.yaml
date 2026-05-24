@@ -1,13 +1,20 @@
+memory:
+  max_turns: 10
+
 llm:
   default_provider: "local"
-  local_model: "qwen3:4b"
+  local_model: "qwen2.5:3b"
   ollama_base_url: "http://localhost:11434"
   api_fallback_provider: "openai_compatible"
   openai_base_url: "https://api.openai.com/v1"
   openai_model: "gpt-4o-mini"
   temperature: 0.0
   max_output_tokens: 1024
-  timeout_seconds: 120
+  # Raised from 120s → 300s after v15 eval (summarization on 9-citation prompts
+  # exceeded the 180s default in 3 consecutive runs, triggering false refusals
+  # with reason="The answer generation pipeline failed").
+  timeout_seconds: 300
+  self_rag_reflection_enabled: true
 
 embedding:
   model_name: "BAAI/bge-m3"
@@ -29,6 +36,22 @@ versions:
   chunk_version: "layout_v2_table_aware"
   index_version: "qdrant_dense_sparse_v1"
 
+audio:
+  # faster-whisper for audio file transcription. Models cached locally on first use.
+  # Model trade-offs on CPU (int8 quantized):
+  #   tiny    (75MB)  ~5× real-time, accuracy ~60% for VN — fast but very noisy
+  #   small   (250MB) ~1-2× real-time, ~70-75% — too many VN errors
+  #   medium  (770MB) ~3× slower, ~85% — sweet spot for VN technical content
+  #   large-v3 (1.5GB) ~6-8× slower, ~92% — best general; download cost high
+  whisper_model: "medium"
+  whisper_device: "cpu"
+  whisper_compute_type: "int8"   # int8 cho CPU; float16 cho GPU
+  whisper_beam_size: 5
+  whisper_vad_filter: true       # bỏ silence trước transcribe
+  # Chunking audio: gộp segments thành chunks ~30-60s mỗi cái
+  audio_chunk_target_seconds: 45
+  audio_chunk_min_seconds: 10
+
 ocr:
   # Accuracy-first defaults for dense scanned text and Vietnamese screenshots.
   # Use PP-OCRv5_mobile_det only when CPU latency matters more than extraction quality.
@@ -44,3 +67,16 @@ ocr:
 
 pdf:
   render_scale: 2.0                    # accuracy-first OCR fallback for scanned PDF pages
+
+visual_embedding:
+  enabled: true                        # SigLIP figure embedding + image-as-query path
+  model: "google/siglip-base-patch16-224"
+  device: "cpu"                        # "cpu" or "cuda" — change to "cuda" for GPU, no code change needed
+  dense_size: 768
+  batch_size: 4
+  embedding_backend: "pytorch"        # "pytorch" today; "onnx" for INT8 quantised future path
+
+figure_captioner:
+  max_workers: 4                       # max threads for parallel figure captioning
+  ollama_timeout_seconds: 300.0        # httpx timeout per VLM call
+  image_max_side_px: 1024              # resize longest side before base64 encoding

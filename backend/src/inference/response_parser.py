@@ -67,15 +67,23 @@ def _fix_numbered_lists(text: str) -> str:
 
 
 def _collapse_repeated_sentence_citations(text: str) -> str:
-    """Avoid noisy repeated markers like '[1]. ... [1].' within one paragraph."""
-    paragraphs = text.split("\n\n")
-    return "\n\n".join(_SAME_CITATION_SENTENCE_RE.sub(r"\2\3", paragraph) for paragraph in paragraphs)
+    """No-op: every sentence keeps its own [N] marker for traceability.
+
+    Previously this stripped duplicate consecutive [N] markers for visual cleanliness,
+    but that erased citations the evaluation pipeline (and downstream grounding checks)
+    rely on. Repeated markers are acceptable for verifiability.
+    """
+    return text
 
 
 class ResponseParser:
-    _MIN_CITATION_OVERLAP = 2  # require content-word overlap to suppress spurious citations
+    _MIN_CITATION_OVERLAP = 1  # lowered for cross-lingual VI→EN: connector sentences have 0 EN-token overlap
+    # Match the full refusal phrase only — "không đủ" alone is a common Vietnamese phrase
+    # (e.g. "không đủ để phân biệt") that must NOT trigger early exit from inject_citations.
     _REFUSAL_RE = re.compile(
-        r"(kh[oô]ng\s+t[iì]m\s+th[aấ]y|kh[oô]ng\s+[dđ][uủ]|not\s+enough\s+evidence|cannot\s+answer|can't\s+answer)",
+        r"(kh[oô]ng\s+t[iì]m\s+th[aấ]y\s+[dđ][uủ]\s+b[aằ]ng\s+ch[uứ]ng|"
+        r"not\s+enough\s+evidence\s+to\s+answer|"
+        r"cannot\s+answer\s+this|can't\s+answer\s+this)",
         re.IGNORECASE,
     )
 
@@ -87,8 +95,13 @@ class ResponseParser:
         lines: list[str] = []
         for index, chunk in enumerate(chunks, start=1):
             doc_name = chunk.evidence[0].document_name if chunk.evidence else chunk.document_name
-            pages = sorted({e.page for e in chunk.evidence}) if chunk.evidence else chunk.source_pages
-            page_str = f"trang {pages[0]}" if len(pages) == 1 else f"trang {pages[0]}-{pages[-1]}"
+            pages = sorted({e.page for e in chunk.evidence}) if chunk.evidence else (chunk.source_pages or [])
+            if not pages:
+                page_str = "N/A"
+            elif len(pages) == 1:
+                page_str = f"trang {pages[0]}"
+            else:
+                page_str = f"trang {pages[0]}-{pages[-1]}"
             safe_doc_name = html.escape(doc_name or "", quote=True)
             safe_page_str = html.escape(page_str, quote=True)
             safe_content = html.escape(chunk.content or "")
@@ -123,9 +136,12 @@ class ResponseParser:
                 focus_text=focus_text,
             )
 
-            # All contributing blocks exposed for downstream spatial rendering
-            evidence_blocks = [
-                EvidenceBlockSchema(
+            # All contributing blocks exposed for downstream spatial rendering.
+            # Audio blocks carry start/end timestamps in metadata → forward for UI seek.
+            evidence_blocks = []
+            for e in evs:
+                meta = e.metadata or {}
+                evidence_blocks.append(EvidenceBlockSchema(
                     block_id=e.block_id,
                     block_type=e.block_type,
                     page=e.page,
@@ -135,9 +151,10 @@ class ResponseParser:
                     confidence=e.confidence,
                     material_id=e.material_id,
                     doc_name=e.document_name,
-                )
-                for e in evs
-            ]
+                    audio_start_seconds=meta.get("start_seconds"),
+                    audio_end_seconds=meta.get("end_seconds"),
+                    audio_file=meta.get("audio_file"),
+                ))
 
             citations.append(
                 CitationSchema(
@@ -219,6 +236,13 @@ class ResponseParser:
             stripped = text.strip()
             if not stripped:
                 return text
+            # Strip orphan citation-only "sentences" produced when the LLM
+            # appends an extra marker after a complete sentence's terminal
+            # punctuation (e.g. "...chuỗi thời gian [4]. [1]" → drop the
+            # trailing "[1]" because it has no body text to ground).
+            without_citations = _citation_num_re.sub("", stripped).strip(" .!?,;:")
+            if not without_citations:
+                return ""
             has_citation = bool(_citation_num_re.search(stripped))
             if not has_citation:
                 tag = _best_tag(stripped)
@@ -250,6 +274,138 @@ class ResponseParser:
 
         result = "\n\n".join(result_paragraphs)
         return _collapse_repeated_sentence_citations(result)
+
+    # Matches ACRONYM (Expansion Phrase) where the acronym is 2–6 letters/digits
+    # (mixed-case allowed so e.g. "ETTm1" is matched) and the parenthetical is
+    # a multi-word phrase (not a single number or unit).
+    _ACRONYM_EXPANSION_RE = re.compile(
+        r"\b([A-Z][A-Za-z0-9]{1,5})\s*\(([^()]{4,80})\)",
+    )
+    # Matches ACRONYM <connector phrase> <Expansion Phrase>. The connector
+    # list is a small, multilingual set of common "is short for"-style
+    # expressions used by the LLM when it sidesteps the parenthetical form.
+    _ACRONYM_CONNECTOR_RE = re.compile(
+        r"\b([A-Z][A-Za-z0-9]{1,5})\s+"
+        r"(?:là\s+viết\s+tắt\s+(?:của|cho)|"
+        r"là\s+tên\s+gọi\s+(?:của|cho)|"
+        r"viết\s+tắt\s+(?:của|cho)|"
+        r"nghĩa\s+là|"
+        r"có\s+nghĩa\s+là|"
+        r"stands\s+for|"
+        r"is\s+short\s+for|"
+        r"is\s+the\s+abbreviation\s+(?:of|for)|"
+        r"abbreviation\s+(?:of|for))\s+"
+        r"([A-ZÀ-ɏḀ-ỿ][A-Za-z0-9À-ɏḀ-ỿ][^.\n,;:!?\[]{2,80})",
+        re.IGNORECASE,
+    )
+    _EXPANSION_WORD_RE = re.compile(r"[A-Za-zÀ-ɏḀ-ỿ][A-Za-zÀ-ɏḀ-ỿ\-]+")
+
+    @classmethod
+    def strip_unverified_acronym_expansions(
+        cls, answer: str, chunks: list[RetrievedChunk]
+    ) -> str:
+        """Remove `ACRONYM (Expansion Phrase)` patterns when the expansion is
+        not present in any retrieved chunk.
+
+        Small local LLMs (e.g. Qwen3-4B) often paraphrase acronyms from their
+        training corpus rather than the evidence — sometimes correctly (RAG →
+        Retrieval-Augmented Generation), sometimes not (RAG → Relevant Answer
+        Generation). Either way, the expansion isn't grounded in the user's
+        materials and should be removed.
+        """
+        if not answer or not chunks:
+            return answer
+        # Concatenate evidence text once for substring lookup.
+        evidence_text = " \n ".join(
+            (chunk.content or "")
+            + " "
+            + " ".join((e.snippet_original or "") for e in (chunk.evidence or []))
+            for chunk in chunks
+        ).lower()
+
+        def _expansion_is_grounded(expansion: str) -> bool:
+            normalized = expansion.strip().lower()
+            if not normalized:
+                return True  # nothing meaningful to validate
+            if normalized in evidence_text:
+                return True
+            # Tolerate single character variation (hyphen vs space).
+            collapsed_norm = re.sub(r"[-\s]+", " ", normalized)
+            collapsed_evidence = re.sub(r"[-\s]+", " ", evidence_text)
+            return collapsed_norm in collapsed_evidence
+
+        def _replace_paren(match: re.Match) -> str:
+            acronym, expansion = match.group(1), match.group(2)
+            if acronym.lower() == acronym:
+                return match.group(0)
+            words = cls._EXPANSION_WORD_RE.findall(expansion)
+            if len(words) < 2:
+                return match.group(0)
+            if _expansion_is_grounded(expansion):
+                return match.group(0)
+            return acronym
+
+        def _replace_connector(match: re.Match) -> str:
+            acronym, expansion = match.group(1), match.group(2)
+            if acronym.lower() == acronym:
+                return match.group(0)
+            words = cls._EXPANSION_WORD_RE.findall(expansion)
+            if len(words) < 2:
+                return match.group(0)
+            if _expansion_is_grounded(expansion):
+                return match.group(0)
+            # Drop the connector phrase + bogus expansion, keep only the acronym.
+            return acronym
+
+        answer = cls._ACRONYM_EXPANSION_RE.sub(_replace_paren, answer)
+        answer = cls._ACRONYM_CONNECTOR_RE.sub(_replace_connector, answer)
+        return answer
+
+    @staticmethod
+    def strip_language_drift(answer: str, expected_lang: str) -> str:
+        """Drop sentences whose detected language differs from the requested
+        answer language.
+
+        Small local LLMs sometimes leak words from neighbouring languages
+        mid-sentence (observed: Indonesian fragments inside Vietnamese
+        answers). langdetect is used per-sentence; sentences too short to
+        classify reliably are kept.
+        """
+        if not answer or not expected_lang:
+            return answer
+        try:
+            from langdetect import detect, DetectorFactory, LangDetectException
+            DetectorFactory.seed = 0
+        except ImportError:
+            return answer
+
+        expected = expected_lang.lower()[:2]
+        kept_paragraphs: list[str] = []
+        for para in answer.split("\n\n"):
+            if not para.strip():
+                kept_paragraphs.append(para)
+                continue
+            sentences = re.split(r"(?<=[.!?])\s+", para)
+            kept: list[str] = []
+            for sent in sentences:
+                stripped = sent.strip()
+                # Strip citation markers for language detection.
+                probe = re.sub(r"\[\d+\]", "", stripped).strip()
+                # Too short to detect reliably; keep as-is.
+                if len(probe) < 25:
+                    kept.append(sent)
+                    continue
+                try:
+                    detected = detect(probe).lower()[:2]
+                except LangDetectException:
+                    kept.append(sent)
+                    continue
+                if detected == expected:
+                    kept.append(sent)
+                # else: drop the sentence as language drift
+            if kept:
+                kept_paragraphs.append(" ".join(s for s in kept if s.strip()))
+        return "\n\n".join(kept_paragraphs).strip()
 
     @staticmethod
     def invalid_citation_numbers(answer: str, citation_count: int) -> list[int]:

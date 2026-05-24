@@ -1,0 +1,98 @@
+{
+  "success": true,
+  "message": "Query answered successfully",
+  "data": {
+    "answer": "Tôi không tìm thấy đủ bằng chứng trong tài liệu được cung cấp để trả lời câu hỏi này.",
+    "answer_language": "vi",
+    "query_language": "vi",
+    "translated_query": null,
+    "source_languages": [],
+    "citations": [],
+    "confidence": 0.0,
+    "was_refused": true,
+    "refusal_reason": "no relevant evidence was found in the scoped materials",
+    "reasoning_path": [],
+    "coverage": {
+      "requested_count": 1,
+      "covered_count": 0,
+      "sources": [
+        {
+          "material_id": "6a124eae48a253a8162ee23d",
+          "name": "scan_low_quality.png",
+          "covered": false
+        }
+      ]
+    },
+    "agent_trace": {
+      "plan_type": "general",
+      "steps": [
+        {
+          "name": "plan_query",
+          "status": "completed",
+          "query": "Hệ thống đọc được gì từ scan_low_quality.png?",
+          "tool": "planner",
+          "duration_ms": null,
+          "sources_requested": 1,
+          "sources_covered": null,
+          "evidence_count": null,
+          "warning": "general",
+          "metadata": {
+            "sub_question_count": 0,
+            "iteration": 0,
+            "llm_planner_enabled": false,
+            "sub_questions": []
+          }
+        },
+        {
+          "name": "retrieve_evidence",
+          "status": "skipped",
+          "query": null,
+          "tool": "retriever_director",
+          "duration_ms": null,
+          "sources_requested": null,
+          "sources_covered": null,
+          "evidence_count": 0,
+          "warning": null,
+          "metadata": {
+            "iteration": 0,
+            "queries": 1
+          }
+        },
+        {
+          "name": "crag_triage",
+          "status": "skipped",
+          "query": null,
+          "tool": "crag_critic",
+          "duration_ms": null,
+          "sources_requested": null,
+          "sources_covered": null,
+          "evidence_count": 0,
+          "warning": null,
+          "metadata": {
+            "correct": 0,
+            "ambiguous": 0,
+            "incorrect": 0
+          }
+        },
+        {
+          "name": "rerank_evidence",
+          "status": "completed",
+          "query": null,
+          "tool": null,
+          "duration_ms": null,
+          "sources_requested": null,
+          "sources_covered": null,
+          "evidence_count": 0,
+          "warning": null,
+          "metadata": null
+        }
+      ],
+      "repair_attempted": false,
+      "verification": null
+    },
+    "sentence_coverage": null,
+    "used_entity_ids": [],
+    "used_relation_ids": []
+  },
+  "error": null
+}

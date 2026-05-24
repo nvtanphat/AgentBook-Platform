@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlignLeft, Check, ChevronDown, ChevronRight, ChevronUp,
-  Copy, FileText, Heading, Image, Loader2, Table2, Sigma,
+  Copy, FileAudio, FileSpreadsheet, FileText, Heading, Image, Loader2,
+  Presentation, Sigma, Table2, X,
 } from "lucide-react";
 import { Citation, EvidenceBlock, EvidencePageResponse, loadEvidencePage } from "../api/client";
 import SnippetRenderer from "./SnippetRenderer";
+import { AudioSegmentList } from "./AudioCitationPlayer";
 import { useWorkspace } from "../state/workspace";
 
 // ─── Keyword highlight ────────────────────────────────────────────────────────
@@ -194,7 +196,7 @@ function CopyButton({ text }: { text: string }) {
 
 const SNIPPET_COLLAPSE_LINES = 6;
 
-function MatchedSnippet({ citation }: { citation: Citation }) {
+function MatchedSnippet({ citation, ownerId }: { citation: Citation; ownerId: string }) {
   const lines = citation.snippet_original.split("\n");
   const isLong = lines.length > SNIPPET_COLLAPSE_LINES;
   const [expanded, setExpanded] = useState(false);
@@ -202,16 +204,33 @@ function MatchedSnippet({ citation }: { citation: Citation }) {
     ? lines.slice(0, SNIPPET_COLLAPSE_LINES).join("\n") + "…"
     : citation.snippet_original;
 
+  // Find audio evidence block (if citation came from an audio source).
+  // Primary block first (matches citation snippet); fallback to any block with audio metadata.
+  const audioBlock = citation.evidence_blocks?.find(
+    (b) => b.audio_start_seconds != null && b.audio_end_seconds != null,
+  );
+
   return (
     <div className="shrink-0 border-b border-outline bg-slate-50 px-4 py-3">
       <div className="mb-2 flex items-center gap-2 flex-wrap">
         <p className="text-[10px] font-semibold uppercase tracking-wider text-muted">Grounded evidence</p>
         <EvidenceRoleBadge role={citation.role} />
         <EvidenceQualityBadge confidence={citation.confidence} blockType={citation.block_type} />
+        {audioBlock && (
+          <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-primary">
+            🎧 Audio
+          </span>
+        )}
         <div className="ml-auto">
           <CopyButton text={citation.snippet_original} />
         </div>
       </div>
+      {audioBlock && citation.evidence_blocks && (
+        <AudioSegmentList
+          evidenceBlocks={citation.evidence_blocks}
+          ownerId={ownerId}
+        />
+      )}
       <div className="rounded-md border border-primary/30 bg-white px-3 py-2 shadow-sm">
         <div className="border-l-4 border-primary pl-2">
           <SnippetRenderer
@@ -454,21 +473,116 @@ function PageView({
   keywords: Set<string>;
   exactSnippet?: string | null;
 }) {
+  const [typeFilter, setTypeFilter] = useState<string | null>(null);
+  const [searchText, setSearchText] = useState("");
+  const highlightedRef = useRef<HTMLDivElement | null>(null);
+
+  // Auto-scroll to highlighted block when citation changes
+  useEffect(() => {
+    if (!highlightBlockId || !highlightedRef.current) return;
+    // Slight delay so DOM is ready, smooth scroll into view (centered)
+    const t = setTimeout(() => {
+      highlightedRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 100);
+    return () => clearTimeout(t);
+  }, [highlightBlockId, pageData.blocks.length]);
+
+  // Compute block type counts for filter chips
+  const typeCounts = pageData.blocks.reduce<Record<string, number>>((acc, b) => {
+    const t = (b.block_type || "text").toLowerCase();
+    acc[t] = (acc[t] || 0) + 1;
+    return acc;
+  }, {});
+  const sortedTypes = Object.entries(typeCounts).sort((a, b) => b[1] - a[1]);
+
+  const searchLower = searchText.trim().toLowerCase();
+  const visibleBlocks = pageData.blocks.filter((b) => {
+    if (typeFilter && (b.block_type || "text").toLowerCase() !== typeFilter) return false;
+    if (searchLower && !(b.snippet_original || "").toLowerCase().includes(searchLower)) return false;
+    return true;
+  });
+
   return (
-    <div className="space-y-2 p-4">
-      {pageData.blocks.length === 0 ? (
-        <p className="py-8 text-center text-sm text-muted">No blocks found on this page.</p>
-      ) : (
-        pageData.blocks.map((block) => (
-          <BlockCard
-            key={block.block_id}
-            block={block}
-            highlighted={block.block_id === highlightBlockId}
-            keywords={keywords}
-            exactSnippet={exactSnippet}
-          />
-        ))
+    <div>
+      {/* Filter + search toolbar */}
+      {pageData.blocks.length > 3 && (
+        <div className="sticky top-0 z-10 border-b border-outline bg-surface/95 backdrop-blur px-4 py-2 space-y-2">
+          {sortedTypes.length > 1 && (
+            <div className="flex items-center gap-1 flex-wrap">
+              <button
+                type="button"
+                onClick={() => setTypeFilter(null)}
+                className={`rounded-full px-2 py-0.5 text-[10px] font-semibold transition ${
+                  typeFilter === null
+                    ? "bg-primary text-white"
+                    : "bg-slate-100 text-muted hover:bg-slate-200"
+                }`}
+              >
+                Tất cả ({pageData.blocks.length})
+              </button>
+              {sortedTypes.map(([type, count]) => {
+                const cfg = BLOCK_TYPE_CONFIG[type] ?? { icon: <FileText size={9} />, color: "bg-slate-100 text-slate-600", label: type };
+                const active = typeFilter === type;
+                return (
+                  <button
+                    key={type}
+                    type="button"
+                    onClick={() => setTypeFilter(active ? null : type)}
+                    className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold transition ${
+                      active ? "bg-primary text-white" : cfg.color + " hover:opacity-80"
+                    }`}
+                  >
+                    {cfg.icon}
+                    {cfg.label} ({count})
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          <div className="relative">
+            <input
+              type="text"
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              placeholder="Tìm trong evidence..."
+              className="w-full rounded-md border border-outline bg-surface px-2.5 py-1 pr-7 text-xs text-text placeholder:text-muted focus:border-primary focus:outline-none"
+            />
+            {searchText && (
+              <button
+                type="button"
+                onClick={() => setSearchText("")}
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted hover:text-text"
+                aria-label="Clear search"
+              >
+                <X size={11} />
+              </button>
+            )}
+          </div>
+        </div>
       )}
+      <div className="space-y-2 p-4">
+        {visibleBlocks.length === 0 ? (
+          <p className="py-8 text-center text-sm text-muted">
+            {pageData.blocks.length === 0
+              ? "No blocks found on this page."
+              : "Không có block nào khớp filter / search."}
+          </p>
+        ) : (
+          visibleBlocks.map((block) => {
+            const isHighlighted = block.block_id === highlightBlockId;
+            return (
+              <div key={block.block_id} ref={isHighlighted ? highlightedRef : null}>
+                <BlockCard
+                  block={block}
+                  highlighted={isHighlighted}
+                  keywords={keywords}
+                  exactSnippet={exactSnippet}
+                />
+              </div>
+            );
+          })
+        )}
+      </div>
     </div>
   );
 }
@@ -626,18 +740,38 @@ export default function EvidencePanel({ citation: citationProp, docId: docIdProp
     return () => { cancelled = true; };
   }, [targetDocId, targetPage, workspace.ownerId, workspace.collectionId]);
 
-  // Empty state
+  // Empty state with onboarding
   if (!citation && !targetDocId) {
     return (
       <aside className="panel flex h-full flex-col bg-surface-low">
-        <div className="flex items-center gap-2 border-b border-outline bg-white px-5 py-4">
+        <div className="flex items-center gap-2 border-b border-outline bg-surface px-5 py-4">
           <FileText size={18} className="text-primary" />
           <h3 className="font-heading text-lg font-semibold text-text">Evidence</h3>
         </div>
-        <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center">
-          <FileText size={32} className="text-slate-200" />
-          <p className="text-sm font-semibold text-text">No evidence selected</p>
-          <p className="text-xs text-muted">Click a citation [N] in the chat to inspect grounded evidence.</p>
+        <div className="flex flex-1 flex-col items-center justify-center gap-4 p-6 text-center">
+          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/8">
+            <FileText size={28} className="text-primary/60" />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-text">Chưa có evidence được chọn</p>
+            <p className="mt-1 text-xs text-muted max-w-[260px]">
+              Click vào citation <span className="font-mono font-bold text-primary">[1]</span> trong câu trả lời để xem evidence trace.
+            </p>
+          </div>
+          <div className="mt-2 grid gap-2 text-left max-w-[280px]">
+            <div className="flex items-start gap-2 rounded-lg border border-outline/50 bg-surface px-3 py-2">
+              <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-100 text-blue-600 text-[10px] font-bold">1</span>
+              <span className="text-[11px] text-muted leading-relaxed">Hỏi câu hỏi trong chat</span>
+            </div>
+            <div className="flex items-start gap-2 rounded-lg border border-outline/50 bg-surface px-3 py-2">
+              <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-100 text-blue-600 text-[10px] font-bold">2</span>
+              <span className="text-[11px] text-muted leading-relaxed">Click <span className="font-mono font-bold text-primary">[N]</span> để mở evidence panel</span>
+            </div>
+            <div className="flex items-start gap-2 rounded-lg border border-outline/50 bg-surface px-3 py-2">
+              <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-100 text-blue-600 text-[10px] font-bold">3</span>
+              <span className="text-[11px] text-muted leading-relaxed">Filter, search và verify trên nguồn gốc</span>
+            </div>
+          </div>
         </div>
       </aside>
     );
@@ -646,13 +780,25 @@ export default function EvidencePanel({ citation: citationProp, docId: docIdProp
   const docName = pageData?.doc_name ?? citation?.doc_name ?? "Evidence";
   const citationNumber = currentIndex >= 0 ? currentIndex + 1 : null;
 
+  // Pick file-type-aware icon for header (PDF/DOCX/PPTX/XLSX/Image/Audio)
+  const _ext = (docName.split(".").pop() || "").toLowerCase();
+  const fileTypeIcon = (() => {
+    if (/^(mp3|wav|m4a|ogg|flac|webm|aac)$/.test(_ext)) return <FileAudio size={14} className="shrink-0 text-pink-500" />;
+    if (/^(png|jpe?g|gif|webp|bmp)$/.test(_ext)) return <Image size={14} className="shrink-0 text-purple-500" />;
+    if (/^(xlsx?|csv)$/.test(_ext)) return <FileSpreadsheet size={14} className="shrink-0 text-emerald-600" />;
+    if (/^pptx?$/.test(_ext)) return <Presentation size={14} className="shrink-0 text-amber-500" />;
+    if (_ext === "pdf") return <FileText size={14} className="shrink-0 text-red-500" />;
+    if (/^docx?$/.test(_ext)) return <FileText size={14} className="shrink-0 text-blue-500" />;
+    return <FileText size={14} className="shrink-0 text-primary" />;
+  })();
+
   return (
     <aside className="panel flex h-full flex-col bg-surface-low">
       {/* ── Header ── */}
       <div className="flex shrink-0 items-start justify-between border-b border-outline bg-white px-4 py-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
-            <FileText size={14} className="shrink-0 text-primary" />
+            {fileTypeIcon}
             <h3 className="truncate text-sm font-semibold text-text" title={docName}>{docName}</h3>
           </div>
           {/* Source chain breadcrumb */}
@@ -690,7 +836,7 @@ export default function EvidencePanel({ citation: citationProp, docId: docIdProp
       <ActiveEvidenceStrip citations={activeCitations} currentIndex={currentIndex} onSelect={navigateTo} />
 
       {/* ── Matched snippet ── */}
-      {citation && <MatchedSnippet citation={citation} />}
+      {citation && <MatchedSnippet citation={citation} ownerId={workspace.ownerId} />}
 
       {/* ── Full page ── */}
       <div className="flex-1 overflow-y-auto">

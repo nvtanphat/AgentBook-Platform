@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import json
+import time
 from fastapi.testclient import TestClient
 from types import SimpleNamespace
 
@@ -16,6 +17,7 @@ from src.schemas.query import AgentTrace, AgentTraceStep, QueryResponse
 
 def make_token(payload: dict, *, secret: str = "secret") -> str:
     header = {"alg": "HS256", "typ": "JWT"}
+    payload = {**payload, "exp": int(time.time()) + 3600}
 
     def enc(value: dict | bytes) -> str:
         raw = json.dumps(value, separators=(",", ":")).encode() if isinstance(value, dict) else value

@@ -1,0 +1,768 @@
+[
+  {
+    "id": "q001",
+    "citations": [
+      {
+        "doc_id": "6a00479382721158f7a69520",
+        "page": 1,
+        "block_id": "#/pictures/1"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 11,
+        "block_id": "#/texts/119"
+      },
+      {
+        "doc_id": "6a00479182721158f7a69518",
+        "page": 1,
+        "block_id": "blk-fa40fdeb70fa"
+      }
+    ],
+    "retrieved_evidence": [
+      {
+        "doc_id": "6a00479382721158f7a69520",
+        "page": 1,
+        "block_id": "#/pictures/1"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 11,
+        "block_id": "#/texts/119"
+      },
+      {
+        "doc_id": "6a00479182721158f7a69518",
+        "page": 1,
+        "block_id": "blk-fa40fdeb70fa"
+      }
+    ]
+  },
+  {
+    "id": "q002",
+    "citations": [
+      {
+        "doc_id": "6a00479382721158f7a69520",
+        "page": 1,
+        "block_id": "#/texts/199"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 11,
+        "block_id": "#/texts/119"
+      }
+    ],
+    "retrieved_evidence": [
+      {
+        "doc_id": "6a00479382721158f7a69520",
+        "page": 1,
+        "block_id": "#/texts/199"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 11,
+        "block_id": "#/texts/119"
+      }
+    ]
+  },
+  {
+    "id": "q003",
+    "citations": [
+      {
+        "doc_id": "6a00479382721158f7a69520",
+        "page": 1,
+        "block_id": "#/texts/182"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 4,
+        "block_id": "#/texts/44"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 11,
+        "block_id": "#/texts/119"
+      }
+    ],
+    "retrieved_evidence": [
+      {
+        "doc_id": "6a00479382721158f7a69520",
+        "page": 1,
+        "block_id": "#/texts/182"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 4,
+        "block_id": "#/texts/44"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 11,
+        "block_id": "#/texts/119"
+      }
+    ]
+  },
+  {
+    "id": "q004",
+    "citations": [
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 11,
+        "block_id": "#/texts/137"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 11,
+        "block_id": "#/texts/124"
+      }
+    ],
+    "retrieved_evidence": [
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 11,
+        "block_id": "#/texts/137"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 11,
+        "block_id": "#/texts/124"
+      }
+    ]
+  },
+  {
+    "id": "q005",
+    "citations": [
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 2,
+        "block_id": "#/texts/9"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 4,
+        "block_id": "#/texts/44"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 11,
+        "block_id": "#/texts/124"
+      }
+    ],
+    "retrieved_evidence": [
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 2,
+        "block_id": "#/texts/9"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 4,
+        "block_id": "#/texts/44"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 11,
+        "block_id": "#/texts/124"
+      }
+    ]
+  },
+  {
+    "id": "q006",
+    "citations": [
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 1,
+        "block_id": "#/pictures/1"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 1,
+        "block_id": "#/pictures/0"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 11,
+        "block_id": "#/texts/124"
+      },
+      {
+        "doc_id": "6a00479382721158f7a69520",
+        "page": 1,
+        "block_id": "#/texts/164"
+      },
+      {
+        "doc_id": "6a00479382721158f7a69520",
+        "page": 1,
+        "block_id": "blk-39c2b704b31a"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951a",
+        "page": 1,
+        "block_id": "blk-dc66d02398f4"
+      }
+    ],
+    "retrieved_evidence": [
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 1,
+        "block_id": "#/pictures/1"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 1,
+        "block_id": "#/pictures/0"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 11,
+        "block_id": "#/texts/124"
+      },
+      {
+        "doc_id": "6a00479382721158f7a69520",
+        "page": 1,
+        "block_id": "#/texts/164"
+      },
+      {
+        "doc_id": "6a00479382721158f7a69520",
+        "page": 1,
+        "block_id": "blk-39c2b704b31a"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951a",
+        "page": 1,
+        "block_id": "blk-dc66d02398f4"
+      }
+    ]
+  },
+  {
+    "id": "q007",
+    "citations": [
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 11,
+        "block_id": "#/texts/128"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 10,
+        "block_id": "#/texts/118"
+      }
+    ],
+    "retrieved_evidence": [
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 11,
+        "block_id": "#/texts/128"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 10,
+        "block_id": "#/texts/118"
+      }
+    ]
+  },
+  {
+    "id": "q008",
+    "citations": [
+      {
+        "doc_id": "6a00479182721158f7a69518",
+        "page": 1,
+        "block_id": "blk-fa40fdeb70fa"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 5,
+        "block_id": "#/texts/56"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 11,
+        "block_id": "#/texts/119"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 4,
+        "block_id": "#/texts/44"
+      },
+      {
+        "doc_id": "6a00479382721158f7a69520",
+        "page": 1,
+        "block_id": "#/pictures/1"
+      }
+    ],
+    "retrieved_evidence": [
+      {
+        "doc_id": "6a00479182721158f7a69518",
+        "page": 1,
+        "block_id": "blk-fa40fdeb70fa"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 5,
+        "block_id": "#/texts/56"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 11,
+        "block_id": "#/texts/119"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 4,
+        "block_id": "#/texts/44"
+      },
+      {
+        "doc_id": "6a00479382721158f7a69520",
+        "page": 1,
+        "block_id": "#/pictures/1"
+      }
+    ]
+  },
+  {
+    "id": "q009",
+    "citations": [
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 4,
+        "block_id": "#/texts/44"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 11,
+        "block_id": "#/texts/137"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 11,
+        "block_id": "#/texts/124"
+      }
+    ],
+    "retrieved_evidence": [
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 4,
+        "block_id": "#/texts/44"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 11,
+        "block_id": "#/texts/137"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 11,
+        "block_id": "#/texts/124"
+      }
+    ]
+  },
+  {
+    "id": "q010",
+    "citations": [
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 8,
+        "block_id": "#/pictures/2"
+      },
+      {
+        "doc_id": "6a00479382721158f7a69520",
+        "page": 1,
+        "block_id": "#/pictures/1"
+      }
+    ],
+    "retrieved_evidence": [
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 8,
+        "block_id": "#/pictures/2"
+      },
+      {
+        "doc_id": "6a00479382721158f7a69520",
+        "page": 1,
+        "block_id": "#/pictures/1"
+      }
+    ]
+  },
+  {
+    "id": "q011",
+    "citations": [],
+    "retrieved_evidence": []
+  },
+  {
+    "id": "q012",
+    "citations": [
+      {
+        "doc_id": "6a00479382721158f7a69520",
+        "page": 1,
+        "block_id": "#/texts/192"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 4,
+        "block_id": "#/texts/44"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 11,
+        "block_id": "#/texts/119"
+      }
+    ],
+    "retrieved_evidence": [
+      {
+        "doc_id": "6a00479382721158f7a69520",
+        "page": 1,
+        "block_id": "#/texts/192"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 4,
+        "block_id": "#/texts/44"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 11,
+        "block_id": "#/texts/119"
+      }
+    ]
+  },
+  {
+    "id": "q013",
+    "citations": [
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 7,
+        "block_id": "#/pictures/2"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 11,
+        "block_id": "#/texts/128"
+      },
+      {
+        "doc_id": "6a00479182721158f7a69518",
+        "page": 1,
+        "block_id": "blk-d10562a5c29d"
+      }
+    ],
+    "retrieved_evidence": [
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 7,
+        "block_id": "#/pictures/2"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 11,
+        "block_id": "#/texts/128"
+      },
+      {
+        "doc_id": "6a00479182721158f7a69518",
+        "page": 1,
+        "block_id": "blk-d10562a5c29d"
+      }
+    ]
+  },
+  {
+    "id": "q014",
+    "citations": [
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 11,
+        "block_id": "#/texts/119"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 4,
+        "block_id": "#/texts/44"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 2,
+        "block_id": "#/texts/9"
+      }
+    ],
+    "retrieved_evidence": [
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 11,
+        "block_id": "#/texts/119"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 4,
+        "block_id": "#/texts/44"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 2,
+        "block_id": "#/texts/9"
+      }
+    ]
+  },
+  {
+    "id": "q015",
+    "citations": [],
+    "retrieved_evidence": []
+  },
+  {
+    "id": "q016",
+    "citations": [
+      {
+        "doc_id": "6a00479382721158f7a69520",
+        "page": 1,
+        "block_id": "#/texts/192"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 11,
+        "block_id": "#/texts/119"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 4,
+        "block_id": "#/texts/44"
+      },
+      {
+        "doc_id": "6a00479182721158f7a69518",
+        "page": 1,
+        "block_id": "blk-fa40fdeb70fa"
+      }
+    ],
+    "retrieved_evidence": [
+      {
+        "doc_id": "6a00479382721158f7a69520",
+        "page": 1,
+        "block_id": "#/texts/192"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 11,
+        "block_id": "#/texts/119"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 4,
+        "block_id": "#/texts/44"
+      },
+      {
+        "doc_id": "6a00479182721158f7a69518",
+        "page": 1,
+        "block_id": "blk-fa40fdeb70fa"
+      }
+    ]
+  },
+  {
+    "id": "q017",
+    "citations": [
+      {
+        "doc_id": "6a00479382721158f7a69520",
+        "page": 1,
+        "block_id": "blk-8c9528b31fab"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 11,
+        "block_id": "#/texts/119"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 4,
+        "block_id": "#/texts/44"
+      },
+      {
+        "doc_id": "6a00479382721158f7a69520",
+        "page": 1,
+        "block_id": "blk-3b1f47262a66"
+      }
+    ],
+    "retrieved_evidence": [
+      {
+        "doc_id": "6a00479382721158f7a69520",
+        "page": 1,
+        "block_id": "blk-8c9528b31fab"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 11,
+        "block_id": "#/texts/119"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 4,
+        "block_id": "#/texts/44"
+      },
+      {
+        "doc_id": "6a00479382721158f7a69520",
+        "page": 1,
+        "block_id": "blk-3b1f47262a66"
+      }
+    ]
+  },
+  {
+    "id": "q018",
+    "citations": [
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 11,
+        "block_id": "#/texts/126"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 4,
+        "block_id": "#/texts/44"
+      },
+      {
+        "doc_id": "6a00479382721158f7a69520",
+        "page": 1,
+        "block_id": "#/texts/104"
+      }
+    ],
+    "retrieved_evidence": [
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 11,
+        "block_id": "#/texts/126"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 4,
+        "block_id": "#/texts/44"
+      },
+      {
+        "doc_id": "6a00479382721158f7a69520",
+        "page": 1,
+        "block_id": "#/texts/104"
+      }
+    ]
+  },
+  {
+    "id": "q019",
+    "citations": [
+      {
+        "doc_id": "6a00479382721158f7a69520",
+        "page": 1,
+        "block_id": "#/texts/192"
+      },
+      {
+        "doc_id": "6a00479382721158f7a69520",
+        "page": 1,
+        "block_id": "#/texts/107"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 5,
+        "block_id": "#/texts/56"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 11,
+        "block_id": "#/texts/119"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 4,
+        "block_id": "#/texts/44"
+      },
+      {
+        "doc_id": "6a00479182721158f7a69518",
+        "page": 1,
+        "block_id": "blk-fa40fdeb70fa"
+      }
+    ],
+    "retrieved_evidence": [
+      {
+        "doc_id": "6a00479382721158f7a69520",
+        "page": 1,
+        "block_id": "#/texts/192"
+      },
+      {
+        "doc_id": "6a00479382721158f7a69520",
+        "page": 1,
+        "block_id": "#/texts/107"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 5,
+        "block_id": "#/texts/56"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 11,
+        "block_id": "#/texts/119"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 4,
+        "block_id": "#/texts/44"
+      },
+      {
+        "doc_id": "6a00479182721158f7a69518",
+        "page": 1,
+        "block_id": "blk-fa40fdeb70fa"
+      }
+    ]
+  },
+  {
+    "id": "q020",
+    "citations": [
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 11,
+        "block_id": "#/texts/126"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 4,
+        "block_id": "#/texts/44"
+      },
+      {
+        "doc_id": "6a00479382721158f7a69520",
+        "page": 1,
+        "block_id": "#/pictures/1"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 7,
+        "block_id": "#/pictures/2"
+      },
+      {
+        "doc_id": "6a00479182721158f7a69518",
+        "page": 1,
+        "block_id": "blk-fa40fdeb70fa"
+      },
+      {
+        "doc_id": "6a00479382721158f7a69520",
+        "page": 1,
+        "block_id": "#/texts/192"
+      }
+    ],
+    "retrieved_evidence": [
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 11,
+        "block_id": "#/texts/126"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 4,
+        "block_id": "#/texts/44"
+      },
+      {
+        "doc_id": "6a00479382721158f7a69520",
+        "page": 1,
+        "block_id": "#/pictures/1"
+      },
+      {
+        "doc_id": "6a00479282721158f7a6951c",
+        "page": 7,
+        "block_id": "#/pictures/2"
+      },
+      {
+        "doc_id": "6a00479182721158f7a69518",
+        "page": 1,
+        "block_id": "blk-fa40fdeb70fa"
+      },
+      {
+        "doc_id": "6a00479382721158f7a69520",
+        "page": 1,
+        "block_id": "#/texts/192"
+      }
+    ]
+  }
+]

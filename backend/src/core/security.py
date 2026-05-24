@@ -30,6 +30,14 @@ MIME_ALLOWLIST: dict[str, set[str]] = {
     "xlsx": {"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/zip"},
     "xls": {"application/vnd.ms-excel", "application/octet-stream"},
     "csv": {"text/csv", "application/csv", "text/plain", "application/vnd.ms-excel"},
+    # Audio MIME types (browser MediaRecorder + common encoders)
+    "mp3": {"audio/mpeg", "audio/mp3", "application/octet-stream"},
+    "wav": {"audio/wav", "audio/x-wav", "audio/wave", "application/octet-stream"},
+    "m4a": {"audio/mp4", "audio/x-m4a", "audio/m4a", "application/octet-stream"},
+    "ogg": {"audio/ogg", "application/ogg", "application/octet-stream"},
+    "flac": {"audio/flac", "audio/x-flac", "application/octet-stream"},
+    "webm": {"audio/webm", "video/webm", "application/octet-stream"},
+    "aac": {"audio/aac", "audio/x-aac", "application/octet-stream"},
 }
 
 
@@ -134,6 +142,29 @@ def validate_upload_head(
             head.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise UploadValidationError("CSV must be UTF-8 text for MVP ingestion") from exc
+
+    # Audio magic bytes — best-effort (browsers often send octet-stream)
+    if extension == "mp3":
+        # MP3 may start with ID3 tag or frame sync (0xFFFB/0xFFE3)
+        if not (head.startswith(b"ID3") or (len(head) >= 2 and head[0] == 0xFF and (head[1] & 0xE0) == 0xE0)):
+            raise UploadValidationError("MP3 magic bytes are invalid")
+    elif extension == "wav":
+        if not (head.startswith(b"RIFF") and b"WAVE" in head[:16]):
+            raise UploadValidationError("WAV magic bytes are invalid")
+    elif extension == "flac":
+        if not head.startswith(b"fLaC"):
+            raise UploadValidationError("FLAC magic bytes are invalid")
+    elif extension == "ogg":
+        if not head.startswith(b"OggS"):
+            raise UploadValidationError("OGG magic bytes are invalid")
+    elif extension in {"m4a", "aac"}:
+        # M4A: ftyp box at offset 4; AAC: ADTS sync 0xFFF
+        if not (b"ftyp" in head[:16] or (len(head) >= 2 and head[0] == 0xFF and (head[1] & 0xF0) == 0xF0)):
+            raise UploadValidationError(f"{extension.upper()} magic bytes are invalid")
+    elif extension == "webm":
+        # WebM = EBML container, starts with 0x1A45DFA3
+        if not head.startswith(b"\x1a\x45\xdf\xa3"):
+            raise UploadValidationError("WebM magic bytes are invalid")
 
     return extension
 

@@ -1,0 +1,618 @@
+{
+  "success": true,
+  "message": "Query answered successfully",
+  "data": {
+    "answer": "Trong bảng data_table.csv có sản phẩm có rating cao nhất là iPhone 15 Pro với đánh giá 4.8[5].",
+    "answer_language": "vi",
+    "query_language": "vi",
+    "translated_query": null,
+    "source_languages": [
+      "vi"
+    ],
+    "citations": [
+      {
+        "doc_id": "6a124ead48a253a8162ee237",
+        "doc_name": "data_table.csv",
+        "page": 1,
+        "pages": [
+          1
+        ],
+        "block_id": "blk-b49f7c91bacf",
+        "block_type": "paragraph",
+        "snippet_original": "Hàng 16 của bảng 'data_table'. Tên sản phẩm: Lenovo ThinkPad X1. Danh mục: Máy tính. Giá: 36000000. Số lượng: 18. Đánh giá: 4.6.",
+        "snippet_translated": null,
+        "bbox": null,
+        "role": "primary",
+        "source_language": "vi",
+        "confidence": 0.7230871555444565,
+        "evidence_blocks": [
+          {
+            "block_id": "blk-b49f7c91bacf",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Hàng 16 của bảng 'data_table'. Tên sản phẩm: Lenovo ThinkPad X1. Danh mục: Máy tính. Giá: 36000000. Số lượng: 18. Đánh giá: 4.6.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a124ead48a253a8162ee237",
+            "doc_name": "data_table.csv",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-aeecf3477897",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Hàng 17 của bảng 'data_table'. Tên sản phẩm: Acer Aspire 7. Danh mục: Máy tính. Giá: 17500000. Số lượng: 60. Đánh giá: 4.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a124ead48a253a8162ee237",
+            "doc_name": "data_table.csv",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-c7ad0797aaf1",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Hàng 18 của bảng 'data_table'. Tên sản phẩm: Google Pixel 8. Danh mục: Điện thoại. Giá: 18500000. Số lượng: 36. Đánh giá: 4.5.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a124ead48a253a8162ee237",
+            "doc_name": "data_table.csv",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-6e6c8f2c4f6e",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Hàng 19 của bảng 'data_table'. Tên sản phẩm: DJI Osmo Pocket 3. Danh mục: Máy ảnh. Giá: 14500000. Số lượng: 44. Đánh giá: 4.6.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a124ead48a253a8162ee237",
+            "doc_name": "data_table.csv",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-46d85f1f2a3e",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Hàng 20 của bảng 'data_table'. Tên sản phẩm: Samsung Monitor 27. Danh mục: Màn hình. Giá: 5200000. Số lượng: 100. Đánh giá: 4.2.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a124ead48a253a8162ee237",
+            "doc_name": "data_table.csv",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-ac3a87c37d5d",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Hàng 21 của bảng 'data_table'. Tên sản phẩm: Keychron K2. Danh mục: Phụ kiện. Giá: 2100000. Số lượng: 140. Đánh giá: 4.4.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a124ead48a253a8162ee237",
+            "doc_name": "data_table.csv",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-610f8d474da1",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Hàng 22 của bảng 'data_table'. Tên sản phẩm: Bose SoundLink. Danh mục: Loa. Giá: 3900000. Số lượng: 82. Đánh giá: 4.3.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a124ead48a253a8162ee237",
+            "doc_name": "data_table.csv",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          }
+        ]
+      },
+      {
+        "doc_id": "6a124ead48a253a8162ee237",
+        "doc_name": "data_table.csv",
+        "page": 1,
+        "pages": [
+          1
+        ],
+        "block_id": "blk-a09df68e4cfa",
+        "block_type": "paragraph",
+        "snippet_original": "Hàng 9 của bảng 'data_table'. Tên sản phẩm: Kindle Paperwhite. Danh mục: Thiết bị đọc. Giá: 4200000. Số lượng: 88. Đánh giá: 4.4.",
+        "snippet_translated": null,
+        "bbox": null,
+        "role": "supporting",
+        "source_language": "vi",
+        "confidence": 0.7216753769444387,
+        "evidence_blocks": [
+          {
+            "block_id": "blk-a09df68e4cfa",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Hàng 9 của bảng 'data_table'. Tên sản phẩm: Kindle Paperwhite. Danh mục: Thiết bị đọc. Giá: 4200000. Số lượng: 88. Đánh giá: 4.4.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a124ead48a253a8162ee237",
+            "doc_name": "data_table.csv",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-e1929ac1e66c",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Hàng 10 của bảng 'data_table'. Tên sản phẩm: Asus ROG Zephyrus. Danh mục: Máy tính. Giá: 37000000. Số lượng: 22. Đánh giá: 4.3.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a124ead48a253a8162ee237",
+            "doc_name": "data_table.csv",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-b73d2eff289a",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Hàng 11 của bảng 'data_table'. Tên sản phẩm: Apple Watch Series 9. Danh mục: Đồng hồ. Giá: 10500000. Số lượng: 70. Đánh giá: 4.5.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a124ead48a253a8162ee237",
+            "doc_name": "data_table.csv",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-6c562a0d481f",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Hàng 12 của bảng 'data_table'. Tên sản phẩm: Xiaomi Pad 6. Danh mục: Máy tính bảng. Giá: 8500000. Số lượng: 130. Đánh giá: 4.2.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a124ead48a253a8162ee237",
+            "doc_name": "data_table.csv",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-99331cf2fecb",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Hàng 13 của bảng 'data_table'. Tên sản phẩm: Canon EOS R50. Danh mục: Máy ảnh. Giá: 18500000. Số lượng: 28. Đánh giá: 4.4.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a124ead48a253a8162ee237",
+            "doc_name": "data_table.csv",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-1f0e67118752",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Hàng 14 của bảng 'data_table'. Tên sản phẩm: Anker PowerCore. Danh mục: Phụ kiện. Giá: 1200000. Số lượng: 240. Đánh giá: 4.1.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a124ead48a253a8162ee237",
+            "doc_name": "data_table.csv",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-25c418e7f281",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Hàng 15 của bảng 'data_table'. Tên sản phẩm: AirPods Pro 2. Danh mục: Tai nghe. Giá: 6200000. Số lượng: 110. Đánh giá: 4.7.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a124ead48a253a8162ee237",
+            "doc_name": "data_table.csv",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-b49f7c91bacf",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Hàng 16 của bảng 'data_table'. Tên sản phẩm: Lenovo ThinkPad X1. Danh mục: Máy tính. Giá: 36000000. Số lượng: 18. Đánh giá: 4.6.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a124ead48a253a8162ee237",
+            "doc_name": "data_table.csv",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          }
+        ]
+      },
+      {
+        "doc_id": "6a124ead48a253a8162ee237",
+        "doc_name": "data_table.csv",
+        "page": 1,
+        "pages": [
+          1
+        ],
+        "block_id": "blk-4a60940fcbe1",
+        "block_type": "table",
+        "snippet_original": "| Tên sản phẩm | Danh mục | Giá | Số lượng | Đánh giá |\n| --- | --- | --- | --- | --- |\n| Laptop Dell XPS | Máy tính | 25000000 | 50 | 4.5 |\n| iPhone 15 Pro | Điện thoại | 29000000 | 120 | 4.8 |\n| Samsung Galaxy S24 | Điện thoại | 23000000 | 95 | 4.6 |\n| MacBook Air M3 | Máy tính | 28000000 | 40 | 4.7 |\n| Sony WH-1000XM5 | Tai nghe | 8500000 | 75 | 4.8 |\n| Logitech MX Master 3S | Phụ kiện | 2400000 | 160 | 4.6 |\n| iPad Air | Máy tính bảng | 16500000 | 55 | 4.5 |\n| Kindle Paperwhite | Thiết bị đọc | 4200000 | 88 | 4.4 |\n| Asus ROG Zephyrus | Máy tính | 37000000 | 22 | 4.3 |\n| Apple Watch Series 9 | Đồng hồ | 10500000 | 70 | 4.5 |\n| Xiaomi Pad 6 | Máy tính bảng | 8500000 | 130 | 4.2 |\n| Canon EOS R50 | Máy ảnh | 18500000 | 28 | 4.4 |\n| Anker PowerCore | Phụ kiện | 1200000 | 240 | 4.1 |\n| AirPods Pro 2 | Tai nghe | 6200000 | 110 | 4.7 |\n| Lenovo ThinkPad X1 | Máy tính | 36000000 | 18 | 4.6 |\n| Acer Aspire 7 | Máy tính | 17500000 | 60 | 4.0 |\n| Google Pixel 8 | Điện thoại | 18500000 | 36 | 4.5 |\n| DJI Osmo Pocket 3 | Máy ảnh | 14500000 | 44 | 4.6 |\n| Samsung Monitor 27 | Màn hình | 5200000 | 100 | 4.2 |\n| Keychron K2 | Phụ kiện | 2100000 | 140 | 4.4 |\n| Bose SoundLink | Loa | 3900000 | 82 | 4.3 |",
+        "snippet_translated": null,
+        "bbox": null,
+        "role": "supporting",
+        "source_language": "vi",
+        "confidence": 0.579882154772102,
+        "evidence_blocks": [
+          {
+            "block_id": "blk-4a60940fcbe1",
+            "block_type": "table",
+            "page": 1,
+            "snippet_original": "| Tên sản phẩm | Danh mục | Giá | Số lượng | Đánh giá |\n| --- | --- | --- | --- | --- |\n| Laptop Dell XPS | Máy tính | 25000000 | 50 | 4.5 |\n| iPhone 15 Pro | Điện thoại | 29000000 | 120 | 4.8 |\n| Samsung Galaxy S24 | Điện thoại | 23000000 | 95 | 4.6 |\n| MacBook Air M3 | Máy tính | 28000000 | 40 | 4.7 |\n| Sony WH-1000XM5 | Tai nghe | 8500000 | 75 | 4.8 |\n| Logitech MX Master 3S | Phụ kiện | 2400000 | 160 | 4.6 |\n| iPad Air | Máy tính bảng | 16500000 | 55 | 4.5 |\n| Kindle Paperwhite | Thiết bị đọc | 4200000 | 88 | 4.4 |\n| Asus ROG Zephyrus | Máy tính | 37000000 | 22 | 4.3 |\n| Apple Watch Series 9 | Đồng hồ | 10500000 | 70 | 4.5 |\n| Xiaomi Pad 6 | Máy tính bảng | 8500000 | 130 | 4.2 |\n| Canon EOS R50 | Máy ảnh | 18500000 | 28 | 4.4 |\n| Anker PowerCore | Phụ kiện | 1200000 | 240 | 4.1 |\n| AirPods Pro 2 | Tai nghe | 6200000 | 110 | 4.7 |\n| Lenovo ThinkPad X1 | Máy tính | 36000000 | 18 | 4.6 |\n| Acer Aspire 7 | Máy tính | 17500000 | 60 | 4.0 |\n| Google Pixel 8 | Điện thoại | 18500000 | 36 | 4.5 |\n| DJI Osmo Pocket 3 | Máy ảnh | 14500000 | 44 | 4.6 |\n| Samsung Monitor 27 | Màn hình | 5200000 | 100 | 4.2 |\n| Keychron K2 | Phụ kiện | 2100000 | 140 | 4.4 |\n| Bose SoundLink | Loa | 3900000 | 82 | 4.3 |",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a124ead48a253a8162ee237",
+            "doc_name": "data_table.csv",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          }
+        ]
+      },
+      {
+        "doc_id": "6a124ead48a253a8162ee237",
+        "doc_name": "data_table.csv",
+        "page": 1,
+        "pages": [
+          1
+        ],
+        "block_id": "blk-fb52e4643da4",
+        "block_type": "paragraph",
+        "snippet_original": "Tóm tắt bảng — sheet 'data_table' có 21 hàng × 5 cột. Các cột: Tên sản phẩm, Danh mục, Giá (số), Số lượng (số), Đánh giá (số).",
+        "snippet_translated": null,
+        "bbox": null,
+        "role": "supporting",
+        "source_language": "vi",
+        "confidence": 0.5260616247376331,
+        "evidence_blocks": [
+          {
+            "block_id": "blk-fb52e4643da4",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Tóm tắt bảng — sheet 'data_table' có 21 hàng × 5 cột. Các cột: Tên sản phẩm, Danh mục, Giá (số), Số lượng (số), Đánh giá (số).",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a124ead48a253a8162ee237",
+            "doc_name": "data_table.csv",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          }
+        ]
+      },
+      {
+        "doc_id": "6a124ead48a253a8162ee237",
+        "doc_name": "data_table.csv",
+        "page": 1,
+        "pages": [
+          1
+        ],
+        "block_id": "blk-dcb40710bc30",
+        "block_type": "paragraph",
+        "snippet_original": "Hàng 7 của bảng 'data_table'. Tên sản phẩm: Logitech MX Master 3S. Danh mục: Phụ kiện. Giá: 2400000. Số lượng: 160. Đánh giá: 4.6.",
+        "snippet_translated": null,
+        "bbox": null,
+        "role": "supporting",
+        "source_language": "vi",
+        "confidence": 0.7253997581570928,
+        "evidence_blocks": [
+          {
+            "block_id": "blk-94f9d1a04c81",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Hàng 2 của bảng 'data_table'. Tên sản phẩm: Laptop Dell XPS. Danh mục: Máy tính. Giá: 25000000. Số lượng: 50. Đánh giá: 4.5.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a124ead48a253a8162ee237",
+            "doc_name": "data_table.csv",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-98fb5216c3e9",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Hàng 3 của bảng 'data_table'. Tên sản phẩm: iPhone 15 Pro. Danh mục: Điện thoại. Giá: 29000000. Số lượng: 120. Đánh giá: 4.8.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a124ead48a253a8162ee237",
+            "doc_name": "data_table.csv",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-b5dec2b13180",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Hàng 4 của bảng 'data_table'. Tên sản phẩm: Samsung Galaxy S24. Danh mục: Điện thoại. Giá: 23000000. Số lượng: 95. Đánh giá: 4.6.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a124ead48a253a8162ee237",
+            "doc_name": "data_table.csv",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-5292ce9aacc1",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Hàng 5 của bảng 'data_table'. Tên sản phẩm: MacBook Air M3. Danh mục: Máy tính. Giá: 28000000. Số lượng: 40. Đánh giá: 4.7.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a124ead48a253a8162ee237",
+            "doc_name": "data_table.csv",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-0201d3e699d4",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Hàng 6 của bảng 'data_table'. Tên sản phẩm: Sony WH-1000XM5. Danh mục: Tai nghe. Giá: 8500000. Số lượng: 75. Đánh giá: 4.8.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a124ead48a253a8162ee237",
+            "doc_name": "data_table.csv",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-dcb40710bc30",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Hàng 7 của bảng 'data_table'. Tên sản phẩm: Logitech MX Master 3S. Danh mục: Phụ kiện. Giá: 2400000. Số lượng: 160. Đánh giá: 4.6.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a124ead48a253a8162ee237",
+            "doc_name": "data_table.csv",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-5de1cf5ca890",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Hàng 8 của bảng 'data_table'. Tên sản phẩm: iPad Air. Danh mục: Máy tính bảng. Giá: 16500000. Số lượng: 55. Đánh giá: 4.5.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a124ead48a253a8162ee237",
+            "doc_name": "data_table.csv",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-a09df68e4cfa",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Hàng 9 của bảng 'data_table'. Tên sản phẩm: Kindle Paperwhite. Danh mục: Thiết bị đọc. Giá: 4200000. Số lượng: 88. Đánh giá: 4.4.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a124ead48a253a8162ee237",
+            "doc_name": "data_table.csv",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          }
+        ]
+      }
+    ],
+    "confidence": 0.6552,
+    "was_refused": false,
+    "refusal_reason": null,
+    "reasoning_path": [
+      {
+        "step_type": "retrieve",
+        "entities": [],
+        "relations": [],
+        "entity_ids": [],
+        "relation_ids": [],
+        "confidence": 0.58000002,
+        "description": "Retrieved 6 relevant chunks from 1 documents: data_table.csv"
+      },
+      {
+        "step_type": "synthesize",
+        "entities": [],
+        "relations": [],
+        "entity_ids": [],
+        "relation_ids": [],
+        "confidence": 0.9598269462585449,
+        "description": "Synthesized answer from top 5 most relevant chunks"
+      }
+    ],
+    "coverage": {
+      "requested_count": 1,
+      "covered_count": 1,
+      "sources": [
+        {
+          "material_id": "6a124ead48a253a8162ee237",
+          "name": "data_table.csv",
+          "covered": true
+        }
+      ]
+    },
+    "agent_trace": {
+      "plan_type": "general",
+      "steps": [
+        {
+          "name": "plan_query",
+          "status": "completed",
+          "query": "Trong data_table.csv, sản phẩm nào có rating cao nhất?",
+          "tool": "planner",
+          "duration_ms": null,
+          "sources_requested": 1,
+          "sources_covered": null,
+          "evidence_count": null,
+          "warning": "general",
+          "metadata": {
+            "sub_question_count": 0,
+            "iteration": 0,
+            "llm_planner_enabled": false,
+            "sub_questions": []
+          }
+        },
+        {
+          "name": "retrieve_evidence",
+          "status": "completed",
+          "query": null,
+          "tool": "retriever_director",
+          "duration_ms": null,
+          "sources_requested": null,
+          "sources_covered": null,
+          "evidence_count": 6,
+          "warning": null,
+          "metadata": {
+            "iteration": 0,
+            "queries": 1
+          }
+        },
+        {
+          "name": "crag_triage",
+          "status": "completed",
+          "query": null,
+          "tool": "crag_critic",
+          "duration_ms": null,
+          "sources_requested": null,
+          "sources_covered": null,
+          "evidence_count": 6,
+          "warning": null,
+          "metadata": {
+            "correct": 4,
+            "ambiguous": 2,
+            "incorrect": 0
+          }
+        },
+        {
+          "name": "rerank_evidence",
+          "status": "completed",
+          "query": null,
+          "tool": null,
+          "duration_ms": null,
+          "sources_requested": null,
+          "sources_covered": null,
+          "evidence_count": 5,
+          "warning": null,
+          "metadata": null
+        },
+        {
+          "name": "synthesize_answer",
+          "status": "completed",
+          "query": null,
+          "tool": "synthesizer",
+          "duration_ms": null,
+          "sources_requested": null,
+          "sources_covered": null,
+          "evidence_count": 5,
+          "warning": null,
+          "metadata": null
+        },
+        {
+          "name": "verify_claims",
+          "status": "completed",
+          "query": null,
+          "tool": "guardrails",
+          "duration_ms": null,
+          "sources_requested": null,
+          "sources_covered": null,
+          "evidence_count": 25,
+          "warning": null,
+          "metadata": {
+            "verdict": "supported",
+            "unsupported_sentence_count": 0,
+            "invalid_citation_count": 0,
+            "answer_repair_attempted": false
+          }
+        }
+      ],
+      "repair_attempted": false,
+      "verification": {
+        "verdict": "supported",
+        "confidence": 0.8,
+        "warning": null,
+        "unsupported_sentence_count": 0,
+        "invalid_citation_count": 0,
+        "repair_attempted": false
+      }
+    },
+    "sentence_coverage": {
+      "enabled": true,
+      "total_sentences": 1,
+      "supported_count": 1,
+      "partial_count": 0,
+      "unsupported_count": 0,
+      "dropped_count": 0,
+      "coverage_ratio": 1.0,
+      "refused": false,
+      "sentences": [
+        {
+          "index": 0,
+          "text": "Trong bảng data_table.csv có sản phẩm có rating cao nhất là iPhone 15 Pro với đánh giá 4.8[5].",
+          "status": "supported",
+          "score": 0.7259963737863666,
+          "supporting_block_ids": [
+            "blk-98fb5216c3e9",
+            "blk-4a60940fcbe1"
+          ],
+          "citation_refs": []
+        }
+      ]
+    },
+    "used_entity_ids": [],
+    "used_relation_ids": []
+  },
+  "error": null
+}

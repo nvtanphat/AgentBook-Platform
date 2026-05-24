@@ -119,7 +119,7 @@ class Settings(BaseSettings):
     index_version: str = "qdrant_dense_sparse_v1"
     index_batch_size: int = 64
     llm_default_provider: str = "local"
-    llm_local_model: str = "qwen3:4b"
+    llm_local_model: str = "qwen2.5:3b"
     ollama_base_url: str = "http://localhost:11434"
     openai_base_url: str = "https://api.openai.com/v1"
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
@@ -143,6 +143,13 @@ class Settings(BaseSettings):
     agentic_planner_llm_enabled: bool = False
     agentic_max_retrieval_iterations: int = 2
     agentic_anaphora_resolution_enabled: bool = True
+    # Coordinator-only — confidence threshold below which the legacy critic
+    # agent fires (after guardrails). Set in retrieval_config.yaml under
+    # `retrieval.agentic_critic_activation_confidence`.
+    agentic_critic_activation_confidence: float = 0.65
+    # When false, skip the post-synthesis CriticAgent loop entirely. Saves
+    # 30-90s per query at the cost of one self-review pass.
+    agentic_critic_enabled: bool = True
     multi_query_enabled: bool = False
     smart_reranker_enabled: bool = False
     smart_reranker_threshold: float = 0.7
@@ -176,6 +183,41 @@ class Settings(BaseSettings):
     min_contrast: float = 18.0
     max_abs_skew_degrees: float = 12.0
 
+    # Phase B — Adaptive Retrieval Budget (skip sparse + graph on easy factuals)
+    adaptive_retrieval_enabled: bool = True
+    adaptive_dense_skip_threshold: float = 0.55
+    adaptive_strong_hits_required: int = 3
+    adaptive_strong_hit_min_score: float = 0.35
+    adaptive_eligible_routes: list[str] = Field(
+        default_factory=lambda: ["factual", "general", "claim_check"]
+    )
+
+    # Sentence-level Evidence Coverage (SLEC) — Adaptive Evidence-Guided RAG core
+    slec_enabled: bool = True
+    slec_supported_threshold: float = 0.55
+    slec_partial_threshold: float = 0.30
+    slec_refuse_below: float = 0.40
+    slec_drop_unsupported: bool = True
+    slec_min_sentence_chars: int = 12
+    slec_max_sentences: int = 24
+    slec_skip_routes: list[str] = Field(default_factory=lambda: ["claim_check"])
+
+    # Visual embedding (SigLIP)
+    visual_embedding_enabled: bool = False
+    visual_embedding_model: str = "google/siglip-base-patch16-224"
+    visual_embedding_device: str = "cpu"
+    visual_embedding_dense_size: int = 768
+    visual_embedding_batch_size: int = 4
+    visual_embedding_backend: str = "pytorch"
+    qdrant_visual_collection_name: str = "agentbook_visual"
+    visual_retrieval_top_k: int = 3
+    lexical_fallback_multiplier: int = 3
+    chunk_min_content_chars: int = 50
+    figure_captioner_max_workers: int = 4
+    ollama_caption_timeout_seconds: float = 300.0
+    figure_image_max_side_px: int = 1024
+    memory_max_turns: int = 10
+
     ocr_text_detection_model_name: str = "PP-OCRv5_mobile_det"
     ocr_text_recognition_model_name: str | None = None
     ocr_text_det_limit_side_len: int = 1280
@@ -184,6 +226,15 @@ class Settings(BaseSettings):
     ocr_enable_grayscale_variant: str = "auto"
     ocr_grayscale_trigger_confidence: float = 0.85
     pdf_render_scale: float = 1.5
+
+    # Audio (faster-whisper)
+    audio_whisper_model: str = "small"
+    audio_whisper_device: str = "cpu"
+    audio_whisper_compute_type: str = "int8"
+    audio_whisper_beam_size: int = 5
+    audio_whisper_vad_filter: bool = True
+    audio_chunk_target_seconds: float = 45.0
+    audio_chunk_min_seconds: float = 10.0
 
     @property
     def max_upload_size_bytes(self) -> int:
@@ -247,15 +298,22 @@ def get_settings() -> Settings:
     upload_config = guardrails_config.get("upload", {})
     refusal_config = guardrails_config.get("refusal", {})
     image_quality_config = guardrails_config.get("image_quality", {})
+    slec_config = guardrails_config.get("sentence_coverage", {})
     embedding_config = model_config.get("embedding", {})
     llm_config = model_config.get("llm", {})
     reranker_config = model_config.get("reranker", {})
     versions = model_config.get("versions", {})
     ocr_config = model_config.get("ocr", {})
     pdf_config = model_config.get("pdf", {})
+    figure_captioner_config = model_config.get("figure_captioner", {})
+    memory_config = model_config.get("memory", {})
+    visual_config = model_config.get("visual_embedding", {})
+    audio_config = model_config.get("audio", {})
     qdrant_config = retrieval_config.get("qdrant", {})
     retrieval_section = retrieval_config.get("retrieval", {})
     chunking_config = retrieval_config.get("chunking", {})
+    adaptive_retrieval_config = retrieval_config.get("adaptive_retrieval", {})
+    crag_config = retrieval_config.get("crag", {})
 
     return Settings(
         max_upload_size_mb=upload_config.get("max_file_size_mb", 20),
@@ -276,7 +334,7 @@ def get_settings() -> Settings:
         index_version=versions.get("index_version", "qdrant_dense_sparse_v1"),
         index_batch_size=qdrant_config.get("index_batch_size", 64),
         llm_default_provider=env_value("LLM_DEFAULT_PROVIDER", llm_config.get("default_provider", "local")),
-        llm_local_model=env_value("LLM_LOCAL_MODEL", llm_config.get("local_model", "qwen3:4b")),
+        llm_local_model=env_value("LLM_LOCAL_MODEL", llm_config.get("local_model", "qwen2.5:3b")),
         ollama_base_url=env_value("OLLAMA_BASE_URL", llm_config.get("ollama_base_url", "http://localhost:11434")),
         openai_base_url=env_value("OPENAI_BASE_URL", llm_config.get("openai_base_url", "https://api.openai.com/v1")),
         openai_model=env_value("OPENAI_MODEL", llm_config.get("openai_model", "gpt-4o-mini")),
@@ -296,6 +354,13 @@ def get_settings() -> Settings:
         graph_max_hops=min(int(retrieval_section.get("graph_max_hops", 2)), 2),
         agentic_rag_enabled=env_bool("AGENTIC_RAG_ENABLED", retrieval_section.get("agentic_rag_enabled", False)),
         agentic_planner_llm_enabled=env_bool("AGENTIC_PLANNER_LLM_ENABLED", retrieval_section.get("agentic_planner_llm_enabled", False)),
+        agentic_max_retrieval_iterations=int(retrieval_section.get("agentic_max_retrieval_iterations", 2)),
+        agentic_anaphora_resolution_enabled=bool(retrieval_section.get("agentic_anaphora_resolution_enabled", True)),
+        agentic_critic_activation_confidence=float(retrieval_section.get("agentic_critic_activation_confidence", 0.65)),
+        agentic_critic_enabled=env_bool("AGENTIC_CRITIC_ENABLED", retrieval_section.get("agentic_critic_enabled", True)),
+        crag_evaluator_enabled=env_bool("CRAG_EVALUATOR_ENABLED", crag_config.get("evaluator_enabled", False)),
+        crag_correct_threshold=float(crag_config.get("correct_threshold", 0.55)),
+        crag_incorrect_threshold=float(crag_config.get("incorrect_threshold", 0.25)),
         multi_query_enabled=env_bool("MULTI_QUERY_ENABLED", retrieval_section.get("multi_query_enabled", False)),
         api_auth_enabled=env_bool("API_AUTH_ENABLED", str(env_value("APP_ENV", "development")).lower() == "production"),
         api_key=env_value("API_KEY", None),
@@ -312,6 +377,32 @@ def get_settings() -> Settings:
         chunk_overlap_token_count=chunking_config.get("overlap_token_count", 50),
         chunk_max_blocks_per_chunk=chunking_config.get("max_blocks_per_chunk", 8),
         semantic_chunk_breakpoint_percentile=float(chunking_config.get("breakpoint_percentile", 95.0)),
+        adaptive_retrieval_enabled=env_bool(
+            "ADAPTIVE_RETRIEVAL_ENABLED",
+            adaptive_retrieval_config.get("enabled", True),
+        ),
+        adaptive_dense_skip_threshold=float(
+            adaptive_retrieval_config.get("dense_skip_threshold", 0.55)
+        ),
+        adaptive_strong_hits_required=int(
+            adaptive_retrieval_config.get("strong_hits_required", 3)
+        ),
+        adaptive_strong_hit_min_score=float(
+            adaptive_retrieval_config.get("strong_hit_min_score", 0.35)
+        ),
+        adaptive_eligible_routes=list(
+            adaptive_retrieval_config.get(
+                "eligible_routes", ["factual", "general", "claim_check"]
+            )
+        ),
+        slec_enabled=env_bool("SLEC_ENABLED", slec_config.get("enabled", True)),
+        slec_supported_threshold=float(slec_config.get("supported_threshold", 0.55)),
+        slec_partial_threshold=float(slec_config.get("partial_threshold", 0.30)),
+        slec_refuse_below=float(slec_config.get("refuse_below", 0.40)),
+        slec_drop_unsupported=bool(slec_config.get("drop_unsupported", True)),
+        slec_min_sentence_chars=int(slec_config.get("min_sentence_chars", 12)),
+        slec_max_sentences=int(slec_config.get("max_sentences", 24)),
+        slec_skip_routes=list(slec_config.get("skip_routes", ["claim_check"])),
         min_handwriting_quality_score=refusal_config.get("min_handwriting_quality_score", 0.72),
         min_handwriting_confidence=refusal_config.get("min_handwriting_confidence", 0.8),
         min_blur_variance=image_quality_config.get("min_blur_variance", 80.0),
@@ -319,6 +410,13 @@ def get_settings() -> Settings:
         max_brightness=image_quality_config.get("max_brightness", 230.0),
         min_contrast=image_quality_config.get("min_contrast", 18.0),
         max_abs_skew_degrees=image_quality_config.get("max_abs_skew_degrees", 12.0),
+        audio_whisper_model=audio_config.get("whisper_model", "small"),
+        audio_whisper_device=audio_config.get("whisper_device", "cpu"),
+        audio_whisper_compute_type=audio_config.get("whisper_compute_type", "int8"),
+        audio_whisper_beam_size=int(audio_config.get("whisper_beam_size", 5)),
+        audio_whisper_vad_filter=bool(audio_config.get("whisper_vad_filter", True)),
+        audio_chunk_target_seconds=float(audio_config.get("audio_chunk_target_seconds", 45.0)),
+        audio_chunk_min_seconds=float(audio_config.get("audio_chunk_min_seconds", 10.0)),
         ocr_text_detection_model_name=ocr_config.get("text_detection_model_name", "PP-OCRv5_mobile_det"),
         ocr_text_recognition_model_name=ocr_config.get("text_recognition_model_name"),
         ocr_text_det_limit_side_len=int(ocr_config.get("text_det_limit_side_len", 1280)),
@@ -327,4 +425,33 @@ def get_settings() -> Settings:
         ocr_enable_grayscale_variant=str(ocr_config.get("enable_grayscale_variant", "auto")).lower(),
         ocr_grayscale_trigger_confidence=float(ocr_config.get("grayscale_trigger_confidence", 0.85)),
         pdf_render_scale=float(pdf_config.get("render_scale", 1.5)),
+        visual_embedding_enabled=env_bool(
+            "VISUAL_EMBEDDING_ENABLED", visual_config.get("enabled", False)
+        ),
+        visual_embedding_model=visual_config.get(
+            "model", "google/siglip-base-patch16-224"
+        ),
+        visual_embedding_device=env_value(
+            "VISUAL_EMBEDDING_DEVICE", visual_config.get("device", "cpu")
+        ),
+        visual_embedding_dense_size=int(visual_config.get("dense_size", 768)),
+        visual_embedding_batch_size=int(
+            env_value(
+                "VISUAL_EMBEDDING_BATCH_SIZE", visual_config.get("batch_size", 4)
+            )
+        ),
+        visual_embedding_backend=visual_config.get("embedding_backend", "pytorch"),
+        qdrant_visual_collection_name=qdrant_config.get(
+            "visual_collection_name", "agentbook_visual"
+        ),
+        visual_retrieval_top_k=int(retrieval_config.get("visual_retrieval_top_k", 3)),
+        lexical_fallback_multiplier=int(retrieval_section.get("lexical_fallback_multiplier", 3)),
+        chunk_min_content_chars=int(chunking_config.get("min_content_chars", 50)),
+        figure_captioner_max_workers=int(figure_captioner_config.get("max_workers", 4)),
+        ollama_caption_timeout_seconds=float(figure_captioner_config.get("ollama_timeout_seconds", 300.0)),
+        figure_image_max_side_px=int(figure_captioner_config.get("image_max_side_px", 1024)),
+        memory_max_turns=int(memory_config.get("max_turns", 10)),
+        self_rag_reflection_enabled=env_bool(
+            "SELF_RAG_REFLECTION_ENABLED", llm_config.get("self_rag_reflection_enabled", False)
+        ),
     )

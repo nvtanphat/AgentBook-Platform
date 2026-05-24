@@ -15,7 +15,8 @@ from src.models.chunk import Chunk
 from src.models.material import Material, get_material_pages_by_material_ids
 from src.processing.types import BBox, EvidenceBlock
 from src.rag.embedder import BGEM3Embedder, EmbeddedText
-from src.rag.types import RetrievalScope, RetrievedChunk
+from src.rag.embedding_provider import VisualEmbeddingProvider
+from src.rag.types import RetrievalScope, RetrievedChunk, RetrievedVisualChunk
 
 logger = logging.getLogger(__name__)
 
@@ -175,6 +176,45 @@ class HybridRetriever:
         hydrated = [c for c in hydrated if _has_retrievable_content(c.content)]
         return self._diversify(hydrated, max_per_doc=self.settings.max_chunks_per_doc)
 
+    async def retrieve_fast(
+        self, *, query: str, scope: RetrievalScope, limit: int | None = None
+    ) -> list[RetrievedChunk]:
+        """Phase B fast path: single hybrid retrieval (RRF dense+sparse) on the
+        original query, returning fused-score-ordered chunks. The caller uses
+        `fast_path_eligible` to decide whether the resulting bundle is strong
+        enough to also skip graph retrieval, multi-query expansion AND the
+        cross-encoder reranker — those are the real latency hogs.
+
+        We use the *fused* score (already RRF-normalised in [0,1]) rather than
+        raw dense cosine because the stored dense vectors in this deployment
+        carry sparse signal only (dense vectors are zero post-indexing — a known
+        data issue that would require reindexing to fix).
+        """
+        return await self.retrieve(query=query, scope=scope, limit=limit)
+
+    @staticmethod
+    def fast_path_eligible(
+        *, chunks: list[RetrievedChunk], settings: Settings
+    ) -> bool:
+        """Decide if the quick retrieve() result is strong enough to skip the
+        downstream rerank + graph + multi-query stages.
+
+        Signal: fused RRF score (always populated, range [0,1]). Two gates:
+          - top-1 fused score ≥ adaptive_dense_skip_threshold
+          - at least `strong_hits_required` chunks fused ≥ strong_hit_min_score
+        """
+        if not settings.adaptive_retrieval_enabled or not chunks:
+            return False
+        scores = [c.fused_score for c in chunks if c.fused_score is not None]
+        if not scores:
+            return False
+        top = max(scores)
+        strong_count = sum(1 for s in scores if s >= settings.adaptive_strong_hit_min_score)
+        return (
+            top >= settings.adaptive_dense_skip_threshold
+            and strong_count >= settings.adaptive_strong_hits_required
+        )
+
     async def _lexical_fallback_points_async(
         self,
         *,
@@ -226,7 +266,7 @@ class HybridRetriever:
             records, _ = self.qdrant_client.scroll(
                 collection_name=self.settings.qdrant_collection_name,
                 scroll_filter=lexical_filter,
-                limit=max(limit * 3, limit),
+                limit=max(limit * self.settings.lexical_fallback_multiplier, limit),
                 with_payload=True,
                 with_vectors=False,
             )
@@ -445,8 +485,17 @@ class HybridRetriever:
 
     @staticmethod
     def _diversify(chunks: list[RetrievedChunk], max_per_doc: int) -> list[RetrievedChunk]:
-        """Cap chunks per document to avoid one broad chunk dominating results."""
+        """Cap chunks per document to avoid one broad chunk dominating results.
+
+        Bypassed when results come from a single document — capping there only
+        starves the reranker of candidates without diversification benefit, and
+        was observed to drop genuinely-relevant chunks ranked below rank
+        `max_per_doc` (e.g. WAPE rationale at rank #18 cut by a cap of 3).
+        """
         if max_per_doc <= 0:
+            return chunks
+        unique_docs = {chunk.document_name for chunk in chunks}
+        if len(unique_docs) <= 1:
             return chunks
         counts: dict[str, int] = {}
         result: list[RetrievedChunk] = []
@@ -456,6 +505,94 @@ class HybridRetriever:
                 result.append(chunk)
                 counts[doc] = counts.get(doc, 0) + 1
         return result
+
+
+    async def retrieve_visual(
+        self,
+        *,
+        query: str,
+        scope: RetrievalScope,
+        visual_provider: VisualEmbeddingProvider,
+        limit: int | None = None,
+    ) -> list[RetrievedVisualChunk]:
+        """Text query → SigLIP cross-modal → ranked figures from the visual collection.
+
+        Evidence-trace fields (owner_id, collection_id, material_id, page, block_id)
+        are read directly from the Qdrant payload; no MongoDB hydration is needed.
+        """
+        scope.ensure_scoped()
+        query_vec = await asyncio.to_thread(visual_provider.embed_query, query)
+        return await self.retrieve_visual_with_vector(
+            vector=query_vec, scope=scope, limit=limit,
+        )
+
+    async def retrieve_visual_with_vector(
+        self,
+        *,
+        vector: list[float],
+        scope: RetrievalScope,
+        limit: int | None = None,
+    ) -> list[RetrievedVisualChunk]:
+        """Image-as-query path: caller already has a SigLIP vector (e.g. from an upload)."""
+        scope.ensure_scoped()
+        query_filter = self._scope_filter(scope)
+        effective_limit = limit or self.settings.final_top_k
+
+        try:
+            async with self._qdrant_semaphore:
+                raw_points = await asyncio.to_thread(
+                    self.qdrant_client.search,
+                    collection_name=self.settings.qdrant_visual_collection_name,
+                    query_vector=models.NamedVector(name="visual_dense", vector=vector),
+                    query_filter=query_filter,
+                    limit=effective_limit,
+                    with_payload=True,
+                )
+        except Exception as exc:
+            # Visual collection often doesn't exist until figures have been
+            # indexed for at least one material. Demote 404s to debug so the
+            # warning stream stays clean for the common cold-start case.
+            level = logging.DEBUG if "Not Found" in str(exc) or "404" in str(exc) else logging.WARNING
+            logger.log(
+                level,
+                "Visual retrieval skipped — returning empty result",
+                extra={
+                    "owner_id": scope.owner_id,
+                    "collection_id": scope.collection_id,
+                    "error": str(exc),
+                },
+            )
+            return []
+
+        chunks: list[RetrievedVisualChunk] = []
+        for point in raw_points:
+            payload = point.payload or {}
+            bbox: BBox | None = None
+            if all(k in payload for k in ("bbox_x1", "bbox_y1", "bbox_x2", "bbox_y2")):
+                bbox = BBox(
+                    x1=payload["bbox_x1"],
+                    y1=payload["bbox_y1"],
+                    x2=payload["bbox_x2"],
+                    y2=payload["bbox_y2"],
+                )
+            chunks.append(
+                RetrievedVisualChunk(
+                    point_id=str(point.id),
+                    owner_id=payload.get("owner_id", ""),
+                    collection_id=payload.get("collection_id", ""),
+                    material_id=payload.get("material_id", ""),
+                    document_name=payload.get("document_name", ""),
+                    page=int(payload.get("page", 0)),
+                    block_id=payload.get("block_id", ""),
+                    block_type=payload.get("block_type", "figure"),
+                    caption=payload.get("caption", ""),
+                    source_language=payload.get("source_language", "unknown"),
+                    bbox=bbox,
+                    image_path=payload.get("image_path"),
+                    score=float(point.score),
+                )
+            )
+        return chunks
 
 
 def dedupe_retrieved_chunks(chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:

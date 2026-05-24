@@ -1,5 +1,5 @@
 import { FormEvent, KeyboardEvent, useState } from "react";
-import { AlertCircle, AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, Loader2, Plus, X } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, Copy, Download, GitBranch, Loader2, Plus, X } from "lucide-react";
 import { Citation, CompareMatrixCell, CompareResponse, CoverageReport, compareDocuments } from "../../../api/client";
 import { useWorkspace } from "../../../state/workspace";
 
@@ -179,15 +179,18 @@ function CompareMatrixTable({
   if (!sources.length || !dimensions.length) return null;
 
   return (
-    <div className="rounded-lg border border-outline bg-white shadow-sm">
-      <div className="border-b border-outline bg-slate-50 px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted">
-        Bảng so sánh theo nguồn · mỗi ô có citation riêng
+    <div className="rounded-lg border border-outline bg-surface shadow-sm overflow-hidden">
+      <div className="border-b border-outline bg-surface-low px-3 py-2 flex items-center gap-2">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted flex-1">
+          Bảng so sánh theo nguồn · mỗi ô có citation riêng
+        </span>
+        <span className="text-[10px] text-muted">{sources.length} × {dimensions.length}</span>
       </div>
       <div className="w-full overflow-x-auto">
         <table className="w-max min-w-full border-collapse text-left">
           <thead>
-            <tr className="border-b border-outline bg-slate-50">
-              <th className="sticky left-0 z-10 w-[190px] min-w-[190px] border-r border-outline bg-slate-50 px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-muted">
+            <tr className="border-b border-outline bg-surface-low">
+              <th className="sticky left-0 z-10 w-[190px] min-w-[190px] border-r border-outline bg-surface-low px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-muted">
                 Nguồn
               </th>
               {dimensions.map((dimension) => (
@@ -198,9 +201,9 @@ function CompareMatrixTable({
             </tr>
           </thead>
           <tbody className="divide-y divide-outline">
-            {sources.map((source) => (
-              <tr key={source.source_id} className="align-top">
-                <th className="sticky left-0 z-10 w-[190px] min-w-[190px] border-r border-outline bg-white px-3 py-3 text-xs font-semibold leading-snug text-text">
+            {sources.map((source, rowIdx) => (
+              <tr key={source.source_id} className={`align-top transition-colors hover:bg-primary/5 ${rowIdx % 2 === 1 ? "bg-surface-low/50" : ""}`}>
+                <th className="sticky left-0 z-10 w-[190px] min-w-[190px] border-r border-outline bg-inherit px-3 py-3 text-xs font-semibold leading-snug text-text">
                   <p className="break-words">{source.name}</p>
                 </th>
                 {dimensions.map((dimension) => (
@@ -217,6 +220,65 @@ function CompareMatrixTable({
       </div>
     </div>
   );
+}
+
+
+// ─── Export helpers ────────────────────────────────────────────────────────
+
+function exportToMarkdown(result: CompareResponse): string {
+  const lines: string[] = [`# So sánh: ${result.topic}`, ""];
+  const sources = result.sources ?? [];
+  const dimensions = result.dimension_coverage?.map((d) => d.dimension) ?? [];
+  const matrix = result.matrix ?? {};
+  if (sources.length && dimensions.length) {
+    lines.push("| Nguồn | " + dimensions.join(" | ") + " |");
+    lines.push("|" + "---|".repeat(dimensions.length + 1));
+    for (const src of sources) {
+      const row = [src.name];
+      for (const dim of dimensions) {
+        const cell = matrix[src.source_id]?.[dim];
+        const val = (cell?.value || "—").replace(/\n+/g, " ").replace(/\|/g, "\\|");
+        row.push(val);
+      }
+      lines.push("| " + row.join(" | ") + " |");
+    }
+  } else {
+    for (const row of result.comparison_table) {
+      lines.push(`**${row.dimension}** · *${row.source}*: ${row.value}`);
+    }
+  }
+  if (result.conflicts?.length) {
+    lines.push("", "## Điểm có thể mâu thuẫn");
+    for (const c of result.conflicts) lines.push(`- ${c}`);
+  }
+  return lines.join("\n");
+}
+
+function exportToCsv(result: CompareResponse): string {
+  const sources = result.sources ?? [];
+  const dimensions = result.dimension_coverage?.map((d) => d.dimension) ?? [];
+  const matrix = result.matrix ?? {};
+  const esc = (s: string) => `"${(s || "").replace(/"/g, '""').replace(/\n/g, " ")}"`;
+  const lines: string[] = ["Nguồn," + dimensions.map(esc).join(",")];
+  for (const src of sources) {
+    const row = [esc(src.name)];
+    for (const dim of dimensions) {
+      const cell = matrix[src.source_id]?.[dim];
+      row.push(esc(cell?.value || ""));
+    }
+    lines.push(row.join(","));
+  }
+  return lines.join("\n");
+}
+
+function downloadFile(filename: string, content: string, mime: string) {
+  const blob = new Blob([content], { type: mime + ";charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 const CARD_COLLAPSE_LINES = 5;
@@ -350,8 +412,8 @@ export default function CompareTab({ onOpenEvidence }: CompareTabProps) {
   const hasMatrix = Boolean(result?.sources?.length && result?.matrix && Object.keys(result.matrix).length > 0);
 
   return (
-    <div className="flex h-full flex-col overflow-hidden bg-slate-50">
-      <form className="shrink-0 space-y-3 border-b border-outline bg-white p-4" onSubmit={handleSubmit}>
+    <div className="flex h-full flex-col overflow-hidden bg-surface-low">
+      <form className="shrink-0 space-y-3 border-b border-outline bg-surface p-4" onSubmit={handleSubmit}>
         <label className="block">
           <span className="label-caps">Chủ đề</span>
           <input
@@ -404,30 +466,77 @@ export default function CompareTab({ onOpenEvidence }: CompareTabProps) {
         )}
 
         {loading && (
-          <div className="flex flex-col items-center justify-center gap-3 py-12 text-muted">
-            <Loader2 size={24} className="animate-spin text-primary" />
-            <p className="text-xs">Đang truy xuất và tổng hợp bằng chứng cho {dimensions.length} khía cạnh...</p>
-            <p className="text-[10px] text-muted/70">Compare v2 kiểm tra từng nguồn nên có thể chậm hơn compare nhanh.</p>
+          <div className="rounded-lg border border-outline bg-surface p-6 shadow-sm">
+            <div className="flex flex-col items-center gap-3 text-muted">
+              <div className="relative">
+                <Loader2 size={28} className="animate-spin text-primary" />
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <span className="text-[10px] font-bold text-primary">{dimensions.length}</span>
+                </div>
+              </div>
+              <p className="text-sm font-semibold text-text">Đang so sánh tài liệu...</p>
+              <p className="text-xs text-center max-w-[300px]">
+                Truy xuất bằng chứng cho <span className="font-bold text-primary">{dimensions.length}</span> khía cạnh
+                trên <span className="font-bold text-primary">{scopedMaterialIds.length || readySources.length}</span> nguồn
+              </p>
+              <div className="mt-2 w-full max-w-[280px] space-y-1.5">
+                {dimensions.slice(0, 4).map((d, i) => (
+                  <div key={d} className="flex items-center gap-2 text-[10px]">
+                    <span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse" style={{ animationDelay: `${i * 200}ms` }} />
+                    <span className="text-muted truncate">{d}</span>
+                  </div>
+                ))}
+                {dimensions.length > 4 && (
+                  <span className="text-[9px] text-muted/60 italic pl-3.5">+{dimensions.length - 4} khía cạnh khác</span>
+                )}
+              </div>
+            </div>
           </div>
         )}
 
         {result && !loading && (
           <>
             <div className="flex flex-wrap items-center gap-2">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-muted">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-muted flex-1 min-w-0 truncate" title={result.topic}>
                 {result.topic}
               </h3>
-              <span className="rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-muted">
+              <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
                 {result.sources?.length || result.coverage?.requested_count || 0} nguồn
               </span>
-              <span className="rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-muted">
+              <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
                 {result.dimension_coverage?.length || dimensions.length} khía cạnh
               </span>
               {result.citations.length > 0 && (
-                <span className="rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-muted">
+                <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
                   {result.citations.length} trích dẫn
                 </span>
               )}
+              {/* Export buttons */}
+              <div className="ml-auto flex gap-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    try {
+                      navigator.clipboard.writeText(exportToMarkdown(result));
+                    } catch {}
+                  }}
+                  title="Copy Markdown bảng so sánh"
+                  className="flex items-center gap-1 rounded border border-outline bg-surface px-2 py-0.5 text-[10px] font-semibold text-muted transition hover:border-primary hover:text-primary"
+                >
+                  <Copy size={10} /> MD
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const stamp = new Date().toISOString().slice(0, 19).replace(/:/g, "-");
+                    downloadFile(`compare-${stamp}.csv`, exportToCsv(result), "text/csv");
+                  }}
+                  title="Tải bảng dạng CSV"
+                  className="flex items-center gap-1 rounded border border-outline bg-surface px-2 py-0.5 text-[10px] font-semibold text-muted transition hover:border-primary hover:text-primary"
+                >
+                  <Download size={10} /> CSV
+                </button>
+              </div>
             </div>
 
             <CoveragePanel coverage={result.coverage} />
@@ -452,10 +561,16 @@ export default function CompareTab({ onOpenEvidence }: CompareTabProps) {
 
             {result.conflicts.length > 0 && (
               <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
-                <h4 className="mb-2 text-xs font-bold text-amber-800">Điểm có thể mâu thuẫn</h4>
-                <ul className="space-y-1">
+                <div className="mb-2 flex items-center gap-1.5">
+                  <AlertTriangle size={13} className="text-amber-700" />
+                  <h4 className="text-xs font-bold text-amber-800">Điểm có thể mâu thuẫn ({result.conflicts.length})</h4>
+                </div>
+                <ul className="space-y-1.5">
                   {result.conflicts.map((item) => (
-                    <li key={item} className="text-xs text-amber-700">- {item}</li>
+                    <li key={item} className="flex items-start gap-1.5 text-xs text-amber-700">
+                      <span className="mt-1 h-1 w-1 shrink-0 rounded-full bg-amber-500" />
+                      <span>{item}</span>
+                    </li>
                   ))}
                 </ul>
               </div>
@@ -464,11 +579,30 @@ export default function CompareTab({ onOpenEvidence }: CompareTabProps) {
         )}
 
         {!result && !loading && !error && (
-          <div className="flex flex-col items-center justify-center gap-2 py-12 text-center">
-            <p className="text-sm font-semibold text-text">So sánh trên bằng chứng</p>
-            <p className="max-w-[240px] text-xs text-muted">
-              Bấm tạo bảng để Noelys đối chiếu các tài liệu đang chọn theo từng khía cạnh, kèm citation cho từng ô.
-            </p>
+          <div className="flex flex-col items-center justify-center gap-4 py-10 text-center">
+            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/8">
+              <GitBranch size={26} className="text-primary/60" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-text">So sánh đa tài liệu</p>
+              <p className="mt-1 max-w-[280px] text-xs text-muted">
+                Noelys đối chiếu các nguồn đang chọn theo từng khía cạnh, mỗi ô có citation riêng để verify.
+              </p>
+            </div>
+            <div className="grid gap-2 max-w-[300px] w-full text-left">
+              <div className="flex items-start gap-2 rounded-lg border border-outline/50 bg-surface px-3 py-2">
+                <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary text-[10px] font-bold">1</span>
+                <span className="text-[11px] text-muted leading-relaxed">Chọn nguồn ở panel Sources (mặc định: tất cả)</span>
+              </div>
+              <div className="flex items-start gap-2 rounded-lg border border-outline/50 bg-surface px-3 py-2">
+                <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary text-[10px] font-bold">2</span>
+                <span className="text-[11px] text-muted leading-relaxed">Đặt khía cạnh muốn so (preset hoặc tự gõ)</span>
+              </div>
+              <div className="flex items-start gap-2 rounded-lg border border-outline/50 bg-surface px-3 py-2">
+                <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary text-[10px] font-bold">3</span>
+                <span className="text-[11px] text-muted leading-relaxed">Tạo bảng → click citation để mở evidence panel</span>
+              </div>
+            </div>
           </div>
         )}
       </div>

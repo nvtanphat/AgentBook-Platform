@@ -1,0 +1,556 @@
+{
+  "success": true,
+  "message": "Mindmap generated successfully",
+  "data": {
+    "root_topic": "Noelys Knowledge Map",
+    "nodes": [
+      {
+        "id": "topic:core-concepts",
+        "label": "Core concepts",
+        "entity_type": "topic",
+        "summary": null,
+        "children": [
+          {
+            "id": "concept:core-concepts-danh",
+            "label": "Danh",
+            "entity_type": "concept",
+            "summary": "score=28.80",
+            "children": [],
+            "citations": [
+              {
+                "material_id": "6a124ead48a253a8162ee237",
+                "page": 1,
+                "block_id": "blk-4a60940fcbe1"
+              }
+            ],
+            "collapsed": false
+          },
+          {
+            "id": "concept:core-concepts-product",
+            "label": "Product",
+            "entity_type": "concept",
+            "summary": "score=28.80",
+            "children": [],
+            "citations": [
+              {
+                "material_id": "6a124ead48a253a8162ee235",
+                "page": 1,
+                "block_id": "blk-e0f34bd90be9"
+              }
+            ],
+            "collapsed": false
+          },
+          {
+            "id": "concept:core-concepts-category",
+            "label": "Category",
+            "entity_type": "concept",
+            "summary": "score=26.40",
+            "children": [],
+            "citations": [
+              {
+                "material_id": "6a124ead48a253a8162ee235",
+                "page": 1,
+                "block_id": "blk-e0f34bd90be9"
+              }
+            ],
+            "collapsed": false
+          },
+          {
+            "id": "concept:core-concepts-inventory",
+            "label": "Inventory",
+            "entity_type": "concept",
+            "summary": "score=26.40",
+            "children": [],
+            "citations": [
+              {
+                "material_id": "6a124ead48a253a8162ee235",
+                "page": 1,
+                "block_id": "blk-608db31fb50b"
+              }
+            ],
+            "collapsed": false
+          },
+          {
+            "id": "concept:core-concepts-stock",
+            "label": "Stock",
+            "entity_type": "concept",
+            "summary": "score=25.20",
+            "children": [],
+            "citations": [
+              {
+                "material_id": "6a124ead48a253a8162ee235",
+                "page": 1,
+                "block_id": "blk-e0f34bd90be9"
+              }
+            ],
+            "collapsed": false
+          }
+        ],
+        "citations": [
+          {
+            "material_id": "6a124ead48a253a8162ee237",
+            "page": 1,
+            "block_id": "blk-4a60940fcbe1"
+          }
+        ],
+        "collapsed": false
+      },
+      {
+        "id": "topic:parsing-ocr",
+        "label": "Parsing & OCR",
+        "entity_type": "topic",
+        "summary": null,
+        "children": [
+          {
+            "id": "concept:parsing-ocr-docx-or-csv-table",
+            "label": "DOCX or CSV table",
+            "entity_type": "concept",
+            "summary": "score=25.20",
+            "children": [],
+            "citations": [
+              {
+                "material_id": "6a1248b548a253a8162ee173",
+                "page": 1,
+                "block_id": "blk-df5816a75149"
+              }
+            ],
+            "collapsed": false
+          },
+          {
+            "id": "concept:parsing-ocr-clear-scan-image",
+            "label": "clear scan image",
+            "entity_type": "concept",
+            "summary": "score=8.00",
+            "children": [],
+            "citations": [
+              {
+                "material_id": "6a1248b548a253a8162ee173",
+                "page": 1,
+                "block_id": "blk-724a940904eb"
+              }
+            ],
+            "collapsed": false
+          },
+          {
+            "id": "concept:parsing-ocr-figure",
+            "label": "Figure",
+            "entity_type": "concept",
+            "summary": "score=7.20",
+            "children": [],
+            "citations": [
+              {
+                "material_id": "6a1248b648a253a8162ee175",
+                "page": 4,
+                "block_id": "#/texts/31"
+              }
+            ],
+            "collapsed": false
+          },
+          {
+            "id": "concept:parsing-ocr-risk-and-mitigation-table",
+            "label": "Risk and mitigation table",
+            "entity_type": "concept",
+            "summary": "score=7.20",
+            "children": [],
+            "citations": [
+              {
+                "material_id": "6a1248b748a253a8162ee177",
+                "page": 1,
+                "block_id": "#/texts/11"
+              }
+            ],
+            "collapsed": false
+          },
+          {
+            "id": "concept:parsing-ocr-table",
+            "label": "Table",
+            "entity_type": "concept",
+            "summary": "score=6.00",
+            "children": [],
+            "citations": [
+              {
+                "material_id": "6a1248b648a253a8162ee175",
+                "page": 5,
+                "block_id": "#/texts/40"
+              }
+            ],
+            "collapsed": false
+          }
+        ],
+        "citations": [
+          {
+            "material_id": "6a1248b548a253a8162ee173",
+            "page": 1,
+            "block_id": "blk-df5816a75149"
+          }
+        ],
+        "collapsed": false
+      },
+      {
+        "id": "topic:retrieval-indexing",
+        "label": "Retrieval & indexing",
+        "entity_type": "topic",
+        "summary": null,
+        "children": [
+          {
+            "id": "concept:retrieval-indexing-table-retrieval",
+            "label": "Table retrieval",
+            "entity_type": "concept",
+            "summary": "score=19.60",
+            "children": [],
+            "citations": [
+              {
+                "material_id": "6a1248b548a253a8162ee173",
+                "page": 1,
+                "block_id": "blk-df5816a75149"
+              }
+            ],
+            "collapsed": false
+          },
+          {
+            "id": "concept:retrieval-indexing-indexed",
+            "label": "Indexed",
+            "entity_type": "concept",
+            "summary": "score=7.20",
+            "children": [],
+            "citations": [
+              {
+                "material_id": "6a124ead48a253a8162ee235",
+                "page": 3,
+                "block_id": "blk-8b58dbc70977"
+              }
+            ],
+            "collapsed": false
+          },
+          {
+            "id": "concept:retrieval-indexing-and-vector-count-endpoint",
+            "label": "and vector count Endpoint",
+            "entity_type": "concept",
+            "summary": "score=3.60",
+            "children": [],
+            "citations": [
+              {
+                "material_id": "6a1248b748a253a8162ee177",
+                "page": 1,
+                "block_id": "blk-9f9850b96db0"
+              }
+            ],
+            "collapsed": false
+          },
+          {
+            "id": "concept:retrieval-indexing-and-vector-count-risk",
+            "label": "and vector count Risk",
+            "entity_type": "concept",
+            "summary": "score=3.60",
+            "children": [],
+            "citations": [
+              {
+                "material_id": "6a1248b748a253a8162ee177",
+                "page": 1,
+                "block_id": "blk-9f9850b96db0"
+              }
+            ],
+            "collapsed": false
+          },
+          {
+            "id": "concept:retrieval-indexing-table-chunking-error",
+            "label": "Table chunking error",
+            "entity_type": "concept",
+            "summary": "score=3.20",
+            "children": [],
+            "citations": [
+              {
+                "material_id": "6a1248b748a253a8162ee177",
+                "page": 1,
+                "block_id": "blk-9f9850b96db0"
+              }
+            ],
+            "collapsed": false
+          }
+        ],
+        "citations": [
+          {
+            "material_id": "6a1248b548a253a8162ee173",
+            "page": 1,
+            "block_id": "blk-df5816a75149"
+          }
+        ],
+        "collapsed": false
+      },
+      {
+        "id": "topic:evidence-citation",
+        "label": "Evidence & citation",
+        "entity_type": "topic",
+        "summary": null,
+        "children": [
+          {
+            "id": "concept:evidence-citation-answer-in-vietnamese-with",
+            "label": "Answer in Vietnamese with",
+            "entity_type": "concept",
+            "summary": "score=10.80",
+            "children": [],
+            "citations": [
+              {
+                "material_id": "6a1248b548a253a8162ee173",
+                "page": 1,
+                "block_id": "blk-df5816a75149"
+              }
+            ],
+            "collapsed": false
+          },
+          {
+            "id": "concept:evidence-citation-evidence-from-english-text",
+            "label": "evidence from English text",
+            "entity_type": "concept",
+            "summary": "score=10.80",
+            "children": [],
+            "citations": [
+              {
+                "material_id": "6a1248b548a253a8162ee173",
+                "page": 1,
+                "block_id": "blk-df5816a75149"
+              }
+            ],
+            "collapsed": false
+          },
+          {
+            "id": "concept:evidence-citation-quiz-questions",
+            "label": "quiz questions",
+            "entity_type": "concept",
+            "summary": "score=2.80",
+            "children": [],
+            "citations": [
+              {
+                "material_id": "6a1248b748a253a8162ee177",
+                "page": 1,
+                "block_id": "blk-2090775108fc"
+              }
+            ],
+            "collapsed": false
+          },
+          {
+            "id": "concept:evidence-citation-english-evidence-and-answer",
+            "label": "English evidence and answer",
+            "entity_type": "concept",
+            "summary": "score=1.80",
+            "children": [],
+            "citations": [
+              {
+                "material_id": "6a1248b648a253a8162ee175",
+                "page": 6,
+                "block_id": "#/texts/50"
+              }
+            ],
+            "collapsed": false
+          },
+          {
+            "id": "concept:evidence-citation-a-weak-pipeline-answers",
+            "label": "A weak pipeline answers",
+            "entity_type": "concept",
+            "summary": "score=1.80",
+            "children": [],
+            "citations": [
+              {
+                "material_id": "6a1248b648a253a8162ee175",
+                "page": 6,
+                "block_id": "#/texts/50"
+              }
+            ],
+            "collapsed": false
+          }
+        ],
+        "citations": [
+          {
+            "material_id": "6a1248b548a253a8162ee173",
+            "page": 1,
+            "block_id": "blk-df5816a75149"
+          }
+        ],
+        "collapsed": false
+      },
+      {
+        "id": "topic:ablation-limitations",
+        "label": "Ablation & limitations",
+        "entity_type": "topic",
+        "summary": null,
+        "children": [
+          {
+            "id": "concept:ablation-limitations-and-expose-error-message",
+            "label": "and expose error message",
+            "entity_type": "concept",
+            "summary": "score=3.60",
+            "children": [],
+            "citations": [
+              {
+                "material_id": "6a1248b748a253a8162ee177",
+                "page": 1,
+                "block_id": "blk-9f9850b96db0"
+              }
+            ],
+            "collapsed": false
+          },
+          {
+            "id": "concept:ablation-limitations-risk-trigger-file-severity",
+            "label": "Risk Trigger file Severity",
+            "entity_type": "concept",
+            "summary": "score=3.60",
+            "children": [],
+            "citations": [
+              {
+                "material_id": "6a1248b748a253a8162ee177",
+                "page": 1,
+                "block_id": "#/texts/11"
+              }
+            ],
+            "collapsed": false
+          },
+          {
+            "id": "concept:ablation-limitations-risks-such-as-low-quality",
+            "label": "risks such as low-quality",
+            "entity_type": "concept",
+            "summary": "score=1.80",
+            "children": [],
+            "citations": [
+              {
+                "material_id": "6a1248b548a253a8162ee173",
+                "page": 2,
+                "block_id": "#/texts/10"
+              }
+            ],
+            "collapsed": false
+          },
+          {
+            "id": "concept:ablation-limitations-silent-failure-is-worse",
+            "label": "Silent failure is worse",
+            "entity_type": "concept",
+            "summary": "score=1.80",
+            "children": [],
+            "citations": [
+              {
+                "material_id": "6a1248b548a253a8162ee173",
+                "page": 2,
+                "block_id": "#/texts/10"
+              }
+            ],
+            "collapsed": false
+          },
+          {
+            "id": "concept:ablation-limitations-and-operational-risks",
+            "label": "and operational risks",
+            "entity_type": "concept",
+            "summary": "score=1.60",
+            "children": [],
+            "citations": [
+              {
+                "material_id": "6a1248b748a253a8162ee177",
+                "page": 1,
+                "block_id": "#/texts/11"
+              }
+            ],
+            "collapsed": false
+          }
+        ],
+        "citations": [
+          {
+            "material_id": "6a1248b748a253a8162ee177",
+            "page": 1,
+            "block_id": "blk-9f9850b96db0"
+          }
+        ],
+        "collapsed": false
+      },
+      {
+        "id": "topic:dataset-preprocessing",
+        "label": "Dataset & preprocessing",
+        "entity_type": "topic",
+        "summary": null,
+        "children": [
+          {
+            "id": "concept:dataset-preprocessing-the-pipeline-normalizes-diverse",
+            "label": "The pipeline normalizes diverse",
+            "entity_type": "concept",
+            "summary": "score=1.80",
+            "children": [],
+            "citations": [
+              {
+                "material_id": "6a1248b648a253a8162ee175",
+                "page": 2,
+                "block_id": "#/texts/4"
+              }
+            ],
+            "collapsed": false
+          },
+          {
+            "id": "concept:dataset-preprocessing-dua-vao-vector-database",
+            "label": "dua vao vector database",
+            "entity_type": "concept",
+            "summary": "score=1.80",
+            "children": [],
+            "citations": [
+              {
+                "material_id": "6a1248b748a253a8162ee179",
+                "page": 1,
+                "block_id": "blk-1f0f0baa25e3"
+              }
+            ],
+            "collapsed": false
+          },
+          {
+            "id": "concept:dataset-preprocessing-raw-block-metadata-and",
+            "label": "raw block metadata and",
+            "entity_type": "concept",
+            "summary": "score=1.80",
+            "children": [],
+            "citations": [
+              {
+                "material_id": "6a1248b548a253a8162ee173",
+                "page": 1,
+                "block_id": "#/texts/8"
+              }
+            ],
+            "collapsed": false
+          },
+          {
+            "id": "concept:dataset-preprocessing-figure-caption-missing",
+            "label": "Figure caption missing",
+            "entity_type": "concept",
+            "summary": "score=1.60",
+            "children": [],
+            "citations": [
+              {
+                "material_id": "6a1248b748a253a8162ee177",
+                "page": 1,
+                "block_id": "blk-9f9850b96db0"
+              }
+            ],
+            "collapsed": false
+          },
+          {
+            "id": "concept:dataset-preprocessing-agentbook-sample-pack",
+            "label": "AgentBook sample pack",
+            "entity_type": "concept",
+            "summary": "score=1.60",
+            "children": [],
+            "citations": [
+              {
+                "material_id": "6a1248b548a253a8162ee173",
+                "page": 2,
+                "block_id": "#/texts/10"
+              }
+            ],
+            "collapsed": false
+          }
+        ],
+        "citations": [
+          {
+            "material_id": "6a1248b648a253a8162ee175",
+            "page": 2,
+            "block_id": "#/texts/4"
+          }
+        ],
+        "collapsed": false
+      }
+    ]
+  },
+  "error": null
+}

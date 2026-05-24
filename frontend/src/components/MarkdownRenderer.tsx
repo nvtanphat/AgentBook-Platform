@@ -1,4 +1,12 @@
 import React from "react";
+import { API_BASE_URL } from "../api/client";
+
+function resolveImageUrl(url: string): string {
+  // Backend may emit relative /api/v1/... URLs for inline figure citations so the
+  // markdown isn't tied to a specific deployment host. Resolve against API_BASE_URL.
+  if (url.startsWith("/api/")) return `${API_BASE_URL}${url}`;
+  return url;
+}
 
 // ──────────────────────────────────────────────────────────────
 // Shared markdown table parsing (used by both block renderer and SnippetRenderer)
@@ -193,7 +201,10 @@ type Block =
   | { type: "ul"; items: string[][] }  // nested items as line arrays
   | { type: "ol"; items: string[][] }
   | { type: "hr" }
-  | { type: "table_raw"; raw: string };
+  | { type: "table_raw"; raw: string }
+  | { type: "image"; alt: string; url: string };
+
+const IMAGE_LINE_RE = /^!\[([^\]]*)\]\(([^)\s]+)\)\s*$/;
 
 // ──────────────────────────────────────────────────────────────
 // Block parser
@@ -305,6 +316,14 @@ export function parseBlocks(text: string): Block[] {
       continue;
     }
 
+    // Image: ![alt](url) on its own line
+    const im = trimmed.match(IMAGE_LINE_RE);
+    if (im) {
+      blocks.push({ type: "image", alt: im[1], url: im[2] });
+      i++;
+      continue;
+    }
+
     // Paragraph: collect consecutive non-special lines
     const paraLines: string[] = [line];
     i++;
@@ -319,6 +338,7 @@ export function parseBlocks(text: string): Block[] {
       !lines[i].trim().startsWith("```") &&
       !lines[i].trim().startsWith("~~~") &&
       !lines[i].trim().startsWith("$$") &&
+      !IMAGE_LINE_RE.test(lines[i].trim()) &&
       !/^(-{3,}|\*{3,}|_{3,})$/.test(lines[i].trim())
     ) {
       paraLines.push(lines[i]);
@@ -455,6 +475,24 @@ export default function MarkdownRenderer({
 
           case "hr":
             return <hr key={bi} className="border-outline" />;
+
+          case "image":
+            return (
+              <figure key={bi} className="my-2 overflow-hidden rounded-xl border border-outline bg-surface-low">
+                <img
+                  src={resolveImageUrl(block.url)}
+                  alt={block.alt}
+                  loading="lazy"
+                  className="block max-h-[420px] w-full object-contain bg-white"
+                  onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                />
+                {block.alt && (
+                  <figcaption className="border-t border-outline/40 px-3 py-1.5 text-[11px] italic text-muted">
+                    {block.alt}
+                  </figcaption>
+                )}
+              </figure>
+            );
 
           case "table_raw": {
             const parsed = parseMarkdownTable(block.raw);

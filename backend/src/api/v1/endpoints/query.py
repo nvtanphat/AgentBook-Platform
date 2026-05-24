@@ -1,7 +1,7 @@
 import json
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import StreamingResponse
 
 from src.core.rate_limit import limiter
@@ -10,6 +10,8 @@ from src.schemas.common import APIResponse
 from src.schemas.query import (
     CompareRequest,
     CompareResponse,
+    QueryByGraphRequest,
+    QueryByImageRequest,
     QueryRequest,
     QueryResponse,
     StudyGuideRequest,
@@ -72,6 +74,111 @@ async def ask_stream(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@router.post("/ask-graph", response_model=APIResponse[QueryResponse])
+@limiter.limit("15/minute")
+async def ask_graph(
+    request: Request,
+    body: QueryByGraphRequest,
+    query_service: QueryService = Depends(get_query_service),
+) -> APIResponse[QueryResponse]:
+    """GraphRAG anchored query — user selected node(s)/edge(s) on the
+    knowledge graph; answer is grounded in chunks reachable from those
+    entities + their K-hop neighbours."""
+    verify_owner_access(request, body.owner_id)
+    if not body.entity_ids and not body.relation_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="entity_ids or relation_ids is required for graph-anchored query",
+        )
+    try:
+        result = await query_service.ask_with_graph_anchor(body)
+    except ValueError as exc:
+        logger.warning("Invalid graph-query request", extra={"owner_id": body.owner_id})
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid query request.") from exc
+    except Exception as exc:
+        logger.exception("Graph-query pipeline failed", extra={"owner_id": body.owner_id})
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Graph-query pipeline failed. Please retry later.",
+        ) from exc
+    return APIResponse(success=True, message="Graph query answered successfully", data=result, error=None)
+
+
+_IMAGE_QUERY_MAX_BYTES = 8 * 1024 * 1024  # 8 MB cap for upload-as-query
+_IMAGE_QUERY_ALLOWED_CT = {"image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif", "image/bmp"}
+
+
+@router.post("/ask-image", response_model=APIResponse[QueryResponse])
+@limiter.limit("8/minute")
+async def ask_image(
+    request: Request,
+    image: UploadFile = File(...),
+    owner_id: str = Form(...),
+    collection_id: str | None = Form(default=None),
+    material_ids: str | None = Form(default=None),
+    conversation_id: str = Form(default="default"),
+    query_text: str | None = Form(default=None),
+    top_k: int | None = Form(default=None),
+    answer_language: str | None = Form(default=None),
+    query_service: QueryService = Depends(get_query_service),
+) -> APIResponse[QueryResponse]:
+    """Image-as-Query: user uploads an image (with optional caption text).
+    Backend SigLIP-embeds the upload, finds visually similar figures in the
+    user's collection, then synthesises a grounded answer."""
+    verify_owner_access(request, owner_id)
+
+    if image.content_type and image.content_type.lower() not in _IMAGE_QUERY_ALLOWED_CT:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported image content-type: {image.content_type}",
+        )
+
+    image_bytes = await image.read()
+    if not image_bytes:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty image upload")
+    if len(image_bytes) > _IMAGE_QUERY_MAX_BYTES:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Image exceeds 8 MB limit")
+
+    parsed_material_ids: list[str] = []
+    if material_ids:
+        try:
+            decoded = json.loads(material_ids)
+            if isinstance(decoded, list):
+                parsed_material_ids = [str(m) for m in decoded if isinstance(m, (str, int))]
+        except json.JSONDecodeError:
+            parsed_material_ids = [m.strip() for m in material_ids.split(",") if m.strip()]
+
+    try:
+        body = QueryByImageRequest(
+            owner_id=owner_id,
+            collection_id=collection_id,
+            material_ids=parsed_material_ids,
+            conversation_id=conversation_id,
+            query_text=query_text,
+            top_k=top_k,
+            answer_language=answer_language,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid request fields: {exc}")
+
+    try:
+        result = await query_service.ask_with_image(
+            request=body,
+            image_bytes=image_bytes,
+            image_filename=image.filename or "upload",
+        )
+    except ValueError as exc:
+        logger.warning("Invalid image-query request", extra={"owner_id": owner_id, "collection_id": collection_id})
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid query request.") from exc
+    except Exception as exc:
+        logger.exception("Image-query pipeline failed", extra={"owner_id": owner_id, "collection_id": collection_id})
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Image-query pipeline failed. Please retry later.",
+        ) from exc
+    return APIResponse(success=True, message="Image query answered successfully", data=result, error=None)
 
 
 @router.post("/compare", response_model=APIResponse[CompareResponse])

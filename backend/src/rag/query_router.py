@@ -17,12 +17,21 @@ _ROUTER_PROMPT = """\
 You are a query classifier for a multilingual document Q&A system. Classify the query into exactly one route.
 
 Routes:
-- "factual": asks for definition, explanation, or a specific fact
+- "factual": asks for a definition, explanation, or a specific isolated fact
 - "summarization": asks to summarize, outline, or list main points
 - "comparison": asks to compare, contrast, or differentiate items
-- "graph_relation": asks about relationships, causes, effects, or dependencies between entities
-- "claim_check": asks to verify, fact-check, or validate a statement
+- "graph_relation": asks how entities are related, how one thing affects/influences/causes/depends-on another
+- "claim_check": asks to verify, fact-check, or validate a statement (contains "đúng không", "có phải", "true or false", etc.)
 - "general": anything else
+
+Examples:
+"F1-score liên quan đến Precision và Recall như thế nào?" → graph_relation
+"Dữ liệu training ảnh hưởng thế nào đến hiệu suất mô hình?" → graph_relation
+"Overfitting ảnh hưởng đến kết quả dự đoán như thế nào?" → graph_relation
+"Supervised learning và unsupervised learning khác nhau như thế nào?" → comparison
+"Machine learning là gì?" → factual
+"Tóm tắt các bước xây dựng mô hình" → summarization
+"F1-score là trung bình cộng của Precision và Recall đúng không?" → claim_check
 
 Query: {query}
 
@@ -155,22 +164,25 @@ class QueryRouter:
     def route(self, query: str) -> RouteDecision:
         text = " ".join(query.split())
 
+        # Multipliers reverted to v12-baseline values after v13 regression.
+        # Aggressive multipliers (2.5-3.0) bloated rerank candidate pool and
+        # caused 4 false refusals on synthesis queries — keep tight here.
         if _CLAIM_CHECK_RE.search(text):
             return RouteDecision(
                 route_type=RouteType.CLAIM_CHECK,
-                top_k_multiplier=1.0,
+                top_k_multiplier=1.25,
                 use_graph=False,
-                use_multi_query=False,
+                use_multi_query=True,
                 use_mmr=False,
             )
 
         if _GRAPH_RELATION_RE.search(text):
             return RouteDecision(
                 route_type=RouteType.GRAPH_RELATION,
-                top_k_multiplier=1.0,
+                top_k_multiplier=1.5,
                 use_graph=True,
                 graph_priority=True,
-                use_multi_query=False,
+                use_multi_query=True,
                 use_mmr=False,
             )
 
@@ -193,8 +205,6 @@ class QueryRouter:
             )
 
         if _FACTUAL_RE.search(text):
-            # Multi-query enabled: VI queries benefit from English paraphrase
-            # for cross-lingual matching against English source documents.
             return RouteDecision(
                 route_type=RouteType.FACTUAL,
                 top_k_multiplier=0.75,

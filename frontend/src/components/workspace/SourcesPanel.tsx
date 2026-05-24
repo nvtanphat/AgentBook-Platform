@@ -1,12 +1,12 @@
 import { DragEvent, useCallback, useEffect, useMemo, useRef, useState, useId } from "react";
-import { AlertCircle, BookOpen, Check, FileText, Image, Loader2, Pencil, Plus, RefreshCw, Search, Table2, Trash2, UploadCloud, X } from "lucide-react";
+import { AlertCircle, BookOpen, Check, FileAudio, FileText, Image, Loader2, Pencil, Plus, RefreshCw, Search, Table2, Trash2, UploadCloud, X } from "lucide-react";
 import { CollectionSummary, MaterialInfo, MaterialUploadMetadata, createCollection, deleteCollection, deleteMaterial, getMaterialStatus, listCollections, listMaterials, retryMaterial, updateCollection, uploadMaterialsBatchWithProgress } from "../../api/client";
 import StatusBadge from "../StatusBadge";
 import { useWorkspace } from "../../state/workspace";
 import DebugModal from "./DebugModal";
 import { useToast } from "../Toast";
 
-const ACCEPTED_TYPES = ".pdf,.docx,.pptx,.png,.jpg,.jpeg,.csv,.xlsx";
+const ACCEPTED_TYPES = ".pdf,.docx,.pptx,.png,.jpg,.jpeg,.csv,.xlsx,.mp3,.wav,.m4a,.ogg,.flac,.webm,.aac";
 const ACCEPTED_MIME = new Set([
   "application/pdf",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -14,7 +14,24 @@ const ACCEPTED_MIME = new Set([
   "image/png",
   "image/jpeg",
   "text/csv",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  // Audio MIME types
+  "audio/mpeg",
+  "audio/mp3",
+  "audio/wav",
+  "audio/x-wav",
+  "audio/wave",
+  "audio/mp4",
+  "audio/x-m4a",
+  "audio/m4a",
+  "audio/ogg",
+  "application/ogg",
+  "audio/flac",
+  "audio/x-flac",
+  "audio/webm",
+  "video/webm",
+  "audio/aac",
+  "audio/x-aac",
 ]);
 
 function formatBytes(value: number) {
@@ -38,6 +55,8 @@ function getFileIconInfo(filename: string, fileType = ""): FileIconInfo {
     return { icon: <FileText size={14} />, colorClass: "text-blue-500" };
   if (name.endsWith(".pptx") || name.endsWith(".ppt") || mime.includes("presentation"))
     return { icon: <FileText size={14} />, colorClass: "text-amber-500" };
+  if (/\.(mp3|wav|m4a|ogg|flac|webm|aac)$/.test(name) || mime.includes("audio"))
+    return { icon: <FileAudio size={14} />, colorClass: "text-pink-500" };
   return { icon: <FileText size={14} />, colorClass: "text-primary" };
 }
 
@@ -732,7 +751,7 @@ export default function SourcesPanel({ onCloseMobile }: { onCloseMobile?: () => 
           <input ref={fileInputRef} type="file" className="hidden" multiple accept={ACCEPTED_TYPES} onChange={(e) => { addFiles(e.target.files); if(e.target) e.target.value = ""; }} />
           <UploadCloud size={18} className="mx-auto mb-2 text-primary/60" />
           <p className="text-xs font-semibold text-text/80">Click to upload or drag files</p>
-          <p className="text-[10px] text-muted/50 mt-1">PDF, DOCX, PPTX, Images</p>
+          <p className="text-[10px] text-muted/50 mt-1">PDF, DOCX, PPTX, XLSX, Images, Audio (MP3/WAV/M4A)</p>
         </div>
 
         {/* Queue */}

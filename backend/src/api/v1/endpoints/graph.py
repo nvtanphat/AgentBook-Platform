@@ -1,7 +1,8 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import asyncio
 import json
+import math
 import re
 import unicodedata
 from collections import Counter, defaultdict
@@ -15,6 +16,7 @@ from src.dependencies import get_app_settings, verify_owner_access
 from src.models.chunk import Chunk
 from src.models.knowledge_graph import Entity, Relation
 from src.models.material import Material
+from src.rag.graph_builder import build_digraph, compute_betweenness, compute_communities, compute_degrees, compute_pagerank
 from src.schemas.common import APIResponse
 from src.schemas.graph import GraphEdge, GraphNode, GraphResponse, MindmapRequest
 from src.schemas.mindmap import MindmapNode, MindmapResponse
@@ -127,6 +129,326 @@ def _entity_slug(name: str) -> str:
     return f"entity:{slug}"
 
 
+# Import synonym map from extraction layer for cross-document entity merging.
+# This catches duplicates that survive per-chunk extraction (e.g. "ML" extracted
+# from doc A while "Machine Learning" extracted from doc B).
+try:
+    from src.processing.entity_resolution import _SYNONYM_MAP as _GRAPH_SYNONYM_MAP
+except Exception:
+    _GRAPH_SYNONYM_MAP = {}
+
+# Fuzzy string matching for cross-document dedup (non-hardcoded).
+# Uses rapidfuzz when available, falls back to difflib. Handles cases like
+# "Transformer" / "Transformers", "Neural Net" / "Neural Network" without
+# requiring per-entity synonym entries.
+try:
+    from rapidfuzz import fuzz as _graph_fuzz  # type: ignore[import-not-found]
+    def _graph_string_similarity(a: str, b: str) -> float:
+        return _graph_fuzz.token_set_ratio(a, b) / 100.0
+except Exception:
+    import difflib as _graph_difflib
+    def _graph_string_similarity(a: str, b: str) -> float:
+        return _graph_difflib.SequenceMatcher(None, a.lower(), b.lower()).ratio()
+
+_FUZZY_DEDUP_THRESHOLD = 0.88  # entities ≥ 88% similar are treated as duplicates
+
+# ── Embedding-based semantic clustering (BGE-M3) ────────────────────────────
+# Captures cross-lingual + paraphrase duplicates that string match misses
+# (e.g. "Học máy" ≡ "Machine Learning", "thực tế dương" ≡ "True Positive").
+# Domain-agnostic: works for any topic, no hardcoded synonyms required.
+_SEMANTIC_DEDUP_THRESHOLD = 0.82
+_graph_embedder = None  # lazy-loaded BGE-M3 singleton
+_graph_embedding_cache: dict[str, list[float]] = {}  # entity_name → dense vector
+
+
+def _get_graph_embedder():
+    global _graph_embedder
+    if _graph_embedder is None:
+        try:
+            from src.core.config import get_settings
+            from src.rag.embedder import BGEM3Embedder
+            _graph_embedder = BGEM3Embedder(get_settings())
+        except Exception:
+            _graph_embedder = False  # signal: unavailable, don't retry
+    return _graph_embedder if _graph_embedder else None
+
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a)) or 1e-9
+    nb = math.sqrt(sum(y * y for y in b)) or 1e-9
+    return dot / (na * nb)
+
+
+def _semantic_cluster_entities(entities: list) -> list[list[int]]:
+    """Return list of clusters (each = list of indices into `entities`).
+    Uses BGE-M3 embeddings with in-memory cache. No-op when embedder unavailable.
+    """
+    if len(entities) < 2:
+        return [[i] for i in range(len(entities))]
+    embedder = _get_graph_embedder()
+    if embedder is None:
+        return [[i] for i in range(len(entities))]
+
+    # Encode only entities whose embedding is not cached
+    names = [e.canonical_name for e in entities]
+    to_encode = [n for n in names if n.lower() not in _graph_embedding_cache]
+    if to_encode:
+        try:
+            encoded = embedder.encode(to_encode)
+            for name, item in zip(to_encode, encoded):
+                _graph_embedding_cache[name.lower()] = list(item.dense)
+        except Exception:
+            return [[i] for i in range(len(entities))]
+
+    vectors = [_graph_embedding_cache.get(n.lower(), []) for n in names]
+
+    # Union-find clustering by cosine ≥ threshold
+    parent = list(range(len(entities)))
+
+    def _find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def _union(i: int, j: int) -> None:
+        ri, rj = _find(i), _find(j)
+        if ri != rj:
+            parent[rj] = ri
+
+    for i in range(len(entities)):
+        for j in range(i + 1, len(entities)):
+            if _cosine(vectors[i], vectors[j]) >= _SEMANTIC_DEDUP_THRESHOLD:
+                _union(i, j)
+
+    cluster_map: dict[int, list[int]] = {}
+    for idx in range(len(entities)):
+        cluster_map.setdefault(_find(idx), []).append(idx)
+    return list(cluster_map.values())
+
+
+def _canonical_dedup_key(name: str) -> str:
+    """Stable key for cross-document dedup. Applies synonym lookup + diacritic fold."""
+    base = (_GRAPH_SYNONYM_MAP.get(name.lower().strip()) or name).lower().strip()
+    folded = _ascii_fold(base)
+    return re.sub(r"[^a-z0-9]+", "", folded)
+
+
+def _dedupe_and_merge_entities(entities: list) -> list:
+    """Merge entities sharing the same canonical_dedup_key by combining mention_refs
+    and aliases. Renames the merged entity to the canonical form from the synonym map
+    when available (e.g. "thực tế dương" → "True Positive").
+    """
+    groups: dict[str, list] = {}
+    for entity in entities:
+        key = _canonical_dedup_key(entity.canonical_name)
+        if not key:
+            continue
+        groups.setdefault(key, []).append(entity)
+
+    merged: list = []
+    for group in groups.values():
+        # Determine canonical display name: prefer synonym-map canonical, else most-mentioned name
+        synonym_canonical = None
+        for entity in group:
+            mapped = _GRAPH_SYNONYM_MAP.get(entity.canonical_name.lower().strip())
+            if mapped:
+                synonym_canonical = mapped
+                break
+
+        if len(group) == 1 and not synonym_canonical:
+            merged.append(group[0])
+            continue
+
+        # Pick base record: most mentions, then highest confidence, then shortest name
+        canonical = max(
+            group,
+            key=lambda e: (len(e.mention_refs), e.confidence, -len(e.canonical_name)),
+        )
+        all_mention_refs = []
+        seen_refs: set[tuple] = set()
+        all_aliases: set[str] = set(canonical.aliases or [])
+        all_chunk_ids: set[str] = set(canonical.chunk_ids or [])
+        for entity in group:
+            for ref in entity.mention_refs:
+                key_ref = (ref.material_id, ref.page, ref.block_id)
+                if key_ref not in seen_refs:
+                    seen_refs.add(key_ref)
+                    all_mention_refs.append(ref)
+            all_aliases.update(entity.aliases or [])
+            all_aliases.add(entity.canonical_name)
+            all_chunk_ids.update(entity.chunk_ids or [])
+
+        # Rename to synonym-map canonical (e.g. "ML" → "Machine Learning")
+        display_name = synonym_canonical or canonical.canonical_name
+        canonical.canonical_name = display_name
+        canonical.mention_refs = all_mention_refs
+        canonical.aliases = sorted(a for a in all_aliases if a != display_name)
+        canonical.chunk_ids = sorted(all_chunk_ids)
+        merged.append(canonical)
+
+    # ── Fuzzy pass: merge entities with near-identical names ────────────────
+    # Catches plural / typo / case variations missed by exact dedup, e.g.
+    # "Transformer" ≡ "Transformers", "Neural Net" ≡ "Neural Network".
+    # Union-find clustering by string similarity threshold.
+    if len(merged) <= 1:
+        return merged
+    parent = list(range(len(merged)))
+
+    def _find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def _union(i: int, j: int) -> None:
+        ri, rj = _find(i), _find(j)
+        if ri != rj:
+            parent[rj] = ri
+
+    for i in range(len(merged)):
+        for j in range(i + 1, len(merged)):
+            if _graph_string_similarity(merged[i].canonical_name, merged[j].canonical_name) >= _FUZZY_DEDUP_THRESHOLD:
+                _union(i, j)
+
+    cluster_map: dict[int, list] = {}
+    for idx, entity in enumerate(merged):
+        cluster_map.setdefault(_find(idx), []).append(entity)
+
+    final: list = []
+    for cluster in cluster_map.values():
+        if len(cluster) == 1:
+            final.append(cluster[0])
+            continue
+        # Pick representative: most mentions, then highest confidence, then shortest
+        rep = max(cluster, key=lambda e: (len(e.mention_refs), e.confidence, -len(e.canonical_name)))
+        all_refs: list = []
+        seen_keys: set[tuple] = set()
+        all_aliases_set: set[str] = set(rep.aliases or [])
+        all_chunks: set[str] = set(rep.chunk_ids or [])
+        for entity in cluster:
+            for ref in entity.mention_refs:
+                key_ref = (ref.material_id, ref.page, ref.block_id)
+                if key_ref not in seen_keys:
+                    seen_keys.add(key_ref)
+                    all_refs.append(ref)
+            all_aliases_set.update(entity.aliases or [])
+            all_aliases_set.add(entity.canonical_name)
+            all_chunks.update(entity.chunk_ids or [])
+        rep.mention_refs = all_refs
+        rep.aliases = sorted(a for a in all_aliases_set if a != rep.canonical_name)
+        rep.chunk_ids = sorted(all_chunks)
+        final.append(rep)
+
+    # ── Semantic pass (BGE-M3 embedding) ────────────────────────────────────
+    # Catches cross-lingual + paraphrase duplicates that string match misses.
+    # Cached → only first request per session pays the encoding cost.
+    if len(final) <= 1:
+        return final
+    sem_clusters = _semantic_cluster_entities(final)
+    semantic_merged: list = []
+    for idx_list in sem_clusters:
+        if len(idx_list) == 1:
+            semantic_merged.append(final[idx_list[0]])
+            continue
+        members = [final[i] for i in idx_list]
+        rep = max(members, key=lambda e: (len(e.mention_refs), e.confidence, -len(e.canonical_name)))
+        all_refs: list = []
+        seen_keys: set[tuple] = set()
+        all_aliases_set: set[str] = set(rep.aliases or [])
+        all_chunks: set[str] = set(rep.chunk_ids or [])
+        for entity in members:
+            for ref in entity.mention_refs:
+                key_ref = (ref.material_id, ref.page, ref.block_id)
+                if key_ref not in seen_keys:
+                    seen_keys.add(key_ref)
+                    all_refs.append(ref)
+            all_aliases_set.update(entity.aliases or [])
+            all_aliases_set.add(entity.canonical_name)
+            all_chunks.update(entity.chunk_ids or [])
+        rep.mention_refs = all_refs
+        rep.aliases = sorted(a for a in all_aliases_set if a != rep.canonical_name)
+        rep.chunk_ids = sorted(all_chunks)
+        semantic_merged.append(rep)
+    return semantic_merged
+
+
+# Patterns that mark an entity as low-quality / extraction noise.
+# Goal: visualization should show concepts a learner would recognise, not OCR fragments.
+_VN_DIACRITIC_RE = re.compile(r"[àáảãạăắằẳẵặâấầẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđ]", re.IGNORECASE)
+_HAS_DIGIT_RE = re.compile(r"\d")
+_UPPERCASE_TOKEN_RE = re.compile(r"\b[A-Z]{2,}\b")
+
+
+_NOISE_PREFIX_RE = re.compile(r"^(mô hình|dữ liệu|chỉ số|thực tế|tỷ lệ|độ chính|hệ số)\s", re.IGNORECASE)
+_GENERIC_NOUN_SET = frozenset({
+    # Standalone generic nouns that shouldn't be entities by themselves
+    "mô hình", "dữ liệu", "chỉ số", "tỷ lệ", "hệ số", "công thức",
+    "kết quả", "phương pháp", "kỹ thuật", "thuật toán",
+    "model", "data", "metric", "method", "technique", "result",
+    "value", "score", "weight", "feature", "label", "class",
+})
+
+
+def _is_quality_entity_label(label: str) -> bool:
+    """Reject entities that look like extraction noise.
+
+    Heuristics tuned for ML/AI corpus in Vietnamese + English:
+       - Multi-token + digits inside → OCR fragment
+       - Mixed VN diacritics + multiple uppercase English → slide title
+       - All-caps Vietnamese multi-token → slide title
+       - Starts with generic noun ("mô hình", "chỉ số") → incomplete phrase
+       - Pure generic noun → too generic
+    """
+    if not label:
+        return False
+    stripped = label.strip()
+    if len(stripped) < 3:
+        return False
+
+    tokens = stripped.split()
+    n_tokens = len(tokens)
+    lower = stripped.lower()
+
+    # Reject pure generic nouns
+    if lower in _GENERIC_NOUN_SET:
+        return False
+
+    # NB: removed the blanket "1-token all-caps ≤4 chars" reject. It was
+    # killing legitimate domain acronyms (KAN, GRU, MLP, RAG, BGE, ...).
+    # Filtering noise acronyms is the extractor's job — high-confidence
+    # entities are gated separately in `_is_display_entity`.
+
+    # Multi-token + contains digit → likely OCR fragment
+    if n_tokens >= 2 and _HAS_DIGIT_RE.search(stripped):
+        digit_tokens = [t for t in tokens if _HAS_DIGIT_RE.search(t)]
+        if len(digit_tokens) >= 2 or (n_tokens >= 3 and digit_tokens):
+            return False
+
+    has_vn = bool(_VN_DIACRITIC_RE.search(stripped))
+    upper_tokens = _UPPERCASE_TOKEN_RE.findall(stripped)
+
+    # Mixed VN diacritics + 2+ uppercase English tokens
+    if has_vn and len(upper_tokens) >= 2:
+        return False
+
+    # All-uppercase Vietnamese multi-token (slide titles like "CHỈ SỐ ĐÁNH GIÁ")
+    if has_vn and stripped.upper() == stripped and n_tokens >= 2:
+        return False
+
+    # Starts with a generic noun → likely fragment (e.g. "mô hình Giảm", "dữ liệu TIỀN")
+    if n_tokens >= 2 and _NOISE_PREFIX_RE.match(stripped):
+        # But only reject if remainder is short/garbled
+        remainder = " ".join(tokens[1:]).strip()
+        if len(remainder) < 4 or remainder.isupper():
+            return False
+
+    return True
+
+
 def _mindmap_slug(prefix: str, name: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "node"
     return f"{prefix}:{slug[:64]}"
@@ -200,8 +522,10 @@ def _clean_entity_label(text: str) -> str | None:
         return None
     if len(words) > 4:
         return None
-    if len(words) == 1 and len(compact) <= 5 and lower not in {"chunk", "graph", "query", "ocr", "rag", "kan", "gru"}:
-        return None
+    # No length-based rejection for single-word labels here. Domain acronyms
+    # (KAN, GRU, RAG, MLP, etc.) are 2-5 chars; rejecting them lost legitimate
+    # concept nodes. The extractor's confidence + mention_count gate (in
+    # `_is_display_entity`) already filters genuine noise.
     if re.match(r"^(?:hình|hinh|bảng|bang|câu|cau)\s+\d+$", lower):
         return None
     if len({word.lower() for word in words}) < len(words):
@@ -449,7 +773,12 @@ def _extract_chunk_concepts(chunks: list[Chunk], entities: list[Entity], *, deta
         r"(?:hybrid|semantic|vector|graph|evidence|retrieval|reranker|chunking|embedding|ocr|parser|grounding|regularization|dropout|normalization)(?:\s+[A-Za-z0-9+-]+){0,2})\b",
         flags=re.IGNORECASE,
     )
-    max_chunk_chars = 1600 if detail_level == "detailed" else 900
+    # Brief: small slice, fewer phrases. Overview: medium. Detailed: full.
+    max_chunk_chars = (
+        1600 if detail_level == "detailed"
+        else 500 if detail_level == "brief"
+        else 900
+    )
     for chunk in chunks[:40]:
         text = _repair_text_encoding(chunk.content or "")
         for match in phrase_re.finditer(text[:max_chunk_chars]):
@@ -476,8 +805,13 @@ def _build_mindmap_from_concepts(root_topic: str, concepts: list[tuple[str, str,
     for item in concepts:
         grouped[item[1]].append(item)
 
-    max_topics = 8 if detail_level == "detailed" else 6
-    max_concepts = 8 if detail_level == "detailed" else 5
+    # Brief: 4 topics × 3 concepts (compact). Overview: 6×5. Detailed: 8×8.
+    if detail_level == "detailed":
+        max_topics, max_concepts = 8, 8
+    elif detail_level == "brief":
+        max_topics, max_concepts = 4, 3
+    else:
+        max_topics, max_concepts = 6, 5
     ranked_groups = sorted(grouped.items(), key=lambda item: (sum(concept[2] for concept in item[1]), len(item[1])), reverse=True)
 
     nodes: list[MindmapNode] = []
@@ -542,8 +876,13 @@ async def _build_llm_mindmap(root_topic: str, chunks: list[Chunk], *, settings: 
     if not sample:
         return None
 
-    topic_count = 6 if detail_level == "overview" else 8
-    concept_count = 5 if detail_level == "overview" else 8
+    # Brief: tighter than overview. Detailed: full breadth.
+    if detail_level == "brief":
+        topic_count, concept_count = 4, 3
+    elif detail_level == "detailed":
+        topic_count, concept_count = 8, 8
+    else:
+        topic_count, concept_count = 6, 5
     prompt = f"""Create a NotebookLM-style mind map from the provided document excerpts.
 Return ONLY valid JSON with this schema:
 {{"root_topic":"...","topics":[{{"label":"short natural topic label","children":[{{"label":"short natural concept label","source_index":1}}]}}]}}
@@ -788,9 +1127,81 @@ async def graph(request: Request, body: MindmapRequest) -> APIResponse[GraphResp
 
     # Only named entities, high-confidence first; no events/block nodes (too noisy for viz)
     text_entity_query = {**entity_query, "entity_type": {"$nin": list(_CROSS_MODAL_TYPES)}}
-    raw_entities = await Entity.find(text_entity_query).sort("-confidence").limit(160).to_list()
-    entities     = [entity for entity in raw_entities if _is_display_entity(entity)][:50]
-    relations    = await Relation.find(relation_query).limit(120).to_list()
+    raw_entities = await Entity.find(text_entity_query).sort("-confidence").limit(400).to_list()
+    display_entities = [entity for entity in raw_entities if _is_display_entity(entity)]
+    # Cross-document dedup: merge "ML" + "Machine Learning" + "Học máy" → 1 entity
+    deduped = _dedupe_and_merge_entities(display_entities)
+    # Fetch relations early so focus expansion can use them for 1-hop neighbors
+    relations = await Relation.find(relation_query).limit(400).to_list()
+
+    # ── Focus mode: filter to entities backing the last answer ──────────────
+    # Strategy: ENTITY NAME MATCHING against query + answer text.
+    # This is more precise than block_id/material filtering because:
+    #   - Block_ids in citations often don't align with entity mention_refs (different chunking)
+    #   - Material-level fallback grabs the entire document's entities (50+ entities)
+    #   - Name matching directly captures what the answer discusses
+    focus_block_set: set[str] = set(body.focus_block_ids or [])
+    focus_material_set: set[str] = set(body.focus_material_ids or [])
+    focus_page_set: set[str] = set(body.focus_pages or [])
+    focus_text = " ".join(filter(None, [body.focus_query_text or "", body.focus_answer_text or ""])).strip()
+    is_focus_mode = bool(focus_block_set or focus_material_set or focus_page_set or focus_text)
+    primary_ids: set[str] = set()
+    if is_focus_mode:
+        primary: list = []
+        # Tier 1 (preferred): name match in query + answer text
+        if focus_text:
+            folded_text = _ascii_fold(focus_text)
+            for entity in deduped:
+                names = [entity.canonical_name, *(entity.aliases or [])]
+                for name in names:
+                    folded_name = _ascii_fold(name).strip()
+                    if len(folded_name) >= 3 and folded_name in folded_text:
+                        primary.append(entity)
+                        break
+
+        # Tier 2 (fallback): block_id match — only when no name matches found
+        if not primary and focus_block_set:
+            primary = [
+                e for e in deduped
+                if any(r.block_id and r.block_id in focus_block_set for r in e.mention_refs)
+            ]
+
+        # Tier 3 (last resort): page match
+        if not primary and focus_page_set:
+            primary = [
+                e for e in deduped
+                if any(
+                    r.page is not None and f"{r.material_id}:{r.page}" in focus_page_set
+                    for r in e.mention_refs
+                )
+            ]
+        # NOTE: material-level fallback intentionally removed — it pulls every entity
+        # in the cited document and defeats the purpose of "focused" view.
+
+        # Cap primary at top 10 by mention_count (most central entities first)
+        primary = sorted(primary, key=lambda e: len(e.mention_refs), reverse=True)[:10]
+        primary_ids = {_entity_slug(e.canonical_name) for e in primary}
+
+        # 1-hop expansion: top 6 neighbors most connected to primary set
+        if primary_ids:
+            neighbor_counts: dict[str, int] = {}
+            for rel in relations:
+                if rel.source_id in primary_ids and rel.target_id not in primary_ids:
+                    neighbor_counts[rel.target_id] = neighbor_counts.get(rel.target_id, 0) + 1
+                elif rel.target_id in primary_ids and rel.source_id not in primary_ids:
+                    neighbor_counts[rel.source_id] = neighbor_counts.get(rel.source_id, 0) + 1
+            top_neighbor_ids = {
+                slug for slug, _ in sorted(neighbor_counts.items(), key=lambda kv: kv[1], reverse=True)[:6]
+            }
+            for entity in deduped:
+                slug = _entity_slug(entity.canonical_name)
+                if slug in top_neighbor_ids and slug not in primary_ids:
+                    primary.append(entity)
+
+        deduped = primary
+
+    # Cap at 150 most-mentioned to avoid visual clutter
+    entities = sorted(deduped, key=lambda e: (len(e.mention_refs), e.confidence), reverse=True)[:150]
     all_entities = entities
 
     # Collect all material_ids referenced by entities to batch-load names
@@ -803,10 +1214,19 @@ async def graph(request: Request, body: MindmapRequest) -> APIResponse[GraphResp
         mats = await Material.find({"_id": {"$in": list(all_material_ids)}}).to_list()
         material_name_map = {str(m.id): m.original_name for m in mats}
 
-    nodes_by_id = {
-        _entity_slug(entity.canonical_name): GraphNode(
-            id=_entity_slug(entity.canonical_name),
-            label=_short_label(_clean_entity_label(entity.canonical_name) or entity.canonical_name, limit=40),
+    nodes_by_id: dict[str, GraphNode] = {}
+    for entity in all_entities:
+        cleaned = _clean_entity_label(entity.canonical_name) or entity.canonical_name
+        if not _is_quality_entity_label(cleaned):
+            continue
+        slug = _entity_slug(entity.canonical_name)
+        # Deduplicate: keep entity with higher mention_count for identical slug
+        existing = nodes_by_id.get(slug)
+        if existing and existing.mention_count >= len(entity.mention_refs):
+            continue
+        nodes_by_id[slug] = GraphNode(
+            id=slug,
+            label=_short_label(cleaned, limit=40),
             type=entity.entity_type,
             confidence=entity.confidence,
             mention_count=len(entity.mention_refs),
@@ -817,19 +1237,43 @@ async def graph(request: Request, body: MindmapRequest) -> APIResponse[GraphResp
             ))[:5],
             evidence_refs=_evidence_refs(entity.mention_refs),
         )
-        for entity in all_entities
-    }
 
-    nodes = list(nodes_by_id.values())
-    node_ids = {node.id for node in nodes}
+    node_ids = set(nodes_by_id.keys())
+    filtered_relations = [
+        r for r in relations
+        if r.source_id in node_ids and r.target_id in node_ids and r.evidence_refs
+    ]
+
+    # Batch-load chunk text for relations that don't already have evidence_text_chunk
+    evidence_text_map: dict[tuple[str, str], str] = {}
+    refs_by_material: dict[str, set[str]] = defaultdict(set)
+    for relation in filtered_relations:
+        if relation.evidence_text_chunk:
+            continue
+        first_ref = relation.evidence_refs[0]
+        if first_ref.block_id:
+            refs_by_material[str(first_ref.material_id)].add(first_ref.block_id)
+    if refs_by_material:
+        for mat_id_str, block_ids in refs_by_material.items():
+            try:
+                mat_chunks = await Chunk.find(
+                    {"material_id": PydanticObjectId(mat_id_str), "source_block_ids": {"$in": list(block_ids)}}
+                ).to_list()
+                for chunk in mat_chunks:
+                    for bid in chunk.source_block_ids:
+                        if bid in block_ids:
+                            evidence_text_map[(mat_id_str, bid)] = chunk.content[:600]
+            except Exception:
+                pass
+
     edges = []
-    for relation in relations:
-        if relation.source_id not in node_ids or relation.target_id not in node_ids:
-            continue
-        if not relation.evidence_refs:
-            continue
+    for relation in filtered_relations:
         source_node = nodes_by_id.get(relation.source_id)
         target_node = nodes_by_id.get(relation.target_id)
+        evidence_text = relation.evidence_text_chunk
+        if not evidence_text:
+            first_ref = relation.evidence_refs[0]
+            evidence_text = evidence_text_map.get((str(first_ref.material_id), first_ref.block_id or ""))
         edges.append(
             GraphEdge(
                 source=relation.source_id,
@@ -840,13 +1284,150 @@ async def graph(request: Request, body: MindmapRequest) -> APIResponse[GraphResp
                 confidence=relation.confidence,
                 evidence_count=len(relation.evidence_refs),
                 evidence_refs=_evidence_refs(relation.evidence_refs),
+                evidence_text_chunk=evidence_text,
             )
         )
     if not edges:
         edges = _entity_cooccurrence_edges(all_entities)
     edges.sort(key=lambda edge: ((edge.evidence_count or 0), edge.confidence or 0), reverse=True)
+
+    # ── Enrich nodes with centrality + community structure ──────────────────
+    # Pipeline:
+    #   1. PageRank → importance score (hub detection)
+    #   2. Louvain communities → grouping by topic
+    #   3. Filter orphan nodes (degree = 0) for visual clarity
+    G = build_digraph(list(nodes_by_id.values()), edges)
+    degree_map = compute_degrees(G)
+    pagerank_map = compute_pagerank(G)
+    community_map = compute_communities(G)
+
+    # Normalize PageRank to [0, 1] for easier UI consumption
+    max_pr = max(pagerank_map.values()) if pagerank_map else 1.0
+    hub_threshold = sorted(pagerank_map.values(), reverse=True)[: max(1, len(pagerank_map) // 10)][-1] if pagerank_map else 0.0
+
+    nodes = []
+    for node in nodes_by_id.values():
+        deg = degree_map.get(node.id, 0)
+        is_primary = is_focus_mode and node.id in primary_ids
+        # In focus mode, keep primary entities even if degree=0
+        if deg == 0 and not is_primary:
+            continue
+        pr = pagerank_map.get(node.id, 0.0)
+        # In focus mode, suppress hub status — user wants Dropout-centric view,
+        # not global "accuracy" hub. Hubs are misleading after subgraph filter.
+        is_hub_global = pr >= hub_threshold and len(pagerank_map) >= 3
+        nodes.append(
+            node.model_copy(update={
+                "degree": deg,
+                "importance": pr / max_pr if max_pr > 0 else 0.0,
+                "community": community_map.get(node.id, 0),
+                "is_hub": is_primary if is_focus_mode else is_hub_global,
+                "is_focused": is_primary,
+            })
+        )
+    # Keep only edges connecting visible nodes
+    visible_ids = {n.id for n in nodes}
+    edges = [e for e in edges if e.source in visible_ids and e.target in visible_ids]
+
     result = GraphResponse(nodes=nodes, edges=edges)
     return APIResponse(success=True, message="Graph loaded successfully", data=result, error=None)
+
+
+@router.get("/entity/{entity_id}/subgraph", response_model=APIResponse[GraphResponse])
+async def entity_subgraph(
+    entity_id: str,
+    request: Request,
+    owner_id: str,
+    collection_id: str | None = None,
+    hops: int = 2,
+    limit_nodes: int = 40,
+) -> APIResponse[GraphResponse]:
+    """G1 — K-hop subgraph around a single entity.
+
+    The `entity_id` argument is the slug-form id the frontend already holds
+    (e.g. `entity:dropout`). Returns the same `GraphResponse` shape as `POST
+    /graph` so the existing GraphCanvas can render it without any new node
+    types. Used by the frontend "expand around this node" interaction and as
+    a preview after a graph-anchored query.
+    """
+    verify_owner_access(request, owner_id)
+    if not collection_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="collection_id is required for entity subgraph retrieval",
+        )
+    if hops not in (1, 2):
+        hops = 2
+    from src.rag.graph_retriever import GraphRetriever
+    from src.rag.types import RetrievalScope
+
+    settings = get_app_settings()
+    retriever = GraphRetriever(settings)
+    scope = RetrievalScope(owner_id=owner_id, collection_id=collection_id)
+    entities, relations = await retriever.subgraph_around_entities(
+        entity_slugs=[entity_id], scope=scope, hops=hops,
+    )
+    if not entities:
+        return APIResponse(
+            success=True,
+            message="No subgraph found for this entity",
+            data=GraphResponse(nodes=[], edges=[]),
+            error=None,
+        )
+
+    # Dedupe entities by slug — extraction sometimes emits multiple entries with
+    # the same canonical_name across chunks/docs. Keep the one with the most
+    # mentions (most informative for the user).
+    by_slug: dict[str, Entity] = {}
+    for e in entities:
+        nid = _entity_slug(e.canonical_name)  # "entity:slug-form"
+        existing = by_slug.get(nid)
+        if existing is None or len(e.mention_refs or []) > len(existing.mention_refs or []):
+            by_slug[nid] = e
+
+    # Render with the same conventions as POST /graph: slug-style ids, label
+    # from canonical_name, basic node metadata. Relations turn into edges
+    # using `source_id` / `target_id` already in slug form.
+    nodes: list[GraphNode] = []
+    target_seed = entity_id if entity_id.startswith("entity:") else f"entity:{entity_id}"
+    for nid, e in list(by_slug.items())[:limit_nodes]:
+        is_seed = nid == target_seed
+        nodes.append(
+            GraphNode(
+                id=nid,
+                label=e.canonical_name,
+                type=e.entity_type,
+                confidence=e.confidence,
+                mention_count=len(e.mention_refs or []),
+                is_focused=is_seed,
+                is_hub=is_seed,
+                source_docs=[],
+                evidence_refs=_evidence_refs(e.mention_refs[:3]),
+            )
+        )
+
+    edges: list[GraphEdge] = []
+    visible_ids = {n.id for n in nodes}
+    for r in relations:
+        if r.source_id in visible_ids and r.target_id in visible_ids:
+            edges.append(
+                GraphEdge(
+                    source=r.source_id,
+                    target=r.target_id,
+                    relation_type=r.relation_type,
+                    confidence=r.confidence,
+                    evidence_count=len(r.evidence_refs or []),
+                    evidence_refs=_evidence_refs(r.evidence_refs or []),
+                    evidence_text_chunk=r.evidence_text_chunk,
+                )
+            )
+
+    return APIResponse(
+        success=True,
+        message="Entity subgraph loaded successfully",
+        data=GraphResponse(nodes=nodes, edges=edges),
+        error=None,
+    )
 
 
 @router.post("/mindmap", response_model=APIResponse[MindmapResponse])

@@ -1,0 +1,918 @@
+{
+  "success": true,
+  "message": "Query answered successfully",
+  "data": {
+    "answer": "Module Docling parser xử lý loại file nào[3]? Module Docling parser xử lý các tệp tin văn bản (text/table/figure)[1].",
+    "answer_language": "vi",
+    "query_language": "vi",
+    "translated_query": null,
+    "source_languages": [
+      "en"
+    ],
+    "citations": [
+      {
+        "doc_id": "6a1248b648a253a8162ee175",
+        "doc_name": "slides_mixed.pptx",
+        "page": 3,
+        "pages": [
+          3
+        ],
+        "block_id": "#/texts/28",
+        "block_type": "paragraph",
+        "snippet_original": "Expected answer: the scan path uses Docling plus an OCR fallback, then persists OCR confidence for debug inspection.",
+        "snippet_translated": null,
+        "bbox": {
+          "x1": 7818120.0,
+          "y1": 3886200.0,
+          "x2": 11155680.0,
+          "y2": 2468880.0
+        },
+        "role": "primary",
+        "source_language": "en",
+        "confidence": 0.5833334,
+        "evidence_blocks": [
+          {
+            "block_id": "#/texts/18",
+            "block_type": "paragraph",
+            "page": 3,
+            "snippet_original": "2. Parser router",
+            "source_language": "en",
+            "bbox": {
+              "x1": 502920.0,
+              "y1": 768096.0,
+              "x2": 11384280.0,
+              "y2": 310896.0
+            },
+            "confidence": null,
+            "material_id": "6a1248b648a253a8162ee175",
+            "doc_name": "slides_mixed.pptx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/19",
+            "block_type": "paragraph",
+            "page": 3,
+            "snippet_original": "Each extension should activate the intended parser branch.",
+            "source_language": "en",
+            "bbox": {
+              "x1": 521208.0,
+              "y1": 1097280.0,
+              "x2": 10396728.0,
+              "y2": 841248.0
+            },
+            "confidence": null,
+            "material_id": "6a1248b648a253a8162ee175",
+            "doc_name": "slides_mixed.pptx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/27",
+            "block_type": "paragraph",
+            "page": 3,
+            "snippet_original": "Question to test: “Which parser handles image-only Vietnamese PDFs?”",
+            "source_language": "en",
+            "bbox": {
+              "x1": 7818120.0,
+              "y1": 2240280.0,
+              "x2": 11155680.0,
+              "y2": 1417320.0
+            },
+            "confidence": null,
+            "material_id": "6a1248b648a253a8162ee175",
+            "doc_name": "slides_mixed.pptx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/28",
+            "block_type": "paragraph",
+            "page": 3,
+            "snippet_original": "Expected answer: the scan path uses Docling plus an OCR fallback, then persists OCR confidence for debug inspection.",
+            "source_language": "en",
+            "bbox": {
+              "x1": 7818120.0,
+              "y1": 3886200.0,
+              "x2": 11155680.0,
+              "y2": 2468880.0
+            },
+            "confidence": null,
+            "material_id": "6a1248b648a253a8162ee175",
+            "doc_name": "slides_mixed.pptx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/20",
+            "block_type": "paragraph",
+            "page": 3,
+            "snippet_original": "Input Parser Expected block",
+            "source_language": "en",
+            "bbox": {
+              "x1": 731520.0,
+              "y1": 4297680.0,
+              "x2": 7406640.0,
+              "y2": 1325880.0
+            },
+            "confidence": null,
+            "material_id": "6a1248b648a253a8162ee175",
+            "doc_name": "slides_mixed.pptx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/21",
+            "block_type": "paragraph",
+            "page": 3,
+            "snippet_original": "PDF text Docling text/table/figure",
+            "source_language": "en",
+            "bbox": {
+              "x1": 731520.0,
+              "y1": 4297680.0,
+              "x2": 7406640.0,
+              "y2": 1325880.0
+            },
+            "confidence": null,
+            "material_id": "6a1248b648a253a8162ee175",
+            "doc_name": "slides_mixed.pptx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/22",
+            "block_type": "paragraph",
+            "page": 3,
+            "snippet_original": "PDF scan Docling + OCR ocr_text",
+            "source_language": "en",
+            "bbox": {
+              "x1": 731520.0,
+              "y1": 4297680.0,
+              "x2": 7406640.0,
+              "y2": 1325880.0
+            },
+            "confidence": null,
+            "material_id": "6a1248b648a253a8162ee175",
+            "doc_name": "slides_mixed.pptx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/23",
+            "block_type": "paragraph",
+            "page": 3,
+            "snippet_original": "DOCX Docling + python-docx table",
+            "source_language": "en",
+            "bbox": {
+              "x1": 731520.0,
+              "y1": 4297680.0,
+              "x2": 7406640.0,
+              "y2": 1325880.0
+            },
+            "confidence": null,
+            "material_id": "6a1248b648a253a8162ee175",
+            "doc_name": "slides_mixed.pptx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/24",
+            "block_type": "paragraph",
+            "page": 3,
+            "snippet_original": "PPTX FigureCaptioner figure",
+            "source_language": "en",
+            "bbox": {
+              "x1": 731520.0,
+              "y1": 4297680.0,
+              "x2": 7406640.0,
+              "y2": 1325880.0
+            },
+            "confidence": null,
+            "material_id": "6a1248b648a253a8162ee175",
+            "doc_name": "slides_mixed.pptx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/25",
+            "block_type": "paragraph",
+            "page": 3,
+            "snippet_original": "CSV/XLSX SpreadsheetParser table_block",
+            "source_language": "en",
+            "bbox": {
+              "x1": 731520.0,
+              "y1": 4297680.0,
+              "x2": 7406640.0,
+              "y2": 1325880.0
+            },
+            "confidence": null,
+            "material_id": "6a1248b648a253a8162ee175",
+            "doc_name": "slides_mixed.pptx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/26",
+            "block_type": "paragraph",
+            "page": 3,
+            "snippet_original": "MP3/WAV AudioParser audio_segment",
+            "source_language": "en",
+            "bbox": {
+              "x1": 731520.0,
+              "y1": 4297680.0,
+              "x2": 7406640.0,
+              "y2": 1325880.0
+            },
+            "confidence": null,
+            "material_id": "6a1248b648a253a8162ee175",
+            "doc_name": "slides_mixed.pptx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/29",
+            "block_type": "paragraph",
+            "page": 3,
+            "snippet_original": "This slide intentionally combines a table and explanatory text.",
+            "source_language": "en",
+            "bbox": {
+              "x1": 7818120.0,
+              "y1": 5257800.0,
+              "x2": 11155680.0,
+              "y2": 4572000.0
+            },
+            "confidence": null,
+            "material_id": "6a1248b648a253a8162ee175",
+            "doc_name": "slides_mixed.pptx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/30",
+            "block_type": "paragraph",
+            "page": 3,
+            "snippet_original": "AgentBook test deck | 3/10",
+            "source_language": "en",
+            "bbox": {
+              "x1": 9966960.0,
+              "y1": 6638544.0,
+              "x2": 11612880.0,
+              "y2": 6492240.0
+            },
+            "confidence": null,
+            "material_id": "6a1248b648a253a8162ee175",
+            "doc_name": "slides_mixed.pptx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          }
+        ]
+      },
+      {
+        "doc_id": "6a1248b748a253a8162ee177",
+        "doc_name": "comparison_doc.docx",
+        "page": 1,
+        "pages": [
+          1
+        ],
+        "block_id": "blk-a151983e549c",
+        "block_type": "paragraph",
+        "snippet_original": "Test question Docling parser PDF/DOCX/PPTX",
+        "snippet_translated": null,
+        "bbox": null,
+        "role": "supporting",
+        "source_language": "en",
+        "confidence": 0.4,
+        "evidence_blocks": [
+          {
+            "block_id": "blk-a151983e549c",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Test question Docling parser PDF/DOCX/PPTX",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-518fdcb4bd6e",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "text/table/figure Which parser handles text-based PDF?",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-688648235c9d",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "EasyOCR fallback Scanned PDF and image",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-4c5925269b16",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "ocr_text What should happen when the scan is readable?",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-4c7989f1304b",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "SpreadsheetParser CSV/XLSX table",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-b94fb7b42ce4",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Which product has the highest price?",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-d5ece79b0c2d",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "AudioParser MP3/WAV audio_segment",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-a4b23fcb189b",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "What is the speaker talking about?",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-50807ca6326a",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "POST /query/ask lecture_notes.pdf",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-ac70f2fa8026",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Vietnamese answer grounded in English document",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-39a54ded4267",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "POST /query/compare lecture_notes.pdf + comparison_doc.docx",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-250a3262d2eb",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Shared claims and differences",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          }
+        ]
+      },
+      {
+        "doc_id": "6a1248b748a253a8162ee177",
+        "doc_name": "comparison_doc.docx",
+        "page": 1,
+        "pages": [
+          1
+        ],
+        "block_id": "#/texts/29",
+        "block_type": "paragraph",
+        "snippet_original": "When compared against lecture_notes.pdf, this DOCX should be recognized as covering the same AgentBook system. The PDF emphasizes conceptual flow and evaluation, while this DOCX emphasizes tabular mappings, endpoint scenarios, and operational risks. A correct compare result should not merely say the documents are similar; it should identify which claims overlap and which details appear only in one file.",
+        "snippet_translated": null,
+        "bbox": null,
+        "role": "supporting",
+        "source_language": "en",
+        "confidence": 0.33333334,
+        "evidence_blocks": [
+          {
+            "block_id": "#/texts/11",
+            "block_type": "heading",
+            "page": 1,
+            "snippet_original": "2. Component mapping table",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/12",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Module Input type Block type expected",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/15",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Test question Table 1. Component mapping for parser tests.",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/17",
+            "block_type": "heading",
+            "page": 1,
+            "snippet_original": "3. Query scenarios table",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/18",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Endpoint Required material Expected output",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/21",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Table 2. Query scenarios for endpoint testing.",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/22",
+            "block_type": "heading",
+            "page": 1,
+            "snippet_original": "4. Risk and mitigation table",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/23",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Risk Trigger file Severity Mitigation",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/27",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Table 3. Risk and mitigation table.",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/28",
+            "block_type": "heading",
+            "page": 1,
+            "snippet_original": "5. Expected compare behavior",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/29",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "When compared against lecture_notes.pdf, this DOCX should be recognized as covering the same AgentBook system. The PDF emphasizes conceptual flow and evaluation, while this DOCX emphasizes tabular mappings, endpoint scenarios, and operational risks. A correct compare result should not merely say the documents are similar; it should identify which claims overlap and which details appear only in one file.",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          }
+        ]
+      },
+      {
+        "doc_id": "6a1248b548a253a8162ee173",
+        "doc_name": "lecture_notes.pdf",
+        "page": 1,
+        "pages": [
+          1
+        ],
+        "block_id": "blk-380a5af7652f",
+        "block_type": "paragraph",
+        "snippet_original": "Selects Docling, OCR, spreadsheet, or audio parser",
+        "snippet_translated": null,
+        "bbox": {
+          "x1": 176.91339,
+          "y1": 528.7308,
+          "x2": 336.54819,
+          "y2": 545.0264505144996
+        },
+        "role": "supporting",
+        "source_language": "en",
+        "confidence": 0.5833334,
+        "evidence_blocks": [
+          {
+            "block_id": "#/texts/5",
+            "block_type": "heading",
+            "page": 1,
+            "snippet_original": "1. System Overview",
+            "source_language": "en",
+            "bbox": {
+              "x1": 54.0,
+              "y1": 518.7417705078125,
+              "x2": 229.17600000000002,
+              "y2": 502.3671923974289
+            },
+            "confidence": null,
+            "material_id": "6a1248b548a253a8162ee173",
+            "doc_name": "lecture_notes.pdf",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-7e1d2b7bbf7c",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Parser Router",
+            "source_language": "en",
+            "bbox": {
+              "x1": 91.87402,
+              "y1": 528.7308,
+              "x2": 142.40242,
+              "y2": 535.8264505144996
+            },
+            "confidence": null,
+            "material_id": "6a1248b548a253a8162ee173",
+            "doc_name": "lecture_notes.pdf",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-8ebda02ae210",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Parser Router",
+            "source_language": "en",
+            "bbox": {
+              "x1": 91.87402,
+              "y1": 528.7308,
+              "x2": 142.40242,
+              "y2": 535.8264505144996
+            },
+            "confidence": null,
+            "material_id": "6a1248b548a253a8162ee173",
+            "doc_name": "lecture_notes.pdf",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-380a5af7652f",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Selects Docling, OCR, spreadsheet, or audio parser",
+            "source_language": "en",
+            "bbox": {
+              "x1": 176.91339,
+              "y1": 528.7308,
+              "x2": 336.54819,
+              "y2": 545.0264505144996
+            },
+            "confidence": null,
+            "material_id": "6a1248b548a253a8162ee173",
+            "doc_name": "lecture_notes.pdf",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-9ab93469d5f4",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "parser_name and modality",
+            "source_language": "en",
+            "bbox": {
+              "x1": 346.99212,
+              "y1": 528.7308,
+              "x2": 445.14732,
+              "y2": 535.8264505144996
+            },
+            "confidence": null,
+            "material_id": "6a1248b548a253a8162ee173",
+            "doc_name": "lecture_notes.pdf",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-32335d6f014e",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Chunk Builder",
+            "source_language": "en",
+            "bbox": {
+              "x1": 91.87402,
+              "y1": 555.1308,
+              "x2": 143.79082,
+              "y2": 562.2264505144996
+            },
+            "confidence": null,
+            "material_id": "6a1248b548a253a8162ee173",
+            "doc_name": "lecture_notes.pdf",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-e00b13af2d34",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Chunk Builder",
+            "source_language": "en",
+            "bbox": {
+              "x1": 91.87402,
+              "y1": 555.1308,
+              "x2": 143.79082,
+              "y2": 562.2264505144996
+            },
+            "confidence": null,
+            "material_id": "6a1248b548a253a8162ee173",
+            "doc_name": "lecture_notes.pdf",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-79fd1c15e227",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Creates retrieval-ready blocks",
+            "source_language": "en",
+            "bbox": {
+              "x1": 176.91339,
+              "y1": 555.1308,
+              "x2": 285.72339,
+              "y2": 562.2264505144996
+            },
+            "confidence": null,
+            "material_id": "6a1248b548a253a8162ee173",
+            "doc_name": "lecture_notes.pdf",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-eb1d91836ef0",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "chunk_count > 0",
+            "source_language": "en",
+            "bbox": {
+              "x1": 346.99212,
+              "y1": 555.1308,
+              "x2": 406.72452,
+              "y2": 562.2264505144996
+            },
+            "confidence": null,
+            "material_id": "6a1248b548a253a8162ee173",
+            "doc_name": "lecture_notes.pdf",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-caef4ed2ff12",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "chunk_count > 0",
+            "source_language": "en",
+            "bbox": {
+              "x1": 346.99212,
+              "y1": 555.1308,
+              "x2": 406.72452,
+              "y2": 562.2264505144996
+            },
+            "confidence": null,
+            "material_id": "6a1248b548a253a8162ee173",
+            "doc_name": "lecture_notes.pdf",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          }
+        ]
+      }
+    ],
+    "confidence": 0.58,
+    "was_refused": false,
+    "refusal_reason": null,
+    "reasoning_path": [
+      {
+        "step_type": "retrieve",
+        "entities": [],
+        "relations": [],
+        "entity_ids": [],
+        "relation_ids": [],
+        "confidence": 0.580000028,
+        "description": "Retrieved 14 relevant chunks from 3 documents: lecture_notes.pdf, comparison_doc.docx, slides_mixed.pptx"
+      },
+      {
+        "step_type": "synthesize",
+        "entities": [],
+        "relations": [],
+        "entity_ids": [],
+        "relation_ids": [],
+        "confidence": 0.0,
+        "description": "Synthesized answer from top 5 most relevant chunks"
+      }
+    ],
+    "coverage": null,
+    "agent_trace": null,
+    "sentence_coverage": {
+      "enabled": true,
+      "total_sentences": 2,
+      "supported_count": 2,
+      "partial_count": 0,
+      "unsupported_count": 0,
+      "dropped_count": 0,
+      "coverage_ratio": 1.0,
+      "refused": false,
+      "sentences": [
+        {
+          "index": 0,
+          "text": "Module Docling parser xử lý loại file nào[3]?",
+          "status": "supported",
+          "score": 0.7083776455600536,
+          "supporting_block_ids": [
+            "blk-a151983e549c",
+            "#/texts/28"
+          ],
+          "citation_refs": []
+        },
+        {
+          "index": 1,
+          "text": "Module Docling parser xử lý các tệp tin văn bản (text/table/figure)[1].",
+          "status": "supported",
+          "score": 0.7276601617739996,
+          "supporting_block_ids": [
+            "blk-518fdcb4bd6e",
+            "#/texts/21"
+          ],
+          "citation_refs": []
+        }
+      ]
+    },
+    "used_entity_ids": [],
+    "used_relation_ids": []
+  },
+  "error": null
+}

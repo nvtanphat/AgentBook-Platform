@@ -17,14 +17,14 @@ class QueryIntent(str, Enum):
 _DOMAIN_SIGNALS = re.compile(
     r"\b("
     r"là gì|nghĩa là|định nghĩa|giải thích|tại sao|vì sao|như thế nào|ảnh hưởng|"
-    r"so sánh|phân biệt|khác nhau|liên quan|ví dụ|trình bày|phân tích|tóm tắt|"
+    r"so sánh|phân biệt|khác nhau|khác với|so với|liên quan|ví dụ|trình bày|phân tích|tóm tắt|"
     r"tổng quan|tổng hợp|tóm lược|khái quát|overview|"
     r"nêu|mô tả|chứng minh|tính|tính chất|công thức|thuật toán|phương pháp|"
     r"what|why|how|when|where|which|define|explain|compare|describe|analyze|"
     r"difference|relationship|example|summarize|outline|prove|calculate|"
     r"tài liệu|chương|phần|trang|bài|slide|sách|giáo trình|đề cương|bài giảng|"
     r"tom tat|tong quan|tong hop|khai quat|trinh bay|phan tich|giai thich|"
-    r"so sanh|phan biet|lien quan|dinh nghia|huong dan|mo ta|tai lieu|bai giang"
+    r"so sanh|phan biet|khac voi|so voi|lien quan|dinh nghia|huong dan|mo ta|tai lieu|bai giang"
     r")\b",
     re.IGNORECASE,
 )
@@ -102,12 +102,13 @@ class IntentClassifier:
         if has_domain:
             return QueryIntent.KNOWLEDGE
 
-        if has_question and n >= 3:
-            return QueryIntent.KNOWLEDGE
-
         if n <= 2 and not has_question:
             return QueryIntent.OFF_TOPIC
 
+        # No domain signal — defer to LLM classifier rather than defaulting to
+        # KNOWLEDGE. A blanket "question mark + ≥3 tokens = knowledge" rule
+        # let chitchat like "Hôm nay nên ăn món gì?" slip through the
+        # retrieval pipeline.
         return None
 
     @staticmethod

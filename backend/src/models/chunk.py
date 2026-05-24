@@ -18,6 +18,8 @@ class Chunk(Document):
     modality: str = Modality.TEXT.value
     source_block_ids: list[str] = Field(default_factory=list)
     source_pages: list[int] = Field(default_factory=list)
+    entity_ids: list[str] = Field(default_factory=list)
+    relation_ids: list[str] = Field(default_factory=list)
     token_count: int | None = None
     embedding_model: str
     embedding_version: str

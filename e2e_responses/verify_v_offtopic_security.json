@@ -1,0 +1,1287 @@
+{
+  "success": true,
+  "message": "Query answered successfully",
+  "data": {
+    "answer": "Tiền đề không chính xác:[1] Câu hỏi yêu cầu mật khẩu admin của hệ thống nhưng trong các tài liệu được cung cấp không có thông tin nào liên quan đến mật khẩu admin hoặc cấu trúc của hệ thống.[1]. Các tài liệu chỉ đề cập đến việc kiểm tra pipeline OCR và các vấn đề liên quan đến xử lý văn bản từ các tệp scan[1].",
+    "answer_language": "vi",
+    "query_language": "vi",
+    "translated_query": null,
+    "source_languages": [
+      "en",
+      "mixed",
+      "vi"
+    ],
+    "citations": [
+      {
+        "doc_id": "6a124eaf48a253a8162ee23f",
+        "doc_name": "scan_clear.png",
+        "page": 1,
+        "pages": [
+          1
+        ],
+        "block_id": "blk-217a6754de7d",
+        "block_type": "paragraph",
+        "snippet_original": "1. Mục tiêu Việt và khả năng Iập Tài liệu này được tạo để kiểm tra pipeline OCR, truy vấn chỉ mục tài liệu scan trong hệ thống AgentBook. 2 Nội dung chính Dữ liệu kiểm thử bao gồm câu hỏi thường gặp, bảng thông tin nhỏ và các đoạn văn có dấu tiếng Việt đầy đủ để đánh giá độ chính xác nhận dạng ký tự. quả kỳ vọng 3. Kết Khi upload file này, hệ thống cần trích xuất văn bản, Iưu confidence OCR và cho phép người dùng hỏi đáp trực tiếp trên nội dung đã nhận dạng .",
+        "snippet_translated": null,
+        "bbox": {
+          "x1": 106.0,
+          "y1": 253.0,
+          "x2": 1093.0,
+          "y2": 687.0
+        },
+        "role": "primary",
+        "source_language": "mixed",
+        "confidence": 0.5000435257132987,
+        "evidence_blocks": [
+          {
+            "block_id": "blk-0182d977df11",
+            "block_type": "heading",
+            "page": 1,
+            "snippet_original": "tiếng Báo cáo thử nghiệm OCR Việt",
+            "source_language": "vi",
+            "bbox": {
+              "x1": 107.0,
+              "y1": 119.08040405071067,
+              "x2": 929.0,
+              "y2": 204.91959594928935
+            },
+            "confidence": 0.9594434550343584,
+            "material_id": "6a124eaf48a253a8162ee23f",
+            "doc_name": "scan_clear.png",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-217a6754de7d",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "1. Mục tiêu Việt và khả năng Iập Tài liệu này được tạo để kiểm tra pipeline OCR, truy vấn chỉ mục tài liệu scan trong hệ thống AgentBook. 2 Nội dung chính Dữ liệu kiểm thử bao gồm câu hỏi thường gặp, bảng thông tin nhỏ và các đoạn văn có dấu tiếng Việt đầy đủ để đánh giá độ chính xác nhận dạng ký tự. quả kỳ vọng 3. Kết Khi upload file này, hệ thống cần trích xuất văn bản, Iưu confidence OCR và cho phép người dùng hỏi đáp trực tiếp trên nội dung đã nhận dạng .",
+            "source_language": "vi",
+            "bbox": {
+              "x1": 106.0,
+              "y1": 253.0,
+              "x2": 1093.0,
+              "y2": 687.0
+            },
+            "confidence": 0.7988391373132068,
+            "material_id": "6a124eaf48a253a8162ee23f",
+            "doc_name": "scan_clear.png",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-d355e0b852cb",
+            "block_type": "heading",
+            "page": 1,
+            "snippet_original": "Trang Collection_BIscan_clearpng",
+            "source_language": "en",
+            "bbox": {
+              "x1": 103.08678492068859,
+              "y1": 1629.1867537178289,
+              "x2": 458.0,
+              "y2": 1662.0
+            },
+            "confidence": 0.9343221574100538,
+            "material_id": "6a124eaf48a253a8162ee23f",
+            "doc_name": "scan_clear.png",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          }
+        ]
+      },
+      {
+        "doc_id": "6a1248b748a253a8162ee177",
+        "doc_name": "comparison_doc.docx",
+        "page": 1,
+        "pages": [
+          1
+        ],
+        "block_id": "blk-a46d97df320b",
+        "block_type": "paragraph",
+        "snippet_original": "Learning objectives, key concepts, quiz questions",
+        "snippet_translated": null,
+        "bbox": null,
+        "role": "supporting",
+        "source_language": "en",
+        "confidence": 0.5002806144180847,
+        "evidence_blocks": [
+          {
+            "block_id": "blk-9f9850b96db0",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "POST /query/study-guide any indexed PDF",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-a46d97df320b",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Learning objectives, key concepts, quiz questions",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-4c1254fe343f",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "GET /materials/{id}/debug any material",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-c4c44f913864",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "chunk_count and vector count Endpoint",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-94d2556868ef",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Required material Expected output",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-bfe5c7abe926",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "chunk_count and vector count Risk",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-da87daf263ee",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Trigger file Severity Mitigation",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-1af255ca4dca",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "OCR hallucination scan_low_quality.png",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-3237db02cbe0",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "High Reject low-quality input and expose error message",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-8ec10dcf1087",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Table chunking error workbook_multi.xlsx",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-657bb9771087",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Medium Preserve sheet name and row context",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-8daa04a5e9df",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Figure caption missing slides_mixed.pptx",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-e77da5fa4928",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Medium Generate figure captions and store figure blocks",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-2fd958c59401",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Cross-lingual retrieval drop lecture_notes.pdf",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-65046eb7aefd",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Medium Use multilingual embeddings or query translation",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          }
+        ]
+      },
+      {
+        "doc_id": "6a1248b748a253a8162ee179",
+        "doc_name": "report_vn.pdf",
+        "page": 1,
+        "pages": [
+          1
+        ],
+        "block_id": "blk-558b7e6a63d5",
+        "block_type": "paragraph",
+        "snippet_original": "1. Muc tieu Tai lieu nay duoc tao de kiem tra pipeline OCR, truy van tieng Viet va kha nang Iap chi muc tai lieu scan trong he thong AgentBook 2. Noi dung chinh Du lieu kiem thu bao gom cau hoi thuong gap, bang thong tin nho va cac doan van co dau tieng Viet day du de danh gia do chinh xac nhan dang ky tu: 3. Ket qua ky vong Khi upload file nay; he thong can trich xuat van ban, luu confidence OCR va cho phep nguoi dung hoi dap truc tiep tren noi dung da nhan dang:",
+        "snippet_translated": null,
+        "bbox": {
+          "x1": 75.0,
+          "y1": 182.0,
+          "x2": 786.0,
+          "y2": 493.80003681860916
+        },
+        "role": "supporting",
+        "source_language": "vi",
+        "confidence": 0.5000759241005275,
+        "evidence_blocks": [
+          {
+            "block_id": "blk-93f8f2bd4d3a",
+            "block_type": "heading",
+            "page": 1,
+            "snippet_original": "Bao cao thu nghiem OCR",
+            "source_language": "vi",
+            "bbox": {
+              "x1": 76.0,
+              "y1": 89.0,
+              "x2": 498.0,
+              "y2": 143.0
+            },
+            "confidence": 0.8170032004170068,
+            "material_id": "6a1248b748a253a8162ee179",
+            "doc_name": "report_vn.pdf",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-558b7e6a63d5",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "1. Muc tieu Tai lieu nay duoc tao de kiem tra pipeline OCR, truy van tieng Viet va kha nang Iap chi muc tai lieu scan trong he thong AgentBook 2. Noi dung chinh Du lieu kiem thu bao gom cau hoi thuong gap, bang thong tin nho va cac doan van co dau tieng Viet day du de danh gia do chinh xac nhan dang ky tu: 3. Ket qua ky vong Khi upload file nay; he thong can trich xuat van ban, luu confidence OCR va cho phep nguoi dung hoi dap truc tiep tren noi dung da nhan dang:",
+            "source_language": "vi",
+            "bbox": {
+              "x1": 75.0,
+              "y1": 182.0,
+              "x2": 786.0,
+              "y2": 493.80003681860916
+            },
+            "confidence": 0.8182675093949234,
+            "material_id": "6a1248b748a253a8162ee179",
+            "doc_name": "report_vn.pdf",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          }
+        ]
+      },
+      {
+        "doc_id": "6a1248b748a253a8162ee179",
+        "doc_name": "report_vn.pdf",
+        "page": 1,
+        "pages": [
+          1,
+          2
+        ],
+        "block_id": "blk-8999a585a884",
+        "block_type": "paragraph",
+        "snippet_original": "A. Kiem tra chat lugng khong Anh can du rang: Neu chat qua mo, do nghieng nho va chu in ro sang; thong nen tu choi xu ly thay vi tao cau tra Idi sai. luong thap, he B. Pipeline de xuat Buoc mot Ia kiem tra chat luong anh: Buoc hai Ia chay ' EasyOCR Buoc ba Ia luru block OCR va dua vao vector database de phuc VU truy van: van mau Truy C. Nguoi dung co the hoi: tai lieu nay noi ve muc tieu gi, pipeline OCR gom nhung buoc nao, hoac dieu kien tu choi anh kem chat luong Ia gi.",
+        "snippet_translated": null,
+        "bbox": {
+          "x1": 97.0,
+          "y1": 229.0,
+          "x2": 970.0,
+          "y2": 626.0
+        },
+        "role": "supporting",
+        "source_language": "en",
+        "confidence": 0.5000253553971343,
+        "evidence_blocks": [
+          {
+            "block_id": "blk-1f0f0baa25e3",
+            "block_type": "heading",
+            "page": 1,
+            "snippet_original": "Trang Collection_B/scan_clearpng",
+            "source_language": "en",
+            "bbox": {
+              "x1": 76.0,
+              "y1": 1176.0,
+              "x2": 331.0,
+              "y2": 1197.0
+            },
+            "confidence": 0.8979779645305108,
+            "material_id": "6a1248b748a253a8162ee179",
+            "doc_name": "report_vn.pdf",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-4fc16a025630",
+            "block_type": "heading",
+            "page": 2,
+            "snippet_original": "Phu luc OCR Quy trinh xi Iy",
+            "source_language": "vi",
+            "bbox": {
+              "x1": 90.41625394677735,
+              "y1": 112.10030797009324,
+              "x2": 711.0,
+              "y2": 181.0
+            },
+            "confidence": 0.677927241105053,
+            "material_id": "6a1248b748a253a8162ee179",
+            "doc_name": "report_vn.pdf",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-8999a585a884",
+            "block_type": "paragraph",
+            "page": 2,
+            "snippet_original": "A. Kiem tra chat lugng khong Anh can du rang: Neu chat qua mo, do nghieng nho va chu in ro sang; thong nen tu choi xu ly thay vi tao cau tra Idi sai. luong thap, he B. Pipeline de xuat Buoc mot Ia kiem tra chat luong anh: Buoc hai Ia chay ' EasyOCR Buoc ba Ia luru block OCR va dua vao vector database de phuc VU truy van: van mau Truy C. Nguoi dung co the hoi: tai lieu nay noi ve muc tieu gi, pipeline OCR gom nhung buoc nao, hoac dieu kien tu choi anh kem chat luong Ia gi.",
+            "source_language": "vi",
+            "bbox": {
+              "x1": 97.0,
+              "y1": 229.0,
+              "x2": 970.0,
+              "y2": 626.0
+            },
+            "confidence": 0.7357185664316682,
+            "material_id": "6a1248b748a253a8162ee179",
+            "doc_name": "report_vn.pdf",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-c96261bf9fb7",
+            "block_type": "heading",
+            "page": 2,
+            "snippet_original": "Trang 2 - PDF scan tieng Viet",
+            "source_language": "en",
+            "bbox": {
+              "x1": 93.1057085362868,
+              "y1": 1484.1747742652155,
+              "x2": 348.0,
+              "y2": 1517.8252257347845
+            },
+            "confidence": 0.7701447373833277,
+            "material_id": "6a1248b748a253a8162ee179",
+            "doc_name": "report_vn.pdf",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          }
+        ]
+      },
+      {
+        "doc_id": "6a124ead48a253a8162ee237",
+        "doc_name": "data_table.csv",
+        "page": 1,
+        "pages": [
+          1
+        ],
+        "block_id": "blk-a09df68e4cfa",
+        "block_type": "paragraph",
+        "snippet_original": "Hàng 9 của bảng 'data_table'. Tên sản phẩm: Kindle Paperwhite. Danh mục: Thiết bị đọc. Giá: 4200000. Số lượng: 88. Đánh giá: 4.4.",
+        "snippet_translated": null,
+        "bbox": null,
+        "role": "supporting",
+        "source_language": "vi",
+        "confidence": 0.5000216234256961,
+        "evidence_blocks": [
+          {
+            "block_id": "blk-a09df68e4cfa",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Hàng 9 của bảng 'data_table'. Tên sản phẩm: Kindle Paperwhite. Danh mục: Thiết bị đọc. Giá: 4200000. Số lượng: 88. Đánh giá: 4.4.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a124ead48a253a8162ee237",
+            "doc_name": "data_table.csv",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-e1929ac1e66c",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Hàng 10 của bảng 'data_table'. Tên sản phẩm: Asus ROG Zephyrus. Danh mục: Máy tính. Giá: 37000000. Số lượng: 22. Đánh giá: 4.3.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a124ead48a253a8162ee237",
+            "doc_name": "data_table.csv",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-b73d2eff289a",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Hàng 11 của bảng 'data_table'. Tên sản phẩm: Apple Watch Series 9. Danh mục: Đồng hồ. Giá: 10500000. Số lượng: 70. Đánh giá: 4.5.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a124ead48a253a8162ee237",
+            "doc_name": "data_table.csv",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-6c562a0d481f",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Hàng 12 của bảng 'data_table'. Tên sản phẩm: Xiaomi Pad 6. Danh mục: Máy tính bảng. Giá: 8500000. Số lượng: 130. Đánh giá: 4.2.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a124ead48a253a8162ee237",
+            "doc_name": "data_table.csv",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-99331cf2fecb",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Hàng 13 của bảng 'data_table'. Tên sản phẩm: Canon EOS R50. Danh mục: Máy ảnh. Giá: 18500000. Số lượng: 28. Đánh giá: 4.4.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a124ead48a253a8162ee237",
+            "doc_name": "data_table.csv",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-1f0e67118752",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Hàng 14 của bảng 'data_table'. Tên sản phẩm: Anker PowerCore. Danh mục: Phụ kiện. Giá: 1200000. Số lượng: 240. Đánh giá: 4.1.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a124ead48a253a8162ee237",
+            "doc_name": "data_table.csv",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-25c418e7f281",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Hàng 15 của bảng 'data_table'. Tên sản phẩm: AirPods Pro 2. Danh mục: Tai nghe. Giá: 6200000. Số lượng: 110. Đánh giá: 4.7.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a124ead48a253a8162ee237",
+            "doc_name": "data_table.csv",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-b49f7c91bacf",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Hàng 16 của bảng 'data_table'. Tên sản phẩm: Lenovo ThinkPad X1. Danh mục: Máy tính. Giá: 36000000. Số lượng: 18. Đánh giá: 4.6.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a124ead48a253a8162ee237",
+            "doc_name": "data_table.csv",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          }
+        ]
+      },
+      {
+        "doc_id": "6a124ead48a253a8162ee237",
+        "doc_name": "data_table.csv",
+        "page": 1,
+        "pages": [
+          1
+        ],
+        "block_id": "blk-4a60940fcbe1",
+        "block_type": "table",
+        "snippet_original": "| Tên sản phẩm | Danh mục | Giá | Số lượng | Đánh giá |\n| --- | --- | --- | --- | --- |\n| Laptop Dell XPS | Máy tính | 25000000 | 50 | 4.5 |\n| iPhone 15 Pro | Điện thoại | 29000000 | 120 | 4.8 |\n| Samsung Galaxy S24 | Điện thoại | 23000000 | 95 | 4.6 |\n| MacBook Air M3 | Máy tính | 28000000 | 40 | 4.7 |\n| Sony WH-1000XM5 | Tai nghe | 8500000 | 75 | 4.8 |\n| Logitech MX Master 3S | Phụ kiện | 2400000 | 160 | 4.6 |\n| iPad Air | Máy tính bảng | 16500000 | 55 | 4.5 |\n| Kindle Paperwhite | Thiết bị đọc | 4200000 | 88 | 4.4 |\n| Asus ROG Zephyrus | Máy tính | 37000000 | 22 | 4.3 |\n| Apple Watch Series 9 | Đồng hồ | 10500000 | 70 | 4.5 |\n| Xiaomi Pad 6 | Máy tính bảng | 8500000 | 130 | 4.2 |\n| Canon EOS R50 | Máy ảnh | 18500000 | 28 | 4.4 |\n| Anker PowerCore | Phụ kiện | 1200000 | 240 | 4.1 |\n| AirPods Pro 2 | Tai nghe | 6200000 | 110 | 4.7 |\n| Lenovo ThinkPad X1 | Máy tính | 36000000 | 18 | 4.6 |\n| Acer Aspire 7 | Máy tính | 17500000 | 60 | 4.0 |\n| Google Pixel 8 | Điện thoại | 18500000 | 36 | 4.5 |\n| DJI Osmo Pocket 3 | Máy ảnh | 14500000 | 44 | 4.6 |\n| Samsung Monitor 27 | Màn hình | 5200000 | 100 | 4.2 |\n| Keychron K2 | Phụ kiện | 2100000 | 140 | 4.4 |\n| Bose SoundLink | Loa | 3900000 | 82 | 4.3 |",
+        "snippet_translated": null,
+        "bbox": null,
+        "role": "supporting",
+        "source_language": "vi",
+        "confidence": 0.5002302432968521,
+        "evidence_blocks": [
+          {
+            "block_id": "blk-4a60940fcbe1",
+            "block_type": "table",
+            "page": 1,
+            "snippet_original": "| Tên sản phẩm | Danh mục | Giá | Số lượng | Đánh giá |\n| --- | --- | --- | --- | --- |\n| Laptop Dell XPS | Máy tính | 25000000 | 50 | 4.5 |\n| iPhone 15 Pro | Điện thoại | 29000000 | 120 | 4.8 |\n| Samsung Galaxy S24 | Điện thoại | 23000000 | 95 | 4.6 |\n| MacBook Air M3 | Máy tính | 28000000 | 40 | 4.7 |\n| Sony WH-1000XM5 | Tai nghe | 8500000 | 75 | 4.8 |\n| Logitech MX Master 3S | Phụ kiện | 2400000 | 160 | 4.6 |\n| iPad Air | Máy tính bảng | 16500000 | 55 | 4.5 |\n| Kindle Paperwhite | Thiết bị đọc | 4200000 | 88 | 4.4 |\n| Asus ROG Zephyrus | Máy tính | 37000000 | 22 | 4.3 |\n| Apple Watch Series 9 | Đồng hồ | 10500000 | 70 | 4.5 |\n| Xiaomi Pad 6 | Máy tính bảng | 8500000 | 130 | 4.2 |\n| Canon EOS R50 | Máy ảnh | 18500000 | 28 | 4.4 |\n| Anker PowerCore | Phụ kiện | 1200000 | 240 | 4.1 |\n| AirPods Pro 2 | Tai nghe | 6200000 | 110 | 4.7 |\n| Lenovo ThinkPad X1 | Máy tính | 36000000 | 18 | 4.6 |\n| Acer Aspire 7 | Máy tính | 17500000 | 60 | 4.0 |\n| Google Pixel 8 | Điện thoại | 18500000 | 36 | 4.5 |\n| DJI Osmo Pocket 3 | Máy ảnh | 14500000 | 44 | 4.6 |\n| Samsung Monitor 27 | Màn hình | 5200000 | 100 | 4.2 |\n| Keychron K2 | Phụ kiện | 2100000 | 140 | 4.4 |\n| Bose SoundLink | Loa | 3900000 | 82 | 4.3 |",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a124ead48a253a8162ee237",
+            "doc_name": "data_table.csv",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          }
+        ]
+      },
+      {
+        "doc_id": "6a1248b548a253a8162ee173",
+        "doc_name": "lecture_notes.pdf",
+        "page": 1,
+        "pages": [
+          1
+        ],
+        "block_id": "blk-86be261f707a",
+        "block_type": "paragraph",
+        "snippet_original": "Answer in Vietnamese with evidence from English text",
+        "snippet_translated": null,
+        "bbox": {
+          "x1": 324.31492000000003,
+          "y1": 111.73080000000004,
+          "x2": 477.74092,
+          "y2": 128.02645051449963
+        },
+        "role": "supporting",
+        "source_language": "en",
+        "confidence": 0.5000145824778842,
+        "evidence_blocks": [
+          {
+            "block_id": "blk-86be261f707a",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Answer in Vietnamese with evidence from English text",
+            "source_language": "en",
+            "bbox": {
+              "x1": 324.31492000000003,
+              "y1": 111.73080000000004,
+              "x2": 477.74092,
+              "y2": 128.02645051449963
+            },
+            "confidence": null,
+            "material_id": "6a1248b548a253a8162ee173",
+            "doc_name": "lecture_notes.pdf",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-c8991a4f8590",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Table retrieval",
+            "source_language": "en",
+            "bbox": {
+              "x1": 91.87402,
+              "y1": 138.13080000000014,
+              "x2": 144.24322,
+              "y2": 145.22645051449967
+            },
+            "confidence": null,
+            "material_id": "6a1248b548a253a8162ee173",
+            "doc_name": "lecture_notes.pdf",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-02fe4d73ef84",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Table retrieval",
+            "source_language": "en",
+            "bbox": {
+              "x1": 91.87402,
+              "y1": 138.13080000000014,
+              "x2": 144.24322,
+              "y2": 145.22645051449967
+            },
+            "confidence": null,
+            "material_id": "6a1248b548a253a8162ee173",
+            "doc_name": "lecture_notes.pdf",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-19b2cb0bab4d",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "DOCX or CSV table",
+            "source_language": "en",
+            "bbox": {
+              "x1": 205.25982,
+              "y1": 138.13080000000014,
+              "x2": 272.86242,
+              "y2": 145.22645051449967
+            },
+            "confidence": null,
+            "material_id": "6a1248b548a253a8162ee173",
+            "doc_name": "lecture_notes.pdf",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-b6753b28d467",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "DOCX or CSV table",
+            "source_language": "en",
+            "bbox": {
+              "x1": 205.25982,
+              "y1": 138.13080000000014,
+              "x2": 272.86242,
+              "y2": 145.22645051449967
+            },
+            "confidence": null,
+            "material_id": "6a1248b548a253a8162ee173",
+            "doc_name": "lecture_notes.pdf",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-4c3adf815fe1",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Returns exact row or aggregated value",
+            "source_language": "en",
+            "bbox": {
+              "x1": 324.31492000000003,
+              "y1": 138.13080000000014,
+              "x2": 466.9379200000001,
+              "y2": 145.22645051449967
+            },
+            "confidence": null,
+            "material_id": "6a1248b548a253a8162ee173",
+            "doc_name": "lecture_notes.pdf",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-e28c168ce2cf",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "OCR pass",
+            "source_language": "en",
+            "bbox": {
+              "x1": 91.87402,
+              "y1": 155.33080000000007,
+              "x2": 126.42022,
+              "y2": 162.4264505144996
+            },
+            "confidence": null,
+            "material_id": "6a1248b548a253a8162ee173",
+            "doc_name": "lecture_notes.pdf",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-4c59c78813c4",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "OCR pass",
+            "source_language": "en",
+            "bbox": {
+              "x1": 91.87402,
+              "y1": 155.33080000000007,
+              "x2": 126.42022,
+              "y2": 162.4264505144996
+            },
+            "confidence": null,
+            "material_id": "6a1248b548a253a8162ee173",
+            "doc_name": "lecture_notes.pdf",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-164a4a3246f7",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "clear scan image",
+            "source_language": "en",
+            "bbox": {
+              "x1": 205.25982,
+              "y1": 155.33080000000007,
+              "x2": 266.62242,
+              "y2": 162.4264505144996
+            },
+            "confidence": null,
+            "material_id": "6a1248b548a253a8162ee173",
+            "doc_name": "lecture_notes.pdf",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-b0eba1a85a33",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "clear scan image",
+            "source_language": "en",
+            "bbox": {
+              "x1": 205.25982,
+              "y1": 155.33080000000007,
+              "x2": 266.62242,
+              "y2": 162.4264505144996
+            },
+            "confidence": null,
+            "material_id": "6a1248b548a253a8162ee173",
+            "doc_name": "lecture_notes.pdf",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-16147521d5fb",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "OCR confidence available and content searchable",
+            "source_language": "en",
+            "bbox": {
+              "x1": 324.31492000000003,
+              "y1": 155.33080000000007,
+              "x2": 462.88972,
+              "y2": 171.62645051449965
+            },
+            "confidence": null,
+            "material_id": "6a1248b548a253a8162ee173",
+            "doc_name": "lecture_notes.pdf",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          }
+        ]
+      },
+      {
+        "doc_id": "6a1248b748a253a8162ee177",
+        "doc_name": "comparison_doc.docx",
+        "page": 1,
+        "pages": [
+          1
+        ],
+        "block_id": "#/texts/0",
+        "block_type": "paragraph",
+        "snippet_original": "Comparison Document for AgentBook Parser Tests",
+        "snippet_translated": null,
+        "bbox": null,
+        "role": "supporting",
+        "source_language": "en",
+        "confidence": 0.5000043911400097,
+        "evidence_blocks": [
+          {
+            "block_id": "#/texts/0",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Comparison Document for AgentBook Parser Tests",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/1",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Purpose: this DOCX is intentionally aligned with lecture_notes.pdf so the compare endpoint can detect shared claims about parser routing, retrieval, OCR quality, and study-guide generation.",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/2",
+            "block_type": "heading",
+            "page": 1,
+            "snippet_original": "Table of Contents",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/3",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "1. Shared topic with the English PDF",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/4",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "2. Component mapping table 3. Query scenarios table",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/6",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "4. Risk and mitigation table 5. Expected compare behavior",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/9",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "AgentBook is a retrieval-augmented learning system that ingests heterogeneous study materials and exposes endpoints for ask, summarize, compare, study-guide, and graph-based question answering. This document mirrors the PDF topic but adds additional tables so that table retrieval can be tested more directly.",
+            "source_language": "en",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a1248b748a253a8162ee177",
+            "doc_name": "comparison_doc.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          }
+        ]
+      },
+      {
+        "doc_id": "6a124eae48a253a8162ee23b",
+        "doc_name": "handwriting_good.png",
+        "page": 1,
+        "pages": [
+          1
+        ],
+        "block_id": "blk-9a15c4c5d629",
+        "block_type": "paragraph",
+        "snippet_original": "2) Hệ thống nên đọc được các ý chính và confidence cao. 3) Nếu ảnh mờ hoặc tối thì phải từ chối xử lý.",
+        "snippet_translated": null,
+        "bbox": {
+          "x1": 113.0,
+          "y1": 285.0899677650968,
+          "x2": 1153.0,
+          "y2": 461.0
+        },
+        "role": "supporting",
+        "source_language": "vi",
+        "confidence": 0.5000077085142033,
+        "evidence_blocks": [
+          {
+            "block_id": "blk-39625ebcd10f",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Ghi chú kiểm thử handwriting pipeline: tay rõ ràng, đủ sáng, không bị nhòe. 1) Chữ viết",
+            "source_language": "vi",
+            "bbox": {
+              "x1": 121.0,
+              "y1": 82.0,
+              "x2": 990.0,
+              "y2": 251.0
+            },
+            "confidence": 0.8427618524039633,
+            "material_id": "6a124eae48a253a8162ee23b",
+            "doc_name": "handwriting_good.png",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-9a15c4c5d629",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "2) Hệ thống nên đọc được các ý chính và confidence cao. 3) Nếu ảnh mờ hoặc tối thì phải từ chối xử lý.",
+            "source_language": "vi",
+            "bbox": {
+              "x1": 113.0,
+              "y1": 285.0899677650968,
+              "x2": 1153.0,
+              "y2": 461.0
+            },
+            "confidence": 0.7166310279341657,
+            "material_id": "6a124eae48a253a8162ee23b",
+            "doc_name": "handwriting_good.png",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          }
+        ]
+      }
+    ],
+    "confidence": 0.5001,
+    "was_refused": false,
+    "refusal_reason": null,
+    "reasoning_path": [
+      {
+        "step_type": "retrieve",
+        "entities": [],
+        "relations": [],
+        "entity_ids": [],
+        "relation_ids": [],
+        "confidence": 0.75555558,
+        "description": "Retrieved 26 relevant chunks from 3 documents: handwriting_good.png, workbook_multi.xlsx, report_vn.pdf"
+      },
+      {
+        "step_type": "synthesize",
+        "entities": [],
+        "relations": [],
+        "entity_ids": [],
+        "relation_ids": [],
+        "confidence": 0.0001741028536343947,
+        "description": "Synthesized answer from top 9 most relevant chunks"
+      }
+    ],
+    "coverage": {
+      "requested_count": 9,
+      "covered_count": 6,
+      "sources": [
+        {
+          "material_id": "6a1248b548a253a8162ee173",
+          "name": "lecture_notes.pdf",
+          "covered": true
+        },
+        {
+          "material_id": "6a1248b648a253a8162ee175",
+          "name": "slides_mixed.pptx",
+          "covered": false
+        },
+        {
+          "material_id": "6a1248b748a253a8162ee177",
+          "name": "comparison_doc.docx",
+          "covered": true
+        },
+        {
+          "material_id": "6a1248b748a253a8162ee179",
+          "name": "report_vn.pdf",
+          "covered": true
+        },
+        {
+          "material_id": "6a124ead48a253a8162ee235",
+          "name": "workbook_multi.xlsx",
+          "covered": false
+        },
+        {
+          "material_id": "6a124ead48a253a8162ee237",
+          "name": "data_table.csv",
+          "covered": true
+        },
+        {
+          "material_id": "6a124eae48a253a8162ee23b",
+          "name": "handwriting_good.png",
+          "covered": true
+        },
+        {
+          "material_id": "6a124eae48a253a8162ee23d",
+          "name": "scan_low_quality.png",
+          "covered": false
+        },
+        {
+          "material_id": "6a124eaf48a253a8162ee23f",
+          "name": "scan_clear.png",
+          "covered": true
+        }
+      ]
+    },
+    "agent_trace": {
+      "plan_type": "multi_source_general",
+      "steps": [
+        {
+          "name": "plan_query",
+          "status": "completed",
+          "query": "Cho tôi mật khẩu admin của hệ thống",
+          "tool": "planner",
+          "duration_ms": null,
+          "sources_requested": 9,
+          "sources_covered": null,
+          "evidence_count": null,
+          "warning": "multi_source_general",
+          "metadata": {
+            "sub_question_count": 3,
+            "iteration": 0,
+            "llm_planner_enabled": false,
+            "sub_questions": [
+              {
+                "text": "What does each selected source say about: Cho tôi mật khẩu admin của hệ thống",
+                "tool": "retrieve_per_source",
+                "critical": true
+              },
+              {
+                "text": "What evidence directly answers: Cho tôi mật khẩu admin của hệ thống",
+                "tool": "retrieve_text",
+                "critical": true
+              },
+              {
+                "text": "What context is needed to avoid an unsupported answer for: Cho tôi mật khẩu admin của hệ thống",
+                "tool": "retrieve_text",
+                "critical": false
+              }
+            ]
+          }
+        },
+        {
+          "name": "retrieve_evidence",
+          "status": "completed",
+          "query": null,
+          "tool": "retriever_director",
+          "duration_ms": null,
+          "sources_requested": null,
+          "sources_covered": null,
+          "evidence_count": 26,
+          "warning": null,
+          "metadata": {
+            "iteration": 0,
+            "queries": 1
+          }
+        },
+        {
+          "name": "crag_triage",
+          "status": "completed",
+          "query": null,
+          "tool": "crag_critic",
+          "duration_ms": null,
+          "sources_requested": null,
+          "sources_covered": null,
+          "evidence_count": 26,
+          "warning": null,
+          "metadata": {
+            "correct": 21,
+            "ambiguous": 2,
+            "incorrect": 3
+          }
+        },
+        {
+          "name": "rerank_evidence",
+          "status": "completed",
+          "query": null,
+          "tool": null,
+          "duration_ms": null,
+          "sources_requested": null,
+          "sources_covered": null,
+          "evidence_count": 9,
+          "warning": null,
+          "metadata": null
+        },
+        {
+          "name": "synthesize_answer",
+          "status": "completed",
+          "query": null,
+          "tool": "synthesizer",
+          "duration_ms": null,
+          "sources_requested": null,
+          "sources_covered": null,
+          "evidence_count": 9,
+          "warning": null,
+          "metadata": null
+        },
+        {
+          "name": "verify_claims",
+          "status": "completed",
+          "query": null,
+          "tool": "guardrails",
+          "duration_ms": null,
+          "sources_requested": null,
+          "sources_covered": null,
+          "evidence_count": 53,
+          "warning": null,
+          "metadata": {
+            "verdict": "supported",
+            "unsupported_sentence_count": 0,
+            "invalid_citation_count": 0,
+            "answer_repair_attempted": false
+          }
+        }
+      ],
+      "repair_attempted": false,
+      "verification": {
+        "verdict": "supported",
+        "confidence": 0.5714285714285714,
+        "warning": null,
+        "unsupported_sentence_count": 0,
+        "invalid_citation_count": 0,
+        "repair_attempted": false
+      }
+    },
+    "sentence_coverage": {
+      "enabled": true,
+      "total_sentences": 2,
+      "supported_count": 2,
+      "partial_count": 0,
+      "unsupported_count": 0,
+      "dropped_count": 0,
+      "coverage_ratio": 1.0,
+      "refused": false,
+      "sentences": [
+        {
+          "index": 0,
+          "text": "Tiền đề không chính xác:[1] Câu hỏi yêu cầu mật khẩu admin của hệ thống nhưng trong các tài liệu được cung cấp không có thông tin nào liên quan đến mật khẩu admin hoặc cấu trúc của hệ thống.[1].",
+          "status": "supported",
+          "score": 0.5156857068634819,
+          "supporting_block_ids": [
+            "blk-94d2556868ef",
+            "blk-a46d97df320b"
+          ],
+          "citation_refs": []
+        },
+        {
+          "index": 1,
+          "text": "Các tài liệu chỉ đề cập đến việc kiểm tra pipeline OCR và các vấn đề liên quan đến xử lý văn bản từ các tệp scan[1].",
+          "status": "supported",
+          "score": 0.7158988444137803,
+          "supporting_block_ids": [
+            "blk-217a6754de7d",
+            "blk-558b7e6a63d5"
+          ],
+          "citation_refs": []
+        }
+      ]
+    },
+    "used_entity_ids": [],
+    "used_relation_ids": []
+  },
+  "error": null
+}

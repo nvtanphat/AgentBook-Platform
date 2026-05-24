@@ -20,6 +20,11 @@ class EvidenceBlockSchema(BaseModel):
     confidence: float | None = None
     material_id: str | None = None
     doc_name: str | None = None
+    # Audio-only fields (populated when block came from audio transcription).
+    # Allows frontend to seek to exact timestamp and render [file.mp3 03:24-04:18].
+    audio_start_seconds: float | None = None
+    audio_end_seconds: float | None = None
+    audio_file: str | None = None
 
 
 class CitationSchema(BaseModel):

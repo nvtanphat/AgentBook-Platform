@@ -25,6 +25,7 @@ class Entity(Document):
     mention_refs: list[EvidenceRef] = Field(default_factory=list)
     normalized_value: str | None = None
     confidence: float
+    chunk_ids: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=utc_now)
 
     class Settings:
@@ -33,6 +34,7 @@ class Entity(Document):
             IndexModel([("owner_id", 1), ("collection_id", 1), ("canonical_name", 1)], name="entities_scope_name"),
             IndexModel([("aliases", 1)], name="entities_aliases"),
             IndexModel([("mention_refs.material_id", 1)], name="entities_mention_material_id"),
+            IndexModel([("canonical_name", "text"), ("aliases", "text")], name="entities_text_search"),
         ]
 
 
@@ -44,6 +46,7 @@ class Event(Document):
     participants: list[str] = Field(default_factory=list)
     evidence_refs: list[EvidenceRef] = Field(default_factory=list)
     temporal_status: str = "unknown"
+    chunk_ids: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=utc_now)
 
     class Settings:
@@ -61,6 +64,8 @@ class Relation(Document):
     target_id: str
     relation_type: str
     evidence_refs: list[EvidenceRef] = Field(default_factory=list)
+    evidence_text_chunk: str | None = None
+    evidence_chunk_ids: list[str] = Field(default_factory=list)
     confidence: float
     is_conflicting: bool = False
     created_at: datetime = Field(default_factory=utc_now)

@@ -1,8 +1,9 @@
 ﻿import { useState, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
-import { AlertCircle, BookOpen, FileText, Link2, Loader2, Maximize2, Network, RefreshCw, ShieldCheck, Target, X } from "lucide-react";
-import { GraphResponse, MindmapResponse, loadGraph, loadMindmap } from "../../../api/client";
+import { AlertCircle, BookOpen, FileText, Link2, Loader2, Maximize2, MessageCircleQuestion, Network, RefreshCw, Send, ShieldCheck, Sparkles, Target, X } from "lucide-react";
+import { GraphResponse, MindmapResponse, QueryResponse, askWithGraphAnchor, loadGraph, loadMindmap } from "../../../api/client";
 import GraphCanvas, { CanvasEdge, CanvasNode } from "../../GraphCanvas";
+import MarkdownRenderer from "../../MarkdownRenderer";
 import { useWorkspace } from "../../../state/workspace";
 
 // ─── Data transforms ──────────────────────────────────────────────────────────
@@ -12,37 +13,11 @@ const MAX_GRAPH_EDGES = 44;
 const MAX_MINDMAP_GROUPS = 8;
 const MAX_MINDMAP_ITEMS_PER_GROUP = 9;
 const MINDMAP_BRANCH_COLORS = ["#0f766e", "#2563eb", "#7c3aed", "#db2777", "#ea580c", "#0891b2", "#65a30d", "#4f46e5"];
-const NOISY_GRAPH_LABELS = new Set([
-  "caption",
-  "chart",
-  "converted",
-  "docx",
-  "file word",
-  "jpg",
-  "jpeg",
-  "llm",
-  "ocr",
-  "ocr engine",
-  "ocr engine png",
-  "parser",
-  "pass",
-  "pdf",
-  "png",
-  "png ocr",
-  "pptx",
-  "randomly",
-  "section",
-  "slide",
-  "test",
-  "text",
-  "vlm",
-  "word",
-  "xlsx",
-]);
-const NOISY_GRAPH_WORDS = new Set(["adds", "description", "file", "source", "stabilizes", "stops", "technique"]);
-const FORMAT_GRAPH_WORDS = new Set(["docx", "jpg", "jpeg", "llm", "ocr", "pdf", "png", "pptx", "text", "vlm", "xlsx"]);
-const TECHNICAL_GRAPH_LABELS = new Set(["answer chunk", "chunk", "evidence", "key points", "metadata", "source", "sources"]);
-const BAD_GRAPH_LABEL_RE = /(?:jocaled|dalch|uon|nornlalizal|regulariza|techniq|trace viewer question)/i;
+
+// NOTE: Frontend KHÔNG có stoplist semantic nào (no `NOISY_GRAPH_LABELS`,
+// `FORMAT_GRAPH_WORDS`, etc.). Backend's `entity_type` allowlist
+// (model/algorithm/concept/...) đã filter ra noise — trust nó.
+// Frontend chỉ làm visual safety: mojibake repair + length + invalid char.
 
 type GraphFocus = {
   labels: Set<string>;
@@ -61,10 +36,6 @@ function normalizeGraphText(value: string) {
     .trim();
 }
 
-function asciiFold(value: string) {
-  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-}
-
 function repairMojibakeText(value: string) {
   if (!value || [...value].some((char) => char.charCodeAt(0) > 255)) return value;
   try {
@@ -75,43 +46,39 @@ function repairMojibakeText(value: string) {
   }
 }
 
+/**
+ * Frontend label cleanup — VISUAL SAFETY ONLY.
+ *
+ * Semantic filtering (drop authors, format tokens, OCR garbage) is done
+ * server-side via entity_type allowlist + `_clean_entity_label` in
+ * `backend/src/api/v1/endpoints/graph.py`. Frontend only:
+ *   1. Repairs mojibake (utf-8 misread as latin1)
+ *   2. Trims whitespace / surrounding punctuation
+ *   3. Rejects obviously broken display strings (replacement char, dup separator)
+ *   4. Caps word count for layout sanity
+ *
+ * If something noisy still slips through, fix it upstream (entity extractor
+ * prompt or `entity_resolution.py`) — do NOT add another denylist here.
+ */
 function cleanGraphLabel(value: string) {
-  let label = repairMojibakeText(value)
+  const label = repairMojibakeText(value)
     .replace(/\s*[,;:/]\s*/g, " ")
     .replace(/^[^\wÀ-ỹ]+/u, "")
     .replace(/[|()[\]{}'"]+/g, " ")
     .replace(/\.+$/g, "")
-    .replace(/^(?:\d+(?:[.,]\d+)?\s+){1,3}/, "")
     .replace(/\s+/g, " ")
     .trim();
-  if (label.length < 3 || label.includes("|")) return null;
 
-  const lower = label.toLowerCase();
-  const folded = asciiFold(label);
+  // Length sanity for visual layout
+  if (label.length < 3) return null;
+
+  // Replacement char (�) or invalid mojibake remnant — undisplayable
+  if (/[�]/.test(label)) return null;
+
+  // Word count cap: > 6 words doesn't fit a mindmap node visually
   const words = label.split(/\s+/);
-  if (/[ÃÂâ�]/.test(label)) return null;
-  if (label.includes("…") || label.includes("...") || BAD_GRAPH_LABEL_RE.test(label)) return null;
-  if (/^(hinh|bang|cau)\s+\d+$/.test(folded)) return null;
-  if (folded.includes("docxipdfipng") || folded.includes("docx pdf png")) return null;
-  if (TECHNICAL_GRAPH_LABELS.has(lower)) return null;
-  if (NOISY_GRAPH_LABELS.has(lower) || NOISY_GRAPH_WORDS.has(lower)) return null;
-  if (NOISY_GRAPH_WORDS.has(words[0]?.toLowerCase() ?? "")) return null;
-  if (NOISY_GRAPH_WORDS.has(words[words.length - 1]?.toLowerCase() ?? "")) return null;
-  const formatWordCount = words.filter((word) => FORMAT_GRAPH_WORDS.has(word.toLowerCase())).length;
-  if (formatWordCount > 1 || formatWordCount === words.length) return null;
-  if (FORMAT_GRAPH_WORDS.has(words[words.length - 1]?.toLowerCase() ?? "") && words.length <= 3) return null;
-  if (words.length > 4) return null;
-  if (new Set(words.map((word) => word.toLowerCase())).size < words.length) return null;
-  if (words.length >= 3 && words.every((word) => /^[A-Z0-9]{2,}$/.test(word))) return null;
-  if (/\.(png|jpe?g|pdf|docx|pptx|xlsx)$/i.test(label)) return null;
-  if ((label.match(/\d+/g) ?? []).length >= 3) return null;
+  if (words.length > 6) return null;
 
-  const chars = label.replace(/\s/g, "");
-  const digits = (chars.match(/\d/g) ?? []).length;
-  const letters = (chars.match(/\p{L}/gu) ?? []).length;
-  const symbols = Math.max(0, chars.length - digits - letters);
-  if (digits >= 3 && digits >= letters) return null;
-  if (symbols > letters && symbols > 1) return null;
   return label;
 }
 
@@ -189,11 +156,15 @@ function toGraph(response: GraphResponse | null, focus: GraphFocus | null): { no
     label: n.label,
     type: n.type,
     confidence: n.confidence,
-    degree: degree[n.id] ?? 0,
+    degree: n.degree ?? degree[n.id] ?? 0,
     mention_count: (n as any).mention_count ?? 0,
+    importance: (n as any).importance ?? 0,
+    community: (n as any).community ?? 0,
+    is_hub: (n as any).is_hub ?? false,
     source_docs: (n as any).source_docs ?? [],
     evidence_refs: (n as any).evidence_refs ?? [],
-    focused: focusIds.has(n.id),
+    // Backend `is_focused` (primary entity from citations) → frontend `focused` flag
+    focused: (n as any).is_focused ?? focusIds.has(n.id),
   }));
   const edges: CanvasEdge[] = visibleEdges.map((e, i) => ({
     id: `${e.source}-${e.target}-${i}`,
@@ -203,13 +174,31 @@ function toGraph(response: GraphResponse | null, focus: GraphFocus | null): { no
     confidence: e.confidence,
     evidence_count: (e as any).evidence_count ?? ((e as any).evidence_refs?.length ?? 0),
     evidence_refs: (e as any).evidence_refs ?? [],
+    evidence_text_chunk: e.evidence_text_chunk ?? null,
     source_label: (e as any).source_label ?? visibleNodes.find((node) => node.id === e.source)?.label ?? null,
     target_label: (e as any).target_label ?? visibleNodes.find((node) => node.id === e.target)?.label ?? null,
     focused: focusIds.has(e.source) || focusIds.has(e.target),
   }));
   return { nodes, edges };
 }
-function toMindmap(response: MindmapResponse | null): { nodes?: CanvasNode[]; edges?: CanvasEdge[] } {
+// Build the short "source attribution" badge shown in hover preview.
+//  e.g.  "DeAn.docx · p.12"  or  "3 nguồn" when many citations.
+function buildSourceLabel(citations: Array<Record<string, unknown>>, materialNameMap: Map<string, string>): string | null {
+  if (!citations || citations.length === 0) return null;
+  const first = citations[0] ?? {};
+  const materialId = String(first.material_id ?? first.doc_id ?? "");
+  const page = first.page;
+  const docName = materialNameMap.get(materialId);
+  const pageSuffix = page !== undefined && page !== null && page !== "" ? ` · p.${page}` : "";
+  if (citations.length === 1) {
+    return docName ? `${docName}${pageSuffix}` : `Trang ${page ?? "?"}`;
+  }
+  return docName
+    ? `${docName}${pageSuffix} +${citations.length - 1} nguồn`
+    : `${citations.length} nguồn`;
+}
+
+function toMindmap(response: MindmapResponse | null, materialNameMap: Map<string, string> = new Map()): { nodes?: CanvasNode[]; edges?: CanvasEdge[] } {
   if (!response || !response.nodes.length) return { nodes: [], edges: [] };
 
   const rootId = "root-topic";
@@ -222,15 +211,18 @@ function toMindmap(response: MindmapResponse | null): { nodes?: CanvasNode[]; ed
         const childCount = item.children?.length ?? 0;
         const type = item.entity_type || (childCount ? "topic" : "concept");
         const color = depth === 1 ? MINDMAP_BRANCH_COLORS[index % MINDMAP_BRANCH_COLORS.length] : branchColor;
+        const citations = ((item as any).citations ?? []) as Array<Record<string, unknown>>;
         nodes.push({
           id: item.id,
           label: cleanGraphLabel(item.label) ?? item.label,
           type,
           degree: childCount,
           confidence: null,
-          evidence_refs: (item as any).citations ?? [],
+          evidence_refs: citations as Array<Record<string, string | number>>,
           branchColor: color,
           depth,
+          summary: (item as any).summary ?? null,
+          source_label: buildSourceLabel(citations, materialNameMap),
         });
         edges.push({ id: `${parentId}-${item.id}`, source: parentId, target: item.id, label: "", branchColor: color });
         if (childCount) {
@@ -272,12 +264,15 @@ function toMindmap(response: MindmapResponse | null): { nodes?: CanvasNode[]; ed
     });
     edges.push({ id: `${rootId}-${clusterId}`, source: rootId, target: clusterId, label: "" });
     for (const m of visibleMembers) {
+      const citations = ((m as any).citations ?? []) as Array<Record<string, unknown>>;
       nodes.push({
         id: m.id,
         label: m.label,
         type: typeName,
         confidence: null,
-        evidence_refs: (m as any).citations ?? [],
+        evidence_refs: citations as Array<Record<string, string | number>>,
+        summary: (m as any).summary ?? null,
+        source_label: buildSourceLabel(citations, materialNameMap),
       });
       edges.push({ id: `${clusterId}-${m.id}`, source: clusterId, target: m.id, label: "" });
     }
@@ -335,6 +330,7 @@ type SelectedRelation = {
   confidence: number | null;
   evidenceCount: number;
   evidenceRefs: Array<Record<string, string | number>>;
+  evidenceTextChunk?: string | null;
 };
 
 // ─── Color map (mirrors GraphCanvas) ─────────────────────────────────────────
@@ -394,7 +390,15 @@ const LEGEND_TYPES = ["model", "algorithm", "metric", "dataset", "framework", "c
 
 // ─── Node info card ───────────────────────────────────────────────────────────
 
-function NodeInfoCard({ node, onClose }: { node: SelectedNode; onClose: () => void }) {
+function NodeInfoCard({
+  node,
+  onClose,
+  onAskAboutNode,
+}: {
+  node: SelectedNode;
+  onClose: () => void;
+  onAskAboutNode?: (entityId: string, label: string) => void;
+}) {
   const color = typeColor(node.type);
   const pct   = node.confidence != null ? Math.round(node.confidence * 100) : null;
   const barColor = pct == null ? "" : pct >= 70 ? "bg-emerald-400" : pct >= 40 ? "bg-yellow-400" : "bg-red-400";
@@ -479,7 +483,159 @@ function NodeInfoCard({ node, onClose }: { node: SelectedNode; onClose: () => vo
           </div>
         </div>
       )}
+
+      {/* GraphRAG: ask anchored question */}
+      {onAskAboutNode && (
+        <div className="border-t border-outline/40 px-4 py-2.5 bg-gradient-to-r from-primary/5 to-transparent">
+          <button
+            type="button"
+            onClick={() => onAskAboutNode(node.id, node.label)}
+            className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-primary/90 transition shadow-sm"
+          >
+            <Sparkles size={12} />
+            Hỏi về node này
+          </button>
+          <p className="mt-1 text-[10px] text-muted">
+            Tìm bằng chứng quanh "{node.label}" + neighbour 2-hop trên knowledge graph.
+          </p>
+        </div>
+      )}
     </div>
+  );
+}
+
+// ─── GraphRAG ask-about-node modal ─────────────────────────────────────────
+
+function AskAboutNodeModal({
+  anchorId,
+  anchorLabel,
+  ownerId,
+  collectionId,
+  conversationId,
+  onClose,
+  onAnswered,
+}: {
+  anchorId: string;
+  anchorLabel: string;
+  ownerId: string;
+  collectionId: string;
+  conversationId: string;
+  onClose: () => void;
+  onAnswered: (response: QueryResponse) => void;
+}) {
+  const [question, setQuestion] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [response, setResponse] = useState<QueryResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const taRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    setTimeout(() => taRef.current?.focus(), 50);
+  }, []);
+
+  async function submit() {
+    const q = question.trim();
+    if (!q || loading) return;
+    setLoading(true); setError(null); setResponse(null);
+    try {
+      const r = await askWithGraphAnchor({
+        ownerId, collectionId, conversationId,
+        query: q,
+        entityIds: [anchorId],
+        hops: 2,
+        answerLanguage: "vi",
+      });
+      setResponse(r);
+      onAnswered(r);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Lỗi truy vấn");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
+      <div
+        className="w-[600px] max-w-[92vw] max-h-[85vh] overflow-hidden rounded-xl bg-white shadow-2xl flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-outline/40 px-4 py-2.5 bg-gradient-to-r from-primary/8 to-transparent">
+          <div className="flex items-center gap-2">
+            <MessageCircleQuestion size={16} className="text-primary" />
+            <p className="text-sm font-semibold text-text">
+              Hỏi về <span className="text-primary">{anchorLabel}</span>
+            </p>
+          </div>
+          <button onClick={onClose} className="text-muted hover:text-text"><X size={14} /></button>
+        </div>
+
+        <div className="px-4 py-3 flex flex-col gap-2 overflow-y-auto flex-1">
+          <textarea
+            ref={taRef}
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") submit(); }}
+            placeholder={`VD: "${anchorLabel}" tác động đến điều gì? Hoặc hỏi tự do — graph sẽ truy vết quanh node này.`}
+            className="w-full resize-none rounded-lg border border-outline/40 bg-white px-3 py-2 text-sm leading-relaxed outline-none focus:border-primary/60 min-h-[68px]"
+            rows={3}
+            disabled={loading}
+          />
+          {error && (
+            <div className="flex items-start gap-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-[12px] text-red-700">
+              <AlertCircle size={14} className="shrink-0 mt-0.5" /> {error}
+            </div>
+          )}
+
+          {response && (
+            <div className="mt-1 space-y-2">
+              <div className="rounded-lg bg-surface-low/60 border border-outline/30 px-3 py-2">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted mb-1.5">Trả lời</p>
+                {response.was_refused ? (
+                  <p className="text-sm text-muted italic">{response.answer}</p>
+                ) : (
+                  <MarkdownRenderer text={response.answer} />
+                )}
+              </div>
+              {!response.was_refused && (
+                <div className="flex flex-wrap gap-1.5 text-[10px]">
+                  {response.used_entity_ids && response.used_entity_ids.length > 0 && (
+                    <span className="rounded-full border border-primary/30 bg-primary/5 px-2 py-0.5 font-semibold text-primary">
+                      {response.used_entity_ids.length} node được dùng (đã highlight trên graph)
+                    </span>
+                  )}
+                  {response.sentence_coverage && (
+                    <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">
+                      Bằng chứng phủ {Math.round((response.sentence_coverage.coverage_ratio || 0) * 100)}%
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="border-t border-outline/40 px-4 py-2 flex items-center justify-end gap-2 bg-surface-low/40">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg px-3 py-1.5 text-[12px] font-semibold text-muted hover:bg-surface-low transition"
+          >
+            Đóng
+          </button>
+          <button
+            type="button"
+            onClick={submit}
+            disabled={loading || !question.trim()}
+            className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-[12px] font-semibold text-white disabled:opacity-40 hover:bg-primary/90 transition"
+          >
+            {loading ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
+            {loading ? "Đang tìm..." : "Gửi"}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -537,6 +693,11 @@ function RelationInfoCard({
               Mở evidence
             </button>
           </div>
+          {relation.evidenceTextChunk && (
+            <blockquote className="mt-2 rounded border-l-2 border-primary/30 bg-slate-50 px-3 py-2 text-[10px] leading-relaxed text-text/80 italic line-clamp-4">
+              {relation.evidenceTextChunk}
+            </blockquote>
+          )}
         </div>
         <button onClick={onClose} className="shrink-0 text-muted hover:text-text transition mt-0.5">
           <X size={13} />
@@ -705,22 +866,31 @@ export default function GraphTab({
   mode: "graph" | "mindmap";
   onOpenEvidence?: (target: { docId: string; page: number; blockId?: string | null }) => void;
 }) {
-  const { workspace, scopedMaterialIds, sourceScopeMode, activeQueryContext, setChatDraft } = useWorkspace();
+  const { workspace, scopedMaterialIds, sourceScopeMode, activeQueryContext, setChatDraft, graphFocusOnAnswer, setGraphFocusOnAnswer, materials } = useWorkspace();
   const [selectedNode, setSelectedNode] = useState<SelectedNode | null>(null);
   const [selectedRelation, setSelectedRelation] = useState<SelectedRelation | null>(null);
   const [rootTopic, setRootTopic] = useState("");
   const [graphResult, setGraphResult] = useState<GraphResponse | null>(null);
   const [mindmapResult, setMindmapResult] = useState<MindmapResponse | null>(null);
-  const [mindmapDetail, setMindmapDetail] = useState<"overview" | "detailed">("overview");
+  const [mindmapDetail, setMindmapDetail] = useState<"brief" | "overview" | "detailed">("overview");
   const [mindmapUseLlm, setMindmapUseLlm] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [graphSearch, setGraphSearch] = useState("");
+  // G4 — anchored ask + highlight from last graph answer
+  const [askAnchor, setAskAnchor] = useState<{ id: string; label: string } | null>(null);
+  const [graphAnswerHighlights, setGraphAnswerHighlights] = useState<string[]>([]);
   const lastAutoLoadKey = useRef<string | null>(null);
 
   const graphFocus = buildGraphFocus(activeQueryContext);
-  const canvas = mode === "graph" ? toGraph(graphResult, graphFocus) : toMindmap(mindmapResult);
+  // Material id → display name map, used to build hover-preview source labels.
+  const materialNameMap = new Map<string, string>(
+    materials.map((m) => [m.materialId, m.originalName || m.filename || m.materialId]),
+  );
+  const canvas = mode === "graph"
+    ? toGraph(graphResult, graphFocus)
+    : toMindmap(mindmapResult, materialNameMap);
   const answerTraceMaterialIds = mode === "graph" && activeQueryContext && !activeQueryContext.response.was_refused
     ? Array.from(new Set(activeQueryContext.response.citations.map((citation) => citation.doc_id).filter(Boolean)))
     : [];
@@ -766,6 +936,7 @@ export default function GraphTab({
       confidence: edge.confidence ?? null,
       evidenceCount: edge.evidence_count ?? edge.evidence_refs?.length ?? 0,
       evidenceRefs: edge.evidence_refs ?? [],
+      evidenceTextChunk: edge.evidence_text_chunk ?? null,
     });
   }, [canvas.nodes]);
 
@@ -774,11 +945,38 @@ export default function GraphTab({
     setError(null);
     try {
       if (mode === "graph") {
+        // Verify-mode: extract block_ids + material_ids + pages from last answer's
+        // citations so backend filters graph to entities backing the answer.
+        const focusBlockIds: string[] = [];
+        const focusMaterialIds: string[] = [];
+        const focusPages: string[] = [];
+        if (graphFocusOnAnswer && activeQueryContext && !activeQueryContext.response.was_refused) {
+          for (const citation of activeQueryContext.response.citations) {
+            if (citation.doc_id) {
+              focusMaterialIds.push(citation.doc_id);
+              const pages = citation.pages ?? (citation.page ? [citation.page] : []);
+              for (const p of pages) {
+                focusPages.push(`${citation.doc_id}:${p}`);
+              }
+            }
+            for (const ev of citation.evidence_blocks ?? []) {
+              if (ev.block_id) focusBlockIds.push(ev.block_id);
+            }
+            if (citation.block_id) focusBlockIds.push(citation.block_id);
+          }
+        }
         const response = await loadGraph({
           owner_id: workspace.ownerId,
           collection_id: workspace.collectionId || null,
           material_ids: graphMaterialIds,
           root_topic: activeQueryContext?.question || rootTopic || "Knowledge Graph",
+          focus_block_ids: Array.from(new Set(focusBlockIds)),
+          focus_material_ids: Array.from(new Set(focusMaterialIds)),
+          focus_pages: Array.from(new Set(focusPages)),
+          focus_query_text: graphFocusOnAnswer && activeQueryContext ? activeQueryContext.question : undefined,
+          focus_answer_text: graphFocusOnAnswer && activeQueryContext && !activeQueryContext.response.was_refused
+            ? activeQueryContext.response.answer
+            : undefined,
         });
         setGraphResult(response);
         setSelectedNode(null);
@@ -821,6 +1019,12 @@ export default function GraphTab({
     if (hasScope) refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
+
+  // Re-fetch when verify-mode toggles so user sees focused / full graph immediately
+  useEffect(() => {
+    if (hasScope && mode === "graph") refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [graphFocusOnAnswer]);
 
   useEffect(() => {
     if (!hasScope) {
@@ -886,7 +1090,18 @@ export default function GraphTab({
                 <div className="inline-flex overflow-hidden rounded-md border border-outline bg-slate-50 p-0.5">
                   <button
                     type="button"
+                    onClick={() => setMindmapDetail("brief")}
+                    title="Brief — 4 nhóm × 3 khái niệm, gọn nhất"
+                    className={`px-2.5 py-1 text-[11px] font-semibold transition ${
+                      mindmapDetail === "brief" ? "rounded bg-white text-primary shadow-sm" : "text-muted hover:text-text"
+                    }`}
+                  >
+                    Brief
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setMindmapDetail("overview")}
+                    title="Overview — 6 nhóm × 5 khái niệm, cân bằng"
                     className={`px-2.5 py-1 text-[11px] font-semibold transition ${
                       mindmapDetail === "overview" ? "rounded bg-white text-primary shadow-sm" : "text-muted hover:text-text"
                     }`}
@@ -896,6 +1111,7 @@ export default function GraphTab({
                   <button
                     type="button"
                     onClick={() => setMindmapDetail("detailed")}
+                    title="Detailed — 8 nhóm × 8 khái niệm, đầy đủ"
                     className={`px-2.5 py-1 text-[11px] font-semibold transition ${
                       mindmapDetail === "detailed" ? "rounded bg-white text-primary shadow-sm" : "text-muted hover:text-text"
                     }`}
@@ -962,7 +1178,24 @@ export default function GraphTab({
                 )}
               </div>
               <div className="flex flex-wrap items-center gap-2 text-[10px] text-muted">
-                {graphFocus && activeQueryContext && (
+                {graphFocusOnAnswer && activeQueryContext && (
+                  <span className="flex items-center gap-1 rounded bg-amber-100 px-2 py-0.5 text-amber-800 font-semibold border border-amber-300">
+                    <Target size={9} />
+                    Kiểm chứng câu trả lời
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setGraphFocusOnAnswer(false);
+                        setTimeout(() => void refresh(), 50);
+                      }}
+                      className="ml-1 rounded px-1 text-amber-700 hover:bg-amber-200 hover:text-amber-900"
+                      title="Hiện toàn bộ graph"
+                    >
+                      ×
+                    </button>
+                  </span>
+                )}
+                {graphFocus && activeQueryContext && !graphFocusOnAnswer && (
                   <span className="flex items-center gap-1 rounded bg-primary/8 px-1.5 py-0.5 text-primary font-medium">
                     <Target size={9} />
                     <span className="max-w-[180px] truncate" title={activeQueryContext.question}>
@@ -1020,6 +1253,7 @@ export default function GraphTab({
                 onDraftQuestion={(draft) => setChatDraft(draft)}
                 onFindRelated={(draft) => setChatDraft(draft)}
                 searchQuery={graphSearch}
+                answerEntityIds={graphAnswerHighlights}
               />
               {mode === "graph" && <GraphLegend />}
             </div>
@@ -1031,9 +1265,33 @@ export default function GraphTab({
           <RelationInfoCard relation={selectedRelation} onClose={() => setSelectedRelation(null)} onOpenEvidence={onOpenEvidence} />
         )}
         {!selectedRelation && selectedNode && (
-          <NodeInfoCard node={selectedNode} onClose={() => setSelectedNode(null)} />
+          <NodeInfoCard
+            node={selectedNode}
+            onClose={() => setSelectedNode(null)}
+            onAskAboutNode={
+              workspace.collectionId
+                ? (id, label) => setAskAnchor({ id, label })
+                : undefined
+            }
+          />
         )}
       </div>
+
+      {askAnchor && workspace.collectionId && (
+        <AskAboutNodeModal
+          anchorId={askAnchor.id}
+          anchorLabel={askAnchor.label}
+          ownerId={workspace.ownerId}
+          collectionId={workspace.collectionId}
+          conversationId={`graph-ask:${workspace.collectionId}:${askAnchor.id}`}
+          onClose={() => setAskAnchor(null)}
+          onAnswered={(r) => {
+            if (r.used_entity_ids && r.used_entity_ids.length > 0) {
+              setGraphAnswerHighlights(r.used_entity_ids);
+            }
+          }}
+        />
+      )}
 
       {fullscreen && hasCanvas && (
         <FullscreenOverlay

@@ -1,0 +1,22 @@
+{
+  "success": true,
+  "message": "Query answered successfully",
+  "data": {
+    "answer": "Xin chào! Tôi là Noelys, trợ lý tri thức học tập của Noelys.\n\nCâu hỏi này có vẻ nằm ngoài phạm vi tài liệu học tập của bạn. Tôi hoạt động tốt nhất khi được hỏi về nội dung tài liệu đã upload.\n\nTôi có thể giúp bạn:\n- Trả lời câu hỏi về nội dung tài liệu, slide, giáo trình đã upload\n- Giải thích khái niệm, so sánh và phân tích từ tài liệu\n- Tóm tắt nội dung hoặc tạo study guide\n- Hỏi đáp bằng cả tiếng Việt lẫn tiếng Anh\n\nHãy upload tài liệu và đặt câu hỏi liên quan. Tôi sẵn sàng hỗ trợ!",
+    "answer_language": "vi",
+    "query_language": "vi",
+    "translated_query": null,
+    "source_languages": [],
+    "citations": [],
+    "confidence": 0.0,
+    "was_refused": true,
+    "refusal_reason": "off_topic",
+    "reasoning_path": [],
+    "coverage": null,
+    "agent_trace": null,
+    "sentence_coverage": null,
+    "used_entity_ids": [],
+    "used_relation_ids": []
+  },
+  "error": null
+}

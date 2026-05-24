@@ -19,6 +19,77 @@ class GraphRetriever:
         self.settings = settings
         self.embedder = embedder  # Optional: for semantic entity matching
 
+    async def retrieve_subgraph(self, query: str, scope: RetrievalScope, top_k: int = 5) -> list[GraphPath]:
+        """Text-index entity matching → 1-hop relation expansion → GraphPath with chunk refs.
+
+        Uses MongoDB $text search on canonical_name + aliases (requires the
+        entities_text_search index to exist). Falls back to regex matching when
+        $text is unavailable or returns no results.
+        All queries are scoped to owner_id + collection_id.
+        """
+        scope.ensure_scoped()
+        collection_oid = PydanticObjectId(scope.collection_id) if scope.collection_id else None
+
+        # ── 1. Entity lookup via $text (primary) + regex fallback ─────────────
+        scope_filter: dict = {"owner_id": scope.owner_id}
+        if collection_oid is not None:
+            scope_filter["collection_id"] = collection_oid
+
+        entities: list[Entity] = []
+        try:
+            text_filter = {**scope_filter, "$text": {"$search": query}}
+            entities = await Entity.find(text_filter).limit(top_k * 4).to_list()
+        except Exception:
+            pass  # text index may not exist yet on this deployment
+
+        if not entities:
+            entities = await self._keyword_matching_entities(query=query, scope=scope)
+
+        if not entities:
+            return []
+
+        entity_ids_str = {f"entity:{self._slug(e.canonical_name)}" for e in entities}
+        entity_id_map: dict[str, Entity] = {f"entity:{self._slug(e.canonical_name)}": e for e in entities}
+
+        # ── 2. 1-hop relation expansion ───────────────────────────────────────
+        relations = await Relation.find(
+            {
+                **scope_filter,
+                "confidence": {"$gte": self.settings.min_graph_confidence},
+                "$or": [
+                    {"source_id": {"$in": list(entity_ids_str)}},
+                    {"target_id": {"$in": list(entity_ids_str)}},
+                ],
+            }
+        ).sort("-confidence").limit(top_k * 6).to_list()
+
+        # ── 3. Collect chunk_ids + build paths ────────────────────────────────
+        paths: list[GraphPath] = []
+        for relation in relations:
+            chunk_ids: list[str] = []
+            # From matched entities at either endpoint
+            for eid_str in (relation.source_id, relation.target_id):
+                entity = entity_id_map.get(eid_str)
+                if entity and entity.chunk_ids:
+                    chunk_ids.extend(cid for cid in entity.chunk_ids if cid not in chunk_ids)
+            # From the relation itself
+            for cid in relation.evidence_chunk_ids:
+                if cid not in chunk_ids:
+                    chunk_ids.append(cid)
+
+            evidence = await self._hydrate_evidence_refs(relation.evidence_refs)
+            paths.append(
+                GraphPath(
+                    path=[relation.source_id, f"relation:{relation.relation_type}", relation.target_id],
+                    confidence=relation.confidence,
+                    evidence_refs=evidence,
+                    source_chunk_ids=chunk_ids,
+                )
+            )
+
+        paths.sort(key=lambda p: p.confidence, reverse=True)
+        return paths[:top_k]
+
     async def retrieve_paths(self, *, query: str, scope: RetrievalScope, max_hops: int | None = None) -> list[GraphPath]:
         scope.ensure_scoped()
         bounded_hops = min(max_hops or self.settings.graph_max_hops, 2)
@@ -28,10 +99,20 @@ class GraphRetriever:
         seed_ids = {f"entity:{self._slug(entity.canonical_name)}" for entity in entities}
         relations = await self._relations_touching(seed_ids=seed_ids, scope=scope)
 
+        # Batch-fetch all materials/pages/blocks ONCE — avoids N×Mongo roundtrips
+        # in the per-relation hydration loop below (saved 100s+ on warm collections).
+        all_material_ids: set[PydanticObjectId] = set()
+        for relation in relations:
+            for ref in relation.evidence_refs:
+                all_material_ids.add(ref.material_id)
+        lookup_cache = await self._build_block_lookup(all_material_ids)
+
         paths: list[GraphPath] = []
         for relation in relations:
             if relation.source_id in seed_ids or relation.target_id in seed_ids:
-                evidence = await self._hydrate_evidence_refs(relation.evidence_refs)
+                evidence = await self._hydrate_evidence_refs_with_cache(
+                    relation.evidence_refs, lookup_cache=lookup_cache
+                )
                 paths.append(
                     GraphPath(
                         path=[relation.source_id, f"relation:{relation.relation_type}", relation.target_id],
@@ -52,16 +133,19 @@ class GraphRetriever:
     )
 
     async def _matching_entities(self, *, query: str, scope: RetrievalScope) -> list[Entity]:
-        """Find entities matching the query using keyword + semantic matching."""
-        # 1. Keyword matching (existing)
+        """Find entities matching the query using keyword + semantic matching.
+
+        Semantic matching re-encodes every candidate entity in a Python loop, which is
+        prohibitively slow on CPU (~100s for 200 entities). Skip it whenever keyword
+        matching already returned candidates — semantic only helps as a fallback when
+        keyword matching finds nothing.
+        """
         keyword_entities = await self._keyword_matching_entities(query=query, scope=scope)
 
-        # 2. Semantic matching (new - optional if embedder available)
-        if self.embedder is not None:
+        # Fallback to semantic only when keyword matching returned nothing
+        if not keyword_entities and self.embedder is not None:
             semantic_entities = await self._semantic_matching_entities(query=query, scope=scope, limit=20)
-            # Merge and deduplicate
-            seen_ids = {str(e.id) for e in keyword_entities}
-            keyword_entities.extend(e for e in semantic_entities if str(e.id) not in seen_ids)
+            return semantic_entities
 
         return keyword_entities
 
@@ -188,17 +272,36 @@ class GraphRetriever:
         return query
 
     async def _hydrate_evidence_refs(self, refs: list[EvidenceRef]) -> list[EvidenceBlock]:
-        if not refs:
-            return []
-        unique_material_ids = list({ref.material_id for ref in refs})
-        materials_list = await Material.find({"_id": {"$in": unique_material_ids}}).to_list()
-        materials_by_id = {m.id: m for m in materials_list}
+        return await self._hydrate_evidence_refs_with_cache(refs, lookup_cache=None)
+
+    async def _build_block_lookup(
+        self, material_ids: set[PydanticObjectId]
+    ) -> dict[tuple[PydanticObjectId, int | None, str | None], tuple[Material, object, object]]:
+        """Fetch materials + pages + blocks once for the given material ids."""
+        if not material_ids:
+            return {}
+        materials_list = await Material.find({"_id": {"$in": list(material_ids)}}).to_list()
         pages_by_material_id = await get_material_pages_by_material_ids(materials_list)
-        block_lookup: dict[tuple[PydanticObjectId, int | None, str | None], tuple[Material, object, object]] = {}
+        lookup: dict[tuple[PydanticObjectId, int | None, str | None], tuple[Material, object, object]] = {}
         for material in materials_list:
             for page in pages_by_material_id.get(str(material.id), []):
                 for block in page.blocks:
-                    block_lookup[(material.id, page.page_number, block.block_id)] = (material, page, block)
+                    lookup[(material.id, page.page_number, block.block_id)] = (material, page, block)
+        return lookup
+
+    async def _hydrate_evidence_refs_with_cache(
+        self,
+        refs: list[EvidenceRef],
+        *,
+        lookup_cache: dict[tuple[PydanticObjectId, int | None, str | None], tuple[Material, object, object]] | None,
+    ) -> list[EvidenceBlock]:
+        if not refs:
+            return []
+        if lookup_cache is None:
+            unique_material_ids = {ref.material_id for ref in refs}
+            block_lookup = await self._build_block_lookup(unique_material_ids)
+        else:
+            block_lookup = lookup_cache
 
         evidence: list[EvidenceBlock] = []
         for ref in refs:
@@ -228,3 +331,105 @@ class GraphRetriever:
     @staticmethod
     def _slug(value: str) -> str:
         return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-") or "unknown"
+
+    # ── GraphRAG navigation surface (G1 + G2) ───────────────────────────────
+
+    async def resolve_entities_by_slugs(
+        self, *, entity_slugs: list[str], scope: RetrievalScope,
+    ) -> list[Entity]:
+        """Resolve `entity:slug-form` ids (used by the frontend graph UI) back to
+        Mongo Entity documents within scope. Slugs map back via canonical_name."""
+        if not entity_slugs:
+            return []
+        wanted: set[str] = set()
+        for raw in entity_slugs:
+            slug = raw.removeprefix("entity:") if raw.startswith("entity:") else raw
+            if slug:
+                wanted.add(slug)
+        if not wanted:
+            return []
+
+        candidates = await Entity.find(self._scope_query(scope, {})).limit(2000).to_list()
+        matched = [e for e in candidates if self._slug(e.canonical_name) in wanted]
+        return matched
+
+    async def subgraph_around_entities(
+        self,
+        *,
+        entity_slugs: list[str],
+        scope: RetrievalScope,
+        hops: int = 2,
+    ) -> tuple[list[Entity], list[Relation]]:
+        """Return entities + relations within K hops of the given seed slugs.
+
+        Used by G1 (subgraph endpoint) and G2 (graph-anchored query) to materialise
+        a neighbourhood the user can drill into.
+        """
+        seeds = await self.resolve_entities_by_slugs(entity_slugs=entity_slugs, scope=scope)
+        if not seeds:
+            return [], []
+        seed_ids = {f"entity:{self._slug(e.canonical_name)}" for e in seeds}
+
+        first_hop = await self._relations_touching(seed_ids=seed_ids, scope=scope)
+        frontier_ids: set[str] = set()
+        for r in first_hop:
+            frontier_ids.add(r.source_id)
+            frontier_ids.add(r.target_id)
+
+        all_relation_ids: set[str] = {*(r.id and str(r.id) for r in first_hop)}
+        all_relations: list[Relation] = list(first_hop)
+        if hops >= 2:
+            second_hop = await self._relations_touching(
+                seed_ids=frontier_ids - seed_ids, scope=scope,
+            )
+            for r in second_hop:
+                rid = str(r.id)
+                if rid not in all_relation_ids:
+                    all_relations.append(r)
+                    all_relation_ids.add(rid)
+                frontier_ids.add(r.source_id)
+                frontier_ids.add(r.target_id)
+
+        # Pull all entities referenced in the relation set (the seed + neighbours).
+        if frontier_ids:
+            neighbours = await Entity.find(
+                self._scope_query(scope, {})
+            ).limit(3000).to_list()
+            neighbours_in_frontier = [
+                e for e in neighbours
+                if f"entity:{self._slug(e.canonical_name)}" in (frontier_ids | seed_ids)
+            ]
+        else:
+            neighbours_in_frontier = list(seeds)
+
+        return neighbours_in_frontier, all_relations
+
+    async def retrieve_around_entities(
+        self,
+        *,
+        entity_slugs: list[str],
+        scope: RetrievalScope,
+        hops: int = 2,
+    ) -> tuple[list[str], list[Entity], list[Relation]]:
+        """Collect Chunk ids reachable from seed entities (chunks where seeds or
+        their 1-2 hop neighbours are mentioned). Returns chunk_ids + the entity
+        and relation sets that contributed — so the caller can track provenance.
+        """
+        entities, relations = await self.subgraph_around_entities(
+            entity_slugs=entity_slugs, scope=scope, hops=hops,
+        )
+        if not entities:
+            return [], [], []
+        chunk_ids: list[str] = []
+        seen: set[str] = set()
+        for e in entities:
+            for cid in e.chunk_ids or []:
+                if cid not in seen:
+                    seen.add(cid)
+                    chunk_ids.append(cid)
+        for r in relations:
+            for cid in r.evidence_chunk_ids or []:
+                if cid not in seen:
+                    seen.add(cid)
+                    chunk_ids.append(cid)
+        return chunk_ids, entities, relations

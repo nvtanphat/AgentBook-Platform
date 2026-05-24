@@ -4,6 +4,8 @@ import logging
 
 from beanie import PydanticObjectId
 
+from src.core.config import get_settings
+from src.models.chat_memory import ChatMemory, ChatTurn
 from src.models.chat_memory import ChatSummaryMemory
 from src.models.common import utc_now
 from src.models.query_log import QueryLog
@@ -11,95 +13,139 @@ from src.rag.types import RetrievalScope
 
 logger = logging.getLogger(__name__)
 
-SHORT_TERM_TURNS = 4        # verbatim recent turns fed to LLM
-SUMMARY_AFTER_TURNS = 6    # compress older turns into summary after this many total turns
-MAX_TURNS_SUMMARIZED = 16  # hard cap: never summarize more than this many older turns
 MAX_MEMORY_CHARS = 2000
-MAX_SUMMARY_CHARS = 1000
-MAX_QUERY_KEY_CHARS = 110  # key phrase extracted from query for each summary line
-MAX_ANSWER_KEY_CHARS = 180 # first sentence of answer for each summary line
+MAX_QUERY_KEY_CHARS = 220
+MAX_ANSWER_KEY_CHARS = 300
 
 
 class MemoryService:
-    async def build_context(self, *, scope: RetrievalScope, conversation_id: str) -> str:
-        """Return bounded conversation memory for the current scoped chat only."""
-        try:
-            collection_oid = self._collection_oid(scope)
-            summary_doc = await self._get_summary(
-                owner_id=scope.owner_id,
-                collection_id=collection_oid,
-                conversation_id=conversation_id,
-            )
-            recent = await self._recent_logs(
-                owner_id=scope.owner_id,
-                collection_id=collection_oid,
-                conversation_id=conversation_id,
-                limit=SHORT_TERM_TURNS,
-            )
-        except Exception as exc:
-            logger.debug("Memory context unavailable", extra={"error": str(exc), "error_type": type(exc).__name__})
-            return ""
+    def __init__(self, max_turns: int | None = None) -> None:
+        if max_turns is not None:
+            self._max_turns = max_turns
+        else:
+            try:
+                self._max_turns = get_settings().memory_max_turns
+            except Exception:
+                self._max_turns = 10
 
-        sections: list[str] = []
-        if summary_doc and summary_doc.summary.strip():
-            sections.append("Lịch sử hội thoại (tóm tắt):\n" + summary_doc.summary.strip())
-        if recent:
-            lines = ["Tin nhắn gần đây:"]
-            for item in reversed(recent):
-                lines.append(f"- Người dùng: {self._trim(item.query, 220)}")
-                lines.append(f"  Trợ lý: {self._trim(item.answer, 300)}")
-            sections.append("\n".join(lines))
-        return self._trim("\n\n".join(sections), MAX_MEMORY_CHARS)
+    # ── Primary interface ──────────────────────────────────────────────────────
+
+    async def get_context(self, session_id: str, last_n: int | None = None) -> str:
+        """Return the last N turns as 'User: ...\nAssistant: ...' blocks."""
+        n = last_n if last_n is not None else self._max_turns
+        try:
+            doc = await ChatMemory.find_one({"session_id": session_id})
+        except Exception as exc:
+            logger.debug("Memory get_context failed", extra={"session_id": session_id, "error": str(exc)})
+            return ""
+        if doc is None or not doc.turns:
+            return ""
+        turns = doc.turns[-n * 2:]  # each exchange = 2 turns
+        lines: list[str] = []
+        for turn in turns:
+            if turn.role == "user":
+                lines.append(f"User: {self._trim(turn.content, MAX_QUERY_KEY_CHARS)}")
+            else:
+                lines.append(f"Assistant: {self._trim(turn.content, MAX_ANSWER_KEY_CHARS)}")
+        return self._trim("\n".join(lines), MAX_MEMORY_CHARS)
+
+    async def update(
+        self,
+        session_id: str,
+        query: str,
+        answer: str,
+        collection_id: str = "",
+        *,
+        owner_id: str = "",
+    ) -> None:
+        """Append a user/assistant exchange and cap to max_turns."""
+        if not query.strip():
+            return
+        try:
+            doc = await ChatMemory.find_one({"session_id": session_id})
+            new_turns = [
+                ChatTurn(role="user", content=query.strip()),
+                ChatTurn(role="assistant", content=answer.strip()),
+            ]
+            if doc is None:
+                doc = ChatMemory(
+                    owner_id=owner_id,
+                    session_id=session_id,
+                    collection_id=collection_id,
+                    turns=new_turns,
+                )
+                await doc.insert()
+            else:
+                doc.turns.extend(new_turns)
+                # Cap: keep last max_turns exchanges (2 turns each)
+                cap = self._max_turns * 2
+                if len(doc.turns) > cap:
+                    doc.turns = doc.turns[-cap:]
+                doc.updated_at = utc_now()
+                await doc.save()
+        except Exception as exc:
+            logger.debug(
+                "Memory update failed",
+                extra={"session_id": session_id, "error": str(exc)},
+            )
+
+    async def clear(self, session_id: str) -> None:
+        """Delete all turns for the given session."""
+        try:
+            doc = await ChatMemory.find_one({"session_id": session_id})
+            if doc is not None:
+                await doc.delete()
+        except Exception as exc:
+            logger.debug(
+                "Memory clear failed",
+                extra={"session_id": session_id, "error": str(exc)},
+            )
+
+    async def get_history(self, session_id: str) -> list[ChatTurn]:
+        """Return all stored turns for the session (oldest first)."""
+        try:
+            doc = await ChatMemory.find_one({"session_id": session_id})
+        except Exception as exc:
+            logger.debug(
+                "Memory get_history failed",
+                extra={"session_id": session_id, "error": str(exc)},
+            )
+            return []
+        if doc is None:
+            return []
+        return list(doc.turns)
+
+    # ── Backward-compat wrappers (used by QueryService) ────────────────────────
+
+    async def build_context(self, *, scope: RetrievalScope, conversation_id: str) -> str:
+        """Legacy entry point — delegates to get_context."""
+        session_id = self._session_id(scope.owner_id, conversation_id)
+        try:
+            context = await self.get_context(session_id)
+        except Exception as exc:
+            logger.debug(
+                "build_context fallback to QueryLog",
+                extra={"error": str(exc)},
+            )
+            context = await self._query_log_context(scope=scope, conversation_id=conversation_id)
+        if context:
+            return context
+        # Fallback: pull from QueryLog so existing history isn't lost on first deploy
+        return await self._query_log_context(scope=scope, conversation_id=conversation_id)
 
     async def update_after_query(self, *, scope: RetrievalScope, conversation_id: str) -> None:
-        """Refresh extractive summary memory from older turns. Runs in background — no LLM cost."""
-        try:
-            collection_oid = self._collection_oid(scope)
-            total_limit = min(SUMMARY_AFTER_TURNS + SHORT_TERM_TURNS + MAX_TURNS_SUMMARIZED, 64)
-            logs = await self._recent_logs(
-                owner_id=scope.owner_id,
-                collection_id=collection_oid,
-                conversation_id=conversation_id,
-                limit=total_limit,
-            )
-            if len(logs) <= SUMMARY_AFTER_TURNS:
-                return
+        """Legacy entry point called by QueryService without query/answer text.
 
-            # logs sorted newest-first; skip the SHORT_TERM_TURNS verbatim ones
-            older_logs = list(reversed(logs[SHORT_TERM_TURNS:SHORT_TERM_TURNS + MAX_TURNS_SUMMARIZED]))
-            summary_lines: list[str] = []
-            for idx, item in enumerate(older_logs, start=1):
-                if not item.query.strip() or not item.answer.strip():
-                    continue
-                q = self._trim(item.query, MAX_QUERY_KEY_CHARS)
-                a = self._first_sentence(item.answer, MAX_ANSWER_KEY_CHARS)
-                summary_lines.append(f"[{idx}] Q: {q}\n    A: {a}")
+        This path cannot supply query/answer text so it does nothing. The
+        QueryService should call `update()` directly after receiving the
+        response. Kept for backward compatibility only.
+        """
 
-            summary = self._trim("\n".join(summary_lines), MAX_SUMMARY_CHARS)
-            if not summary:
-                return
+    # ── Helpers ────────────────────────────────────────────────────────────────
 
-            summary_doc = await self._get_summary(
-                owner_id=scope.owner_id,
-                collection_id=collection_oid,
-                conversation_id=conversation_id,
-            )
-            if summary_doc is None:
-                summary_doc = ChatSummaryMemory(
-                    owner_id=scope.owner_id,
-                    collection_id=collection_oid,
-                    conversation_id=conversation_id,
-                    summary=summary,
-                    source_query_count=len(logs),
-                )
-                await summary_doc.insert()
-            else:
-                summary_doc.summary = summary
-                summary_doc.source_query_count = len(logs)
-                summary_doc.updated_at = utc_now()
-                await summary_doc.save()
-        except Exception as exc:
-            logger.debug("Memory summary update skipped", extra={"error": str(exc), "error_type": type(exc).__name__})
+    @staticmethod
+    def _session_id(owner_id: str, conversation_id: str) -> str:
+        return f"{owner_id}:{conversation_id}"
 
     @staticmethod
     def _collection_oid(scope: RetrievalScope) -> PydanticObjectId | None:
@@ -108,48 +154,30 @@ class MemoryService:
         return PydanticObjectId(scope.collection_id)
 
     @staticmethod
-    async def _get_summary(
-        *,
-        owner_id: str,
-        collection_id: PydanticObjectId | None,
-        conversation_id: str,
-    ) -> ChatSummaryMemory | None:
-        return await ChatSummaryMemory.find_one(
-            ChatSummaryMemory.owner_id == owner_id,
-            ChatSummaryMemory.collection_id == collection_id,
-            ChatSummaryMemory.conversation_id == conversation_id,
-        )
-
-    @staticmethod
-    async def _recent_logs(
-        *,
-        owner_id: str,
-        collection_id: PydanticObjectId | None,
-        conversation_id: str,
-        limit: int,
-    ) -> list[QueryLog]:
-        return await QueryLog.find(
-            QueryLog.owner_id == owner_id,
-            QueryLog.collection_id == collection_id,
-            QueryLog.conversation_id == conversation_id,
-        ).sort("-created_at").limit(limit).to_list()
+    async def _query_log_context(*, scope: RetrievalScope, conversation_id: str) -> str:
+        """Fallback: build context from QueryLog for sessions that pre-date ChatMemory."""
+        try:
+            collection_oid: PydanticObjectId | None = None
+            if scope.collection_id:
+                collection_oid = PydanticObjectId(scope.collection_id)
+            recent = await QueryLog.find(
+                QueryLog.owner_id == scope.owner_id,
+                QueryLog.collection_id == collection_oid,
+                QueryLog.conversation_id == conversation_id,
+            ).sort("-created_at").limit(3).to_list()
+            if not recent:
+                return ""
+            lines: list[str] = []
+            for item in reversed(recent):
+                lines.append(f"User: {MemoryService._trim(item.query, MAX_QUERY_KEY_CHARS)}")
+                lines.append(f"Assistant: {MemoryService._trim(item.answer, MAX_ANSWER_KEY_CHARS)}")
+            return MemoryService._trim("\n".join(lines), MAX_MEMORY_CHARS)
+        except Exception:
+            return ""
 
     @staticmethod
     def _trim(value: str, limit: int) -> str:
         text = " ".join(value.split())
-        if len(text) <= limit:
-            return text
-        return text[: max(0, limit - 1)].rstrip() + "…"
-
-    @staticmethod
-    def _first_sentence(value: str, limit: int) -> str:
-        """Extract first meaningful sentence, then trim to limit."""
-        text = " ".join(value.split())
-        for sep in (".", "!", "?", "\n"):
-            pos = text.find(sep)
-            if 20 < pos < limit:
-                text = text[: pos + 1]
-                break
         if len(text) <= limit:
             return text
         return text[: max(0, limit - 1)].rstrip() + "…"

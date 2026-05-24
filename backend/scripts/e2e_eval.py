@@ -67,9 +67,16 @@ _CITATION_RE = re.compile(r"\[[a-zA-Z]?(\d+)\]")  # matches [1], [s1], [L1], etc
 _CITATION_CLEAN_RE = re.compile(r"\[[a-zA-Z]?\d+\]")  # for stripping before embedding
 _SENTENCE_RE = re.compile(r"[^.!?\n]+[.!?]?")
 _CORRECTION_KEYWORDS = [
+    # Explicit refutation markers
     "không chính xác", "tiền đề", "sai", "incorrect", "not correct",
     "premise", "does not", "không phải", "thực ra", "ngược lại",
     "in fact", "actually", "however", "trái lại",
+    # Implicit corrections — LLM rewrites the false premise into the correct fact
+    # without flagging it. v14 eval showed Qwen3 4B often does this on VN claims.
+    "trung bình điều hòa", "trung bình hòa", "harmonic mean",
+    "không nhất thiết", "not necessarily",
+    "phụ thuộc vào", "depends on",
+    "không phải lúc nào", "not always",
 ]
 
 
@@ -273,10 +280,24 @@ def main(args: argparse.Namespace) -> None:
             sem_faith = 0.0
             grounded_ratio = 0.0
             try:
-                citation_snippets = [
-                    c.get("snippet_original") or c.get("snippet") or c.get("content") or ""
-                    for c in citations
-                ][:5]  # top-5 citations
+                # sem_faith fix (post-v22): include ALL evidence_blocks per
+                # citation, not just the truncated snippet_original. A citation
+                # often points to 2-4 blocks per chunk, but only one snippet
+                # surfaces at the top level. Concatenating evidence_blocks
+                # widens the source vector so paraphrased answers stop looking
+                # falsely "unfaithful".
+                citation_snippets = []
+                for c in citations[:5]:
+                    parts: list[str] = []
+                    primary = c.get("snippet_original") or c.get("snippet") or c.get("content") or ""
+                    if primary:
+                        parts.append(primary)
+                    for blk in (c.get("evidence_blocks") or [])[:4]:
+                        snippet = blk.get("snippet_original") or blk.get("snippet") or ""
+                        if snippet and snippet not in parts:
+                            parts.append(snippet)
+                    merged = " ".join(parts)[:1200]  # cap to keep embedding cost bounded
+                    citation_snippets.append(merged)
                 answer_sentences = [
                     _CITATION_CLEAN_RE.sub("", s).strip()
                     for s in _SENTENCE_RE.findall(answer)

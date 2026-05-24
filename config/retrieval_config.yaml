@@ -5,18 +5,60 @@ qdrant:
   dense_size: 1024
   distance: "Cosine"
   index_batch_size: 64
+  visual_collection_name: "agentbook_visual"
+  visual_retrieval_top_k: 3
 
 retrieval:
-  dense_top_k: 20
-  sparse_top_k: 20
-  graph_top_k: 10
-  top_k: 5
-  final_top_k: 5
+  # Compromise after v13 eval: wider than v12 but not so wide it dilutes reranker.
+  # v12=8 rerank candidates was too narrow; v13=50 bloated and caused refusals.
+  # 20 candidates → top 8 is a stable middle ground.
+  dense_top_k: 30
+  sparse_top_k: 30
+  graph_top_k: 12
+  top_k: 8
+  final_top_k: 8           # reverted from lean 5 → 8 after observing mass refusals; SLEC needs enough sentences to avoid weighted-score floor trigger
   rrf_k: 60
-  rerank_input_k: 8
+  rerank_input_k: 30       # was 20 → 30 (match dense/sparse_top_k so high-rank gold chunks survive to rerank)
   graph_max_hops: 2
-  agentic_rag_enabled: false
-  multi_query_enabled: false
+  agentic_rag_enabled: true
+  agentic_critic_enabled: false   # skip post-synthesis critic loop (saves 30-90s/query); guardrails + slec already cover review
+  agentic_max_retrieval_iterations: 0   # single retrieval pass; iterations re-ran same queries (no new info) — pure overhead
+  multi_query_enabled: true
+  lexical_fallback_multiplier: 3
+
+# ── CRAG (Corrective RAG) thresholds ──────────────────────────────────────────
+# Score gate (theo BGE reranker output, đã normalized [0,1]):
+#   score ≥ correct_threshold   → CORRECT (kept, high confidence)
+#   score in [incorrect, correct] → AMBIGUOUS (kept với caveat)
+#   score < incorrect_threshold → INCORRECT (filtered out)
+# Lưu ý: BGE reranker scores tiếng Việt thường thấp hơn tiếng Anh ~0.10-0.15
+# do training data imbalance. Hạ correct_threshold từ 0.55 → 0.40 để fit VN docs.
+# Adjust dựa trên eval thực tế trong VN-EduRAG-100.
+crag:
+  evaluator_enabled: false
+  correct_threshold: 0.40
+  incorrect_threshold: 0.20
+
+# ── Phase B · Adaptive Retrieval Budget ──────────────────────────────────────
+# Skip sparse + graph when dense alone clearly wins. Only triggers for FACTUAL /
+# GENERAL / CLAIM_CHECK routes — SUMMARIZATION needs MMR diversity, COMPARISON
+# needs per-source breadth, GRAPH_RELATION needs the graph explicitly.
+# Decision criterion (cosine sim already in [0,1]):
+#   top-1 dense score ≥ dense_skip_threshold
+#   AND ≥ strong_hits_required chunks score ≥ strong_hit_min_score
+# When satisfied, sparse and graph stages are skipped — cuts median latency on
+# easy factual queries with no measurable recall loss in the smoke pass.
+adaptive_retrieval:
+  enabled: true
+  # Re-tuned after v17→v20 ablation matrix: v19 (B off) recovered ctx_precision
+  # from 0.638 → 1.000, showing fast-path was skipping reranker too liberally.
+  # Tightening the threshold 0.50→0.55 + strong_hits 2→3 keeps the latency win
+  # (~16s/query) on truly confident retrievals while letting borderline queries
+  # fall through to the full reranker pipeline.
+  dense_skip_threshold: 0.55
+  strong_hits_required: 3
+  strong_hit_min_score: 0.35
+  eligible_routes: ["factual", "general", "claim_check"]
 
 chunking:
   strategy: semantic
@@ -25,3 +67,4 @@ chunking:
   overlap_token_count: 50
   max_blocks_per_chunk: 8
   breakpoint_percentile: 95.0
+  min_content_chars: 50

@@ -153,15 +153,20 @@ def test_prune_relations_removes_low_confidence():
     assert pruned[0].relation_type == "related"
 
 
+_dummy_block_counter = 0
+
+
 def _dummy_block() -> EvidenceBlock:
-    """Create a dummy evidence block for testing."""
+    """Create a dummy evidence block for testing with unique block_id."""
+    global _dummy_block_counter
+    _dummy_block_counter += 1
     return EvidenceBlock(
         owner_id="user1",
         collection_id="col1",
         material_id="mat1",
         document_name="test.pdf",
         page=1,
-        block_id="blk1",
+        block_id=f"blk{_dummy_block_counter}",
         block_type="paragraph",
         snippet_original="Test content",
         source_language="en",

@@ -530,6 +530,140 @@ class LayoutAwareChunker:
         return parts if len(parts) > 1 else []
 
 
+class AudioChunker:
+    """Chunker for audio transcripts (faster-whisper segments).
+
+    Groups consecutive segments by time window (target ~45s per chunk).
+    Each chunk metadata carries `audio_start_seconds` / `audio_end_seconds`
+    for timestamped citations and deep-linking back to audio position.
+    """
+
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+        self._layout = LayoutAwareChunker(settings)
+
+    def _count_tokens(self, text: str) -> int:
+        if self.settings.testing:
+            return len(text.split()) if text else 0
+        return _tokenizer_count_tokens(text, self.settings)
+
+    def build_chunks(self, evidence_map: EvidenceMap) -> list[TextChunk]:
+        target_seconds = self.settings.audio_chunk_target_seconds
+        min_seconds = self.settings.audio_chunk_min_seconds
+        # Audio blocks must be in time order; metadata carries seconds.
+        blocks_sorted = sorted(
+            (b for b in evidence_map.blocks if b.snippet_original.strip()),
+            key=lambda b: (b.metadata.get("start_seconds", 0.0) if b.metadata else 0.0),
+        )
+
+        chunks: list[TextChunk] = []
+        buffer: list[EvidenceBlock] = []
+        buffer_start: float | None = None
+
+        for block in blocks_sorted:
+            seg_start = float(block.metadata.get("start_seconds", 0.0)) if block.metadata else 0.0
+            seg_end = float(block.metadata.get("end_seconds", seg_start)) if block.metadata else seg_start
+            if buffer_start is None:
+                buffer_start = seg_start
+            # Flush when window exceeds target AND buffer has the minimum
+            elapsed = seg_end - buffer_start
+            if buffer and elapsed >= target_seconds and (seg_end - buffer_start) >= min_seconds:
+                chunk = self._layout._make_chunk(evidence_map, buffer)
+                # Attach audio time range to chunk metadata for citation linking
+                first_start = float(buffer[0].metadata.get("start_seconds", 0.0)) if buffer[0].metadata else 0.0
+                last_end = float(buffer[-1].metadata.get("end_seconds", 0.0)) if buffer[-1].metadata else 0.0
+                chunk = chunk.model_copy(update={
+                    "modality": "audio",
+                })
+                chunks.append(chunk)
+                buffer = []
+                buffer_start = seg_start
+            buffer.append(block)
+
+        if buffer:
+            chunk = self._layout._make_chunk(evidence_map, buffer)
+            chunk = chunk.model_copy(update={"modality": "audio"})
+            chunks.append(chunk)
+
+        # Rewrite chunk content with inline timestamps so LLM sees temporal context.
+        # Each segment becomes "[MM:SS] text" — easier to cite specific moments.
+        result_chunks = []
+        for c in chunks:
+            if not (c.content.strip() and c.token_count > 0):
+                continue
+            timestamped_lines = []
+            for ev in c.evidence:
+                meta = ev.metadata or {}
+                start = float(meta.get("start_seconds", 0.0))
+                m = int(start // 60)
+                s = int(start % 60)
+                timestamped_lines.append(f"[{m:02d}:{s:02d}] {ev.snippet_original.strip()}")
+            new_content = "\n".join(timestamped_lines)
+            # Recount tokens since content changed
+            new_token_count = self._count_tokens(new_content)
+            result_chunks.append(c.model_copy(update={
+                "content": new_content,
+                "token_count": new_token_count,
+            }))
+        return result_chunks
+
+
+class SlideAwareChunker:
+    """Slide-boundary-preserving chunker for PPTX.
+
+    PPTX files have a natural structural unit: the slide. A semantic chunker
+    that splits across slides loses this structure and produces tiny fragments
+    (title in one chunk, bullets in another). This chunker:
+
+      1. Groups all blocks of the same page_number (= slide) into one chunk
+      2. If a slide is too large (> 1.5 × target_tokens), splits at block
+         boundary within the slide (never across slides)
+      3. Does NOT merge across slides — each slide stays a distinct retrieval unit
+    """
+
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+        self._layout = LayoutAwareChunker(settings)
+
+    def _count_tokens(self, text: str) -> int:
+        if self.settings.testing:
+            return len(text.split()) if text else 0
+        return _tokenizer_count_tokens(text, self.settings)
+
+    def build_chunks(self, evidence_map: EvidenceMap) -> list[TextChunk]:
+        chunks: list[TextChunk] = []
+        target = self.settings.chunk_target_token_count
+        # Token cap = 1.8× target. Slides are naturally bounded; only split when truly oversized.
+        slide_token_cap = int(target * 1.8)
+
+        # Group blocks by slide (page_number)
+        slides: dict[int, list[EvidenceBlock]] = {}
+        for block in evidence_map.blocks:
+            if not block.snippet_original.strip():
+                continue
+            slides.setdefault(block.page, []).append(block)
+
+        for slide_num in sorted(slides.keys()):
+            slide_blocks = slides[slide_num]
+            # Token-based split WITHIN slide ONLY if total exceeds cap.
+            # Block count is intentionally not capped — slides have many small text frames.
+            buffer: list[EvidenceBlock] = []
+            buffer_tokens = 0
+            for block in slide_blocks:
+                btokens = self._count_tokens(block.snippet_original)
+                if buffer and buffer_tokens + btokens > slide_token_cap:
+                    chunks.append(self._layout._make_chunk(evidence_map, buffer))
+                    buffer = []
+                    buffer_tokens = 0
+                buffer.append(block)
+                buffer_tokens += btokens
+            if buffer:
+                chunks.append(self._layout._make_chunk(evidence_map, buffer))
+
+        # No merge_tiny_chunks — short slides stay as 1 chunk each (intentional)
+        return [c for c in chunks if c.content.strip() and c.token_count > 0]
+
+
 class SemanticChunker:
     """
     Semantic chunking via cosine-distance breakpoint detection (Kamradt 2023).

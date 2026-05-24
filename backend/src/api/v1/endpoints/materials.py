@@ -123,14 +123,14 @@ async def upload_material(
             head=streamed.head,
         )
     except UploadValidationError as exc:
-        logger.exception("Upload validation failed")
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid upload request.") from exc
+        logger.warning("Upload validation failed", extra={"reason": str(exc)})
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except LookupError as exc:
-        logger.exception("Upload target not found")
+        logger.warning("Upload target not found", extra={"reason": str(exc)})
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Upload target not found.") from exc
     except ValueError as exc:
-        logger.exception("Invalid upload request")
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid upload request.") from exc
+        logger.warning("Invalid upload value", extra={"reason": str(exc)})
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     finally:
         if streamed is not None:
             streamed.temp_path.unlink(missing_ok=True)
@@ -190,8 +190,8 @@ async def batch_upload_materials(
             )
             results.append(MaterialBatchUploadItem(filename=filename, success=True, data=data))
         except (UploadValidationError, LookupError, ValueError) as exc:
-            logger.exception("Batch material upload item failed", extra={"filename": filename})
-            results.append(MaterialBatchUploadItem(filename=filename, success=False, error="Material upload failed. Please retry later."))
+            logger.warning("Batch upload item failed", extra={"upload_filename": filename, "reason": str(exc)})
+            results.append(MaterialBatchUploadItem(filename=filename, success=False, error=str(exc)))
         finally:
             if streamed is not None:
                 streamed.temp_path.unlink(missing_ok=True)
@@ -322,9 +322,13 @@ async def material_debug(
     except Exception:
         vector_count = 0
 
-    is_image = material.file_type.lower() in {"png", "jpg", "jpeg"}
+    ft = material.file_type.lower()
+    is_image = ft in {"png", "jpg", "jpeg"}
+    is_audio = ft in {"mp3", "wav", "m4a", "ogg", "flac", "webm", "aac"}
+    # Same /raw endpoint serves any file type — expose the URL when frontend can use it
     raw_image_url = (
-        f"{settings.api_v1_prefix}/materials/{material_id}/raw?owner_id={owner_id}" if is_image else None
+        f"{settings.api_v1_prefix}/materials/{material_id}/raw?owner_id={owner_id}"
+        if (is_image or is_audio) else None
     )
 
     return APIResponse(

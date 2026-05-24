@@ -1,23 +1,24 @@
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
+  darkMode: 'class',
   theme: {
     extend: {
       colors: {
-        background: "#f0f2f8",
-        surface: "#ffffff",
-        "surface-low": "#f5f7fc",
-        "surface-mid": "#edf1fb",
-        "surface-high": "#e5ecf7",
-        primary: "#006591",
-        "primary-bright": "#0ea5e9",
-        secondary: "#006b5f",
-        "secondary-bright": "#14b8a6",
-        outline: "#bec8d2",
-        text: "#0b1c30",
-        muted: "#3e4850",
-        danger: "#ba1a1a",
-        warning: "#de8712"
+        background: "var(--c-background)",
+        surface: "var(--c-surface)",
+        "surface-low": "var(--c-surface-low)",
+        "surface-mid": "var(--c-surface-mid)",
+        "surface-high": "var(--c-surface-high)",
+        primary: "var(--c-primary)",
+        "primary-bright": "var(--c-primary-bright)",
+        secondary: "var(--c-secondary)",
+        "secondary-bright": "var(--c-secondary-bright)",
+        outline: "var(--c-outline)",
+        text: "var(--c-text)",
+        muted: "var(--c-muted)",
+        danger: "var(--c-danger)",
+        warning: "var(--c-warning)"
       },
       fontFamily: {
         heading: ["Manrope", "sans-serif"],

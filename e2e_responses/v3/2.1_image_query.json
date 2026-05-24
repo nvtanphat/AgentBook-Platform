@@ -1,0 +1,22 @@
+{
+  "success": true,
+  "message": "Image query answered successfully",
+  "data": {
+    "answer": "Không tìm thấy hình ảnh tương tự nào trong bộ tài liệu hiện tại.",
+    "answer_language": "vi",
+    "query_language": "vi",
+    "translated_query": null,
+    "source_languages": [],
+    "citations": [],
+    "confidence": 0.0,
+    "was_refused": true,
+    "refusal_reason": "no_visual_matches",
+    "reasoning_path": [],
+    "coverage": null,
+    "agent_trace": null,
+    "sentence_coverage": null,
+    "used_entity_ids": [],
+    "used_relation_ids": []
+  },
+  "error": null
+}

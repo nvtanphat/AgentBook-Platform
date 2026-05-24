@@ -1,10 +1,21 @@
 export const API_BASE_URL = (import.meta.env.VITE_AGENTBOOK_API_URL ?? "http://127.0.0.1:8000").replace(/\/$/, "");
 export const API_V1_BASE_URL = `${API_BASE_URL}/api/v1`;
-const AUTH_TOKEN_STORAGE_KEY = "prism.auth.token";
+const AUTH_TOKEN_STORAGE_KEY = "prism.auth.access";  // unified with state/auth.tsx
+const LEGACY_TOKEN_KEY = "prism.auth.token";
 
 function authHeaders(): HeadersInit {
-  const token = localStorage.getItem(AUTH_TOKEN_STORAGE_KEY) || import.meta.env.VITE_AGENTBOOK_AUTH_TOKEN;
+  const token =
+    localStorage.getItem(AUTH_TOKEN_STORAGE_KEY) ||
+    localStorage.getItem(LEGACY_TOKEN_KEY) ||
+    import.meta.env.VITE_AGENTBOOK_AUTH_TOKEN;
   return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+// Broadcast 401s so AuthProvider can clear session and bounce to login.
+function notifyUnauthorized() {
+  try {
+    window.dispatchEvent(new CustomEvent("prism:auth:unauthorized"));
+  } catch {}
 }
 
 type ApiEnvelope<T> = {
@@ -194,6 +205,27 @@ export type AgentTrace = {
   verification?: AgentVerification | null;
 };
 
+export type SentenceSupport = {
+  index: number;
+  text: string;
+  status: "supported" | "partial" | "unsupported";
+  score: number;
+  supporting_block_ids: string[];
+  citation_refs: number[];
+};
+
+export type SentenceCoverageReport = {
+  enabled: boolean;
+  total_sentences: number;
+  supported_count: number;
+  partial_count: number;
+  unsupported_count: number;
+  dropped_count: number;
+  coverage_ratio: number;
+  refused: boolean;
+  sentences: SentenceSupport[];
+};
+
 export type QueryResponse = {
   answer: string;
   answer_language: string;
@@ -207,6 +239,9 @@ export type QueryResponse = {
   reasoning_path: ReasoningStep[];
   coverage?: CoverageReport | null;
   agent_trace?: AgentTrace | null;
+  sentence_coverage?: SentenceCoverageReport | null;
+  used_entity_ids?: string[];
+  used_relation_ids?: string[];
 };
 
 export type CompareRequest = {
@@ -282,6 +317,10 @@ export type EvidenceBlock = {
   confidence: number | null;
   material_id: string | null;
   doc_name: string | null;
+  // Audio-only — present when block came from audio transcription
+  audio_start_seconds?: number | null;
+  audio_end_seconds?: number | null;
+  audio_file?: string | null;
 };
 
 export type EvidencePageResponse = {
@@ -315,6 +354,12 @@ export type GraphNode = {
   type: string;
   confidence: number | null;
   mention_count?: number;
+  degree?: number;
+  importance?: number;          // Phase 2 — PageRank score [0, 1]
+  community?: number;           // Phase 2 — Louvain community id
+  community_label?: string | null;
+  is_hub?: boolean;             // Phase 2 — top 10% by importance
+  is_focused?: boolean;         // Focus mode — primary entity from citations
   source_docs?: string[];
   evidence_refs?: Array<Record<string, string | number>>;
 };
@@ -328,6 +373,7 @@ export type GraphEdge = {
   confidence: number | null;
   evidence_count?: number;
   evidence_refs: Array<Record<string, string | number>>;
+  evidence_text_chunk?: string | null;
 };
 
 export type GraphResponse = {
@@ -398,6 +444,9 @@ async function request<T>(path: string, init?: RequestInit, useApiV1 = true): Pr
       ...(init?.headers ?? {}),
     },
   });
+  if (response.status === 401 && !path.startsWith("/auth/")) {
+    notifyUnauthorized();
+  }
   if (!response.ok) {
     throw new Error(await parseError(response));
   }
@@ -603,6 +652,117 @@ export function askQuestion(payload: QueryRequest) {
   return apiPost<QueryResponse>("/query/ask", payload);
 }
 
+export type ImageQueryPayload = {
+  ownerId: string;
+  collectionId?: string | null;
+  materialIds?: string[];
+  conversationId?: string;
+  queryText?: string;
+  topK?: number | null;
+  answerLanguage?: string | null;
+  image: File | Blob;
+  imageFilename?: string;
+};
+
+export async function askQuestionWithImage(payload: ImageQueryPayload): Promise<QueryResponse> {
+  const form = new FormData();
+  const filename = payload.imageFilename || (payload.image instanceof File ? payload.image.name : "upload.png");
+  form.append("image", payload.image, filename);
+  form.append("owner_id", payload.ownerId);
+  if (payload.collectionId) form.append("collection_id", payload.collectionId);
+  if (payload.materialIds && payload.materialIds.length > 0) {
+    form.append("material_ids", JSON.stringify(payload.materialIds));
+  }
+  form.append("conversation_id", payload.conversationId ?? "default");
+  if (payload.queryText) form.append("query_text", payload.queryText);
+  if (payload.topK != null) form.append("top_k", String(payload.topK));
+  if (payload.answerLanguage) form.append("answer_language", payload.answerLanguage);
+
+  const response = await fetch(`${API_V1_BASE_URL}/query/ask-image`, {
+    method: "POST",
+    headers: { ...authHeaders() },
+    body: form,
+  });
+  if (response.status === 401) notifyUnauthorized();
+  if (!response.ok) {
+    let detail = `HTTP ${response.status}`;
+    try {
+      const body = (await response.json()) as { detail?: string; message?: string };
+      detail = body.detail || body.message || detail;
+    } catch {}
+    throw new Error(detail);
+  }
+  const envelope = (await response.json()) as ApiEnvelope<QueryResponse>;
+  if (!envelope.success || !envelope.data) {
+    throw new Error(envelope.error || envelope.message || "Image query failed");
+  }
+  return envelope.data;
+}
+
+// ── GraphRAG (G2 + G4) ──────────────────────────────────────────────────────
+
+export type GraphQueryPayload = {
+  ownerId: string;
+  collectionId?: string | null;
+  materialIds?: string[];
+  conversationId?: string;
+  query: string;
+  entityIds?: string[];   // slug-form ids (e.g. "entity:dropout")
+  relationIds?: string[]; // Mongo _id strings
+  hops?: 1 | 2;
+  topK?: number | null;
+  answerLanguage?: string | null;
+};
+
+export async function askWithGraphAnchor(payload: GraphQueryPayload): Promise<QueryResponse> {
+  const body = {
+    owner_id: payload.ownerId,
+    collection_id: payload.collectionId ?? null,
+    material_ids: payload.materialIds ?? [],
+    conversation_id: payload.conversationId ?? "default",
+    query: payload.query,
+    entity_ids: payload.entityIds ?? [],
+    relation_ids: payload.relationIds ?? [],
+    hops: payload.hops ?? 2,
+    top_k: payload.topK ?? null,
+    answer_language: payload.answerLanguage ?? null,
+  };
+  const response = await fetch(`${API_V1_BASE_URL}/query/ask-graph`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(body),
+  });
+  if (response.status === 401) notifyUnauthorized();
+  if (!response.ok) {
+    let detail = `HTTP ${response.status}`;
+    try {
+      const j = (await response.json()) as { detail?: string; message?: string };
+      detail = j.detail || j.message || detail;
+    } catch {}
+    throw new Error(detail);
+  }
+  const envelope = (await response.json()) as ApiEnvelope<QueryResponse>;
+  if (!envelope.success || !envelope.data) {
+    throw new Error(envelope.error || envelope.message || "Graph query failed");
+  }
+  return envelope.data;
+}
+
+export async function fetchEntitySubgraph(
+  entityId: string,
+  opts: { ownerId: string; collectionId: string; hops?: 1 | 2 },
+): Promise<{ nodes: unknown[]; edges: unknown[] }> {
+  const url = `${API_V1_BASE_URL}/graph/entity/${encodeURIComponent(entityId)}/subgraph?owner_id=${encodeURIComponent(opts.ownerId)}&collection_id=${encodeURIComponent(opts.collectionId)}&hops=${opts.hops ?? 2}`;
+  const response = await fetch(url, { headers: { ...authHeaders() } });
+  if (response.status === 401) notifyUnauthorized();
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const envelope = (await response.json()) as ApiEnvelope<{ nodes: unknown[]; edges: unknown[] }>;
+  if (!envelope.success || !envelope.data) {
+    throw new Error(envelope.error || "Subgraph fetch failed");
+  }
+  return envelope.data;
+}
+
 export async function askQuestionStream(
   payload: QueryRequest,
   callbacks: {
@@ -686,7 +846,7 @@ export function loadMindmap(payload: {
   collection_id?: string | null;
   material_ids?: string[];
   root_topic?: string | null;
-  detail_level?: "overview" | "detailed";
+  detail_level?: "brief" | "overview" | "detailed";
   use_llm?: boolean;
 }) {
   return apiPost<MindmapResponse>("/graph/mindmap", payload);
@@ -697,6 +857,11 @@ export function loadGraph(payload: {
   collection_id?: string | null;
   material_ids?: string[];
   root_topic?: string | null;
+  focus_block_ids?: string[];
+  focus_material_ids?: string[];
+  focus_pages?: string[];
+  focus_query_text?: string;
+  focus_answer_text?: string;
 }) {
   return apiPost<GraphResponse>("/graph", payload);
 }

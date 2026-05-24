@@ -195,7 +195,28 @@ class QueryProcessor:
         *,
         answer_language: str | None = None,
         hyde_enabled: bool = False,
+        rewriter=None,
     ) -> ProcessedQuery:
+        if rewriter is not None:
+            # External rewriter takes over query expansion; bypass built-in translation.
+            normalized = " ".join(query.split())
+            query_language = self.detect_language(normalized)
+            try:
+                rewritten = await rewriter.rewrite(query)
+            except Exception:
+                rewritten = None
+                logger.debug("Query rewriter raised — using original query only")
+            if rewritten and isinstance(rewritten, list):
+                retrieval_queries = [q for q in rewritten if q]
+            else:
+                retrieval_queries = [normalized]
+            return ProcessedQuery(
+                original_query=normalized,
+                query_language=query_language,
+                translated_query=None,
+                answer_language=answer_language or ("vi" if query_language == "vi" else "en"),
+                retrieval_queries=retrieval_queries,
+            )
         return self.process(query, answer_language=answer_language)
 
     def detect_language(self, query: str) -> str:
@@ -215,5 +236,14 @@ class QueryProcessor:
         translated = " ".join(translated.strip(" ?.,").split())
         if not translated or translated == query.lower():
             # No useful translation produced — BGE-M3 handles VI natively, skip dual retrieval
+            return None
+        # Reject pidgin output that still contains Vietnamese diacritics or
+        # untranslated Vietnamese tokens. A broken translation (e.g. "why
+        # dùng wape dùng metric khác") pollutes the multi-query pool with
+        # garbage chunks that crowd out genuinely-relevant evidence.
+        if any(ch in self.VI_CHARS for ch in translated):
+            return None
+        residual_vi_tokens = set(re.findall(r"\w+", translated, flags=re.UNICODE)) & self.VI_WORDS
+        if residual_vi_tokens:
             return None
         return translated

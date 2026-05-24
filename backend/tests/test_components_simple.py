@@ -124,23 +124,8 @@ try:
 except Exception as e:
     print(f"   ✗ Cache failed: {e}")
 
-# Test 9: Query Cache
-print("\n9. Testing Query Result Cache...")
-try:
-    from src.services.query_cache import QueryResultCache
-    query_cache = QueryResultCache(settings.redis_url)
-
-    if query_cache.enabled:
-        stats = query_cache.stats()
-        print(f"   ✓ Query cache connected")
-        print(f"   - Hit rate: {stats.get('hit_rate', 0):.2%}")
-    else:
-        print(f"   ⚠ Query cache not available")
-except Exception as e:
-    print(f"   ✗ Query cache failed: {e}")
-
-# Test 10: Smart Reranker
-print("\n10. Testing Smart Reranker...")
+# Test 9: Smart Reranker
+print("\n9. Testing Smart Reranker...")
 try:
     from src.rag.smart_reranker import SmartReranker
     smart_reranker = SmartReranker(reranker, confidence_threshold=0.7)

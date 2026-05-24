@@ -149,5 +149,6 @@ class ExtractedRelation(BaseModel):
     target_id: str
     relation_type: str
     evidence_refs: list[EvidenceBlock] = Field(default_factory=list)
+    evidence_text_chunk: str | None = None
     confidence: float = 0.5
     is_conflicting: bool = False

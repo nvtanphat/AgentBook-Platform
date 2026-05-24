@@ -1,0 +1,959 @@
+{
+  "success": true,
+  "message": "Query answered successfully",
+  "data": {
+    "answer": "Tôi không tìm thấy đủ bằng chứng trong tài liệu được cung cấp để trả lời câu hỏi này.",
+    "answer_language": "vi",
+    "query_language": "vi",
+    "translated_query": null,
+    "source_languages": [
+      "vi"
+    ],
+    "citations": [
+      {
+        "doc_id": "6a0ed9eb455165de1b01120e",
+        "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+        "page": 1,
+        "pages": [
+          1
+        ],
+        "block_id": "#/texts/552",
+        "block_type": "paragraph",
+        "snippet_original": "Nhóm trạm lân cận được đưa vào vì P224 là phụ tải tổng hợp của cụm trạm Tân Hưng, trong đó các trạm thành phần có thể phản ánh các trạng thái vận hành liên quan đến nhau. Đây là một căn cứ để xây dựng nhánh tô-pô, còn mức đóng góp thực nghiệm của nhóm biến này được đánh giá ở Chương 3.",
+        "snippet_translated": null,
+        "bbox": null,
+        "role": "primary",
+        "source_language": "vi",
+        "confidence": 0.73000255188976,
+        "evidence_blocks": [
+          {
+            "block_id": "#/texts/550",
+            "block_type": "heading",
+            "page": 1,
+            "snippet_original": "3.4.5 Đặc trưng tô-pô/trạm lân cận",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/551",
+            "block_type": "heading",
+            "page": 1,
+            "snippet_original": "3.4.5.1 Trạm lân cận và tô-pô từ bốn trạm Tân Hưng",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/552",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Nhóm trạm lân cận được đưa vào vì P224 là phụ tải tổng hợp của cụm trạm Tân Hưng, trong đó các trạm thành phần có thể phản ánh các trạng thái vận hành liên quan đến nhau. Đây là một căn cứ để xây dựng nhánh tô-pô, còn mức đóng góp thực nghiệm của nhóm biến này được đánh giá ở Chương 3.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/553",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Các trạm lân cận P474, P476, P478 và P480 được đưa vào nhánh tô-pô như các nút thông tin liên quan đến P224. Thay vì chỉ cộng hoặc lấy trung bình tải của các trạm lân cận, mô hình học quan hệ giữa các nút thông qua vector biểu diễn nút và cơ chế truyền thông điệp [4], [15], [16].",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          }
+        ]
+      },
+      {
+        "doc_id": "6a0ed9eb455165de1b01120e",
+        "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+        "page": 1,
+        "pages": [
+          1
+        ],
+        "block_id": "#/texts/251",
+        "block_type": "paragraph",
+        "snippet_original": "Từ khoảng trống nghiên cứu trên, đề án xây dựng ST-TopoKAN cho bài toán dự báo phụ tải tại trạm công cộng. Kiến trúc đề xuất kết hợp bộ nhớ chuỗi thời gian của GRU, biểu diễn quan hệ giữa các trạm lân cận và khả năng mô hình hóa phi tuyến của KAN. Thiết kế mô hình vì vậy tập trung vào ba nguồn thông tin chính: phụ thuộc theo thời gian, quan hệ giữa các trạm lân cận và các biến động bất thường của chuỗi phụ tải.",
+        "snippet_translated": null,
+        "bbox": null,
+        "role": "supporting",
+        "source_language": "vi",
+        "confidence": 0.7284634313520987,
+        "evidence_blocks": [
+          {
+            "block_id": "#/texts/250",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Từ các nghiên cứu công bố từ năm 2024, mạng Kolmogorov-Arnold (KAN) được chú ý nhờ cách đặt hàm B-spline học được trên cạnh để mô tả quan hệ phi tuyến. Với dữ liệu phụ tải nhiều trạm, hướng tô-pô hoặc cơ chế chú ý theo cấu trúc cũng cần được xem xét, vì P224 có liên hệ với P474, P476, P478 và P480. Trong phạm vi tài liệu đã khảo sát, hướng ghép KAN với tô-pô học được trên dữ liệu phụ tải điện Việt Nam, nhất là trong bối cảnh có điện mặt trời mái nhà, vẫn chưa xuất hiện nhiều.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/251",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Từ khoảng trống nghiên cứu trên, đề án xây dựng ST-TopoKAN cho bài toán dự báo phụ tải tại trạm công cộng. Kiến trúc đề xuất kết hợp bộ nhớ chuỗi thời gian của GRU, biểu diễn quan hệ giữa các trạm lân cận và khả năng mô hình hóa phi tuyến của KAN. Thiết kế mô hình vì vậy tập trung vào ba nguồn thông tin chính: phụ thuộc theo thời gian, quan hệ giữa các trạm lân cận và các biến động bất thường của chuỗi phụ tải.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          }
+        ]
+      },
+      {
+        "doc_id": "6a0ed9eb455165de1b01120e",
+        "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+        "page": 1,
+        "pages": [
+          1
+        ],
+        "block_id": "blk-4e696ffd28d7",
+        "block_type": "paragraph",
+        "snippet_original": "Kích thước bảng dữ liệu 103.344 dòng x 10 cột",
+        "snippet_translated": null,
+        "bbox": null,
+        "role": "supporting",
+        "source_language": "vi",
+        "confidence": 0.7239836684141298,
+        "evidence_blocks": [
+          {
+            "block_id": "blk-4e696ffd28d7",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Kích thước bảng dữ liệu 103.344 dòng x 10 cột",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-7b299432a40c",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Khoảng thời gian 2020-02-09 00:00:00 đến 2025-12-31 23:30:00",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-bddf4fb39ebd",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Tần suất 30 phút, tương ứng 48 điểm/ngày",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-32bb890beae7",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Cột thời gian Thời điểm ghi nhận dữ liệu (TIME)",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-38052d6026f6",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Biến mục tiêu P224 Phụ tải trạm lân cận",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-259a5cdde496",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "P474, P476, P478, P480 Tân Hưng",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-470e009b770f",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Thời tiết nhiệt độ, độ ẩm, lượng mưa và tốc độ gió; tương ứng với các cột temp, rhum, prcp, wspd trong dữ liệu gốc",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-8834e794c413",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Chất lượng mốc thời gian Không thiếu mốc thời gian; không có mốc thời gian trùng; không có giá trị khuyết thiếu trong toàn bộ cấu trúc dữ liệu.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-8a7764740172",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Trung bình P224 Tỷ lệ giá trị 0",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-7c7fd00205a4",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Huấn luyện 2020-02-09 00:00 2024-10-27 09:00",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-ef79b0f3d3ea",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "82.675 79,9% 23,8334 0,4318% Kiểm định",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-ec402fa8cbf9",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "2024-10-27 09:30 2025-05-30 16:00",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          }
+        ]
+      },
+      {
+        "doc_id": "6a0ed9eb455165de1b01120e",
+        "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+        "page": 1,
+        "pages": [
+          1
+        ],
+        "block_id": "#/texts/353",
+        "block_type": "paragraph",
+        "snippet_original": "Về mặt giả thuyết mô hình hóa, các trạm trong cùng cụm phụ tải có thể phản ánh những biến động vận hành liên quan đến nhau. Do đó, nhánh tô-pô được đưa vào để học quan hệ giữa P224, các trạm lân cận và các nhóm đặc trưng; mức đóng góp của nhánh này được đánh giá trong phần thực nghiệm.",
+        "snippet_translated": null,
+        "bbox": null,
+        "role": "supporting",
+        "source_language": "vi",
+        "confidence": 0.7247538024329392,
+        "evidence_blocks": [
+          {
+            "block_id": "#/texts/349",
+            "block_type": "heading",
+            "page": 1,
+            "snippet_original": "2.4 Biểu diễn tô-pô học được cho chuỗi phụ tải",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/350",
+            "block_type": "heading",
+            "page": 1,
+            "snippet_original": "2.4.1 Động lực sử dụng tô-pô cho chuỗi phụ tải nhiều trạm",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/351",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Tô-pô trong mô hình được hiểu là quan hệ học được giữa các đặc trưng, không phải tô-pô hình học cố định theo vị trí địa lý. Mỗi đặc trưng được xem như một nút; vector biểu diễn nút được dùng để tạo ma trận tương đồng; ma trận kề thưa giữ các liên kết mạnh; cơ chế truyền thông điệp lan truyền thông tin trên đồ thị thưa [11], [16].",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/352",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Dữ liệu P224 cho thấy có liên hệ với bốn trạm lân cận. Vì P224 đại diện cho tổng phụ tải của cụm trạm, mô hình cần nhìn trạng thái chung của cụm thay vì chỉ dựa vào chuỗi mục tiêu.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/353",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Về mặt giả thuyết mô hình hóa, các trạm trong cùng cụm phụ tải có thể phản ánh những biến động vận hành liên quan đến nhau. Do đó, nhánh tô-pô được đưa vào để học quan hệ giữa P224, các trạm lân cận và các nhóm đặc trưng; mức đóng góp của nhánh này được đánh giá trong phần thực nghiệm.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          }
+        ]
+      },
+      {
+        "doc_id": "6a0ed9eb455165de1b01120e",
+        "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+        "page": 1,
+        "pages": [
+          1
+        ],
+        "block_id": "blk-ba50b5b31fb3",
+        "block_type": "table",
+        "snippet_original": "| Thuộc tính | Giá trị trong tài liệu |\n| --- | --- |\n| Kích thước bảng dữ liệu | 103.344 dòng x 10 cột |\n| Khoảng thời gian | 2020-02-09 00:00:00 đến 2025-12-31 23:30:00 |\n| Tần suất | 30 phút, tương ứng 48 điểm/ngày |\n| Cột thời gian | Thời điểm ghi nhận dữ liệu (TIME) |\n| Biến mục tiêu | P224 |\n| Phụ tải trạm lân cận | P474, P476, P478, P480 Tân Hưng |\n| Thời tiết | nhiệt độ, độ ẩm, lượng mưa và tốc độ gió; tương ứng với các cột temp, rhum, prcp, wspd trong dữ liệu gốc |\n| Chất lượng mốc thời gian | Không thiếu mốc thời gian; không có mốc thời gian trùng; không có giá trị khuyết thiếu trong toàn bộ cấu trúc dữ liệu. |",
+        "snippet_translated": null,
+        "bbox": null,
+        "role": "supporting",
+        "source_language": "vi",
+        "confidence": 0.7215493760681014,
+        "evidence_blocks": [
+          {
+            "block_id": "blk-ba50b5b31fb3",
+            "block_type": "table",
+            "page": 1,
+            "snippet_original": "| Thuộc tính | Giá trị trong tài liệu |\n| --- | --- |\n| Kích thước bảng dữ liệu | 103.344 dòng x 10 cột |\n| Khoảng thời gian | 2020-02-09 00:00:00 đến 2025-12-31 23:30:00 |\n| Tần suất | 30 phút, tương ứng 48 điểm/ngày |\n| Cột thời gian | Thời điểm ghi nhận dữ liệu (TIME) |\n| Biến mục tiêu | P224 |\n| Phụ tải trạm lân cận | P474, P476, P478, P480 Tân Hưng |\n| Thời tiết | nhiệt độ, độ ẩm, lượng mưa và tốc độ gió; tương ứng với các cột temp, rhum, prcp, wspd trong dữ liệu gốc |\n| Chất lượng mốc thời gian | Không thiếu mốc thời gian; không có mốc thời gian trùng; không có giá trị khuyết thiếu trong toàn bộ cấu trúc dữ liệu. |",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-337c691a7805",
+            "block_type": "table",
+            "page": 1,
+            "snippet_original": "| Phân chia dữ liệu | Thời gian bắt đầu | Thời gian kết thúc | Số dòng | Tỷ lệ | Trung bình P224 | Tỷ lệ giá trị 0 |\n| --- | --- | --- | --- | --- | --- | --- |\n| Huấn luyện | 2020-02-09 00:00 | 2024-10-27 09:00 | 82.675 | 79,9% | 23,8334 | 0,4318% |\n| Kiểm định | 2024-10-27 09:30 | 2025-05-30 16:00 | 10.334 | 9,99% | 24,2231 | 0,3097% |\n| Kiểm thử | 2025-05-30 16:30 | 2025-12-31 23:30 | 10.335 | 10,00% | 20,2354 | 0,1838% |",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          }
+        ]
+      },
+      {
+        "doc_id": "6a0ed9eb455165de1b01120e",
+        "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+        "page": 1,
+        "pages": [
+          1
+        ],
+        "block_id": "#/texts/266",
+        "block_type": "paragraph",
+        "snippet_original": "Dữ liệu đầu vào ban đầu gồm cột thời gian, phụ tải mục tiêu P224, bốn biến phụ tải trạm lân cận và bốn biến thời tiết gồm nhiệt độ, độ ẩm, lượng mưa và tốc độ gió. Tên cột gốc được giữ lại trong phần mô tả dữ liệu để thuận tiện đối chiếu. Từ các cột này, đề án tạo thêm đặc trưng lịch, đặc trưng trễ, thống kê trượt, đặc trưng động học, dự báo thời tiết và ngày lễ Việt Nam.",
+        "snippet_translated": null,
+        "bbox": null,
+        "role": "supporting",
+        "source_language": "vi",
+        "confidence": 0.7214679711578973,
+        "evidence_blocks": [
+          {
+            "block_id": "#/texts/263",
+            "block_type": "heading",
+            "page": 1,
+            "snippet_original": "1.3.2 3.2. Phạm vi nghiên cứu",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/264",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Không gian nghiên cứu là cụm trạm biến áp 224 Tân Hưng thuộc Điện lực Tây Ninh. Trạm mục tiêu P224 là tổng công suất tổng hợp từ bốn trạm thành phần P474, P476, P478 và P480 Tân Hưng.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/265",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Bộ dữ liệu trải dài từ ngày 09/02/2020 đến ngày 31/12/2025 với tần suất 30 phút, tương ứng 48 điểm mỗi ngày và 103.344 mốc thời gian sau khi chuẩn hóa, làm sạch. Khoảng thời gian này bao phủ ngày làm việc, ngày nghỉ, mùa khô, mùa mưa, dịp lễ/Tết và một số giai đoạn biến động kinh tế - xã hội.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/266",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Dữ liệu đầu vào ban đầu gồm cột thời gian, phụ tải mục tiêu P224, bốn biến phụ tải trạm lân cận và bốn biến thời tiết gồm nhiệt độ, độ ẩm, lượng mưa và tốc độ gió. Tên cột gốc được giữ lại trong phần mô tả dữ liệu để thuận tiện đối chiếu. Từ các cột này, đề án tạo thêm đặc trưng lịch, đặc trưng trễ, thống kê trượt, đặc trưng động học, dự báo thời tiết và ngày lễ Việt Nam.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/267",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Bài toán được đánh giá trên sáu mốc dự báo: 1 điểm (30 phút), 2 điểm (1 giờ), 6 điểm (3 giờ), 12 điểm (6 giờ), 24 điểm (12 giờ) và 48 điểm (24 giờ). Các mốc này tương ứng với nhu cầu theo dõi ngắn hạn, điều chỉnh trong ngày và lập phương thức vận hành cho mốc xa hơn.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/268",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Đề án giới hạn ở hướng học sâu lai ghép. Các phương pháp dự báo xác suất và dự báo dựa trên mô hình ngôn ngữ lớn không nằm trong phạm vi thực nghiệm. Trong tài liệu này, đặc trưng tô-pô được hiểu là tô-pô học được qua vector biểu diễn nút và cơ chế truyền thông điệp, không phải các phương pháp tô-pô hình học cố định như Persistent Homology hay Takens Embedding thuần túy.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          }
+        ]
+      },
+      {
+        "doc_id": "6a0ed9eb455165de1b01120e",
+        "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+        "page": 1,
+        "pages": [
+          1
+        ],
+        "block_id": "#/texts/219",
+        "block_type": "paragraph",
+        "snippet_original": "Hình 2.6 Ma trận tương quan Pearson giữa P224 và các trạm lân cận P474, P476, P478, P480 29",
+        "snippet_translated": null,
+        "bbox": null,
+        "role": "supporting",
+        "source_language": "vi",
+        "confidence": 0.7182006571976813,
+        "evidence_blocks": [
+          {
+            "block_id": "#/texts/219",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Hình 2.6 Ma trận tương quan Pearson giữa P224 và các trạm lân cận P474, P476, P478, P480 29",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/220",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Hình 2.7 Biểu đồ ACF và PACF của P224 dùng để xác định các độ trễ 1 bước, 48 bước và 336 bước 30",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/221",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Hình 2.8 Các đoạn công suất bằng 0 và sụt giảm đột ngột trong chuỗi P224 31",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/222",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Hình 2.9 Kiến trúc mạng đề xuất 36",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/223",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Hình 3.1 Chiến lược phân hoạch chuỗi thời gian và hiện tượng dịch chuyển phân phối dữ liệu trên tập kiểm thử 47",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/224",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Hình 3.2 Đánh giá hiệu ứng không gian: so sánh WAPE trung bình giữa kiến trúc học sâu cơ sở và biến thể tích hợp quan hệ tô-pô 54",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/225",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Hình 3.3 Biến thiên WAPE theo các mốc dự báo giữa KAN cơ sở và ST-TopoKAN 55",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          }
+        ]
+      },
+      {
+        "doc_id": "6a0ed9eb455165de1b01120e",
+        "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+        "page": 1,
+        "pages": [
+          1
+        ],
+        "block_id": "#/texts/525",
+        "block_type": "paragraph",
+        "snippet_original": "Sau khi nhận diện sự thay đổi phân phối của P224 giữa các giai đoạn dữ liệu, bước tiếp theo là kiểm tra quan hệ giữa P224 và bốn trạm thành phần P474, P476, P478 và P480. Phân tích này nhằm xác định các trạm lân cận có cơ sở để được đưa vào mô hình như một nguồn thông tin không gian hay không, thay vì chỉ sử dụng chuỗi P224 như một biến đơn lẻ. Kết quả tương quan được dùng như một căn cứ mô hình hóa ban đầu; mức đóng góp thực tế của nhóm thông tin này sẽ được kiểm chứng trong Chương 3.",
+        "snippet_translated": null,
+        "bbox": null,
+        "role": "supporting",
+        "source_language": "vi",
+        "confidence": 0.7270798465569873,
+        "evidence_blocks": [
+          {
+            "block_id": "#/texts/524",
+            "block_type": "heading",
+            "page": 1,
+            "snippet_original": "3.3.3 Kiểm tra tương quan để chọn độ trễ và tô-pô trạm lân cận",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/525",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Sau khi nhận diện sự thay đổi phân phối của P224 giữa các giai đoạn dữ liệu, bước tiếp theo là kiểm tra quan hệ giữa P224 và bốn trạm thành phần P474, P476, P478 và P480. Phân tích này nhằm xác định các trạm lân cận có cơ sở để được đưa vào mô hình như một nguồn thông tin không gian hay không, thay vì chỉ sử dụng chuỗi P224 như một biến đơn lẻ. Kết quả tương quan được dùng như một căn cứ mô hình hóa ban đầu; mức đóng góp thực tế của nhóm thông tin này sẽ được kiểm chứng trong Chương 3.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/526",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Hàm tự tương quan của P224 cao ở độ trễ 1 bước, 48 bước và vẫn duy trì ở mức cần xem xét ở độ trễ 336 bước. Các mốc này lần lượt phản ánh trạng thái rất gần, cùng thời điểm của ngày trước và cùng thời điểm của tuần trước. Vì vậy, nhóm đặc trưng trễ được đưa riêng vào GRU và nhánh tự hồi quy để tận dụng bộ nhớ trực tiếp của chuỗi phụ tải.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/527",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Hình 2.7 Biểu đồ ACF và PACF của P224 dùng để xác định các độ trễ 1 bước, 48 bước và 336 bước",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "#/texts/528",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Từ ACF/PACF có thể hình thành giả thuyết rằng nhóm đặc trưng trễ là nguồn thông tin nền quan trọng của bài toán. Đồng thời, tương quan chéo giữa P224 với P474 và P478 gợi ý rằng quan hệ trạm lân cận cũng cần được đưa vào mô hình để kiểm chứng trong phần thực nghiệm.",
+            "source_language": "vi",
+            "bbox": null,
+            "confidence": null,
+            "material_id": "6a0ed9eb455165de1b01120e",
+            "doc_name": "DeAn_ST-TopoKAN_final_ready.docx",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          }
+        ]
+      }
+    ],
+    "confidence": 0.7244,
+    "was_refused": true,
+    "refusal_reason": "claim_verification_contradicted",
+    "reasoning_path": [
+      {
+        "step_type": "retrieve",
+        "entities": [],
+        "relations": [],
+        "entity_ids": [],
+        "relation_ids": [],
+        "confidence": 0.383333336,
+        "description": "Retrieved 57 relevant chunks from 1 documents: DeAn_ST-TopoKAN_final_ready.docx"
+      },
+      {
+        "step_type": "traverse",
+        "entities": [
+          "KAN",
+          "GRU",
+          "P224",
+          "P474",
+          "P476"
+        ],
+        "relations": [
+          "references",
+          "co_located_with"
+        ],
+        "entity_ids": [
+          "entity:kan",
+          "entity:gru",
+          "entity:p224",
+          "entity:p474",
+          "entity:p476"
+        ],
+        "relation_ids": [],
+        "confidence": 0.792,
+        "description": "Traversed knowledge graph: KAN, GRU, P224, P474, P476 via references, co_located_with"
+      },
+      {
+        "step_type": "synthesize",
+        "entities": [
+          "KAN",
+          "GRU",
+          "Kolmogorov–Arnold",
+          "P224",
+          "ST-TopoKAN"
+        ],
+        "relations": [],
+        "entity_ids": [
+          "entity:kan",
+          "entity:gru",
+          "entity:kolmogorov–arnold",
+          "entity:p224",
+          "entity:st-topokan"
+        ],
+        "relation_ids": [],
+        "confidence": 0.9946355223655701,
+        "description": "Synthesized answer from top 8 most relevant chunks"
+      }
+    ],
+    "coverage": {
+      "requested_count": 1,
+      "covered_count": 1,
+      "sources": [
+        {
+          "material_id": "6a0ed9eb455165de1b01120e",
+          "name": "DeAn_ST-TopoKAN_final_ready.docx",
+          "covered": true
+        }
+      ]
+    },
+    "agent_trace": {
+      "plan_type": "relation_trace",
+      "steps": [
+        {
+          "name": "plan_query",
+          "status": "completed",
+          "query": "Trạm P224 phụ thuộc vào những trạm lân cận nào?",
+          "tool": "planner",
+          "duration_ms": null,
+          "sources_requested": 1,
+          "sources_covered": null,
+          "evidence_count": null,
+          "warning": "relation_trace",
+          "metadata": {
+            "sub_question_count": 1,
+            "iteration": 0,
+            "llm_planner_enabled": false,
+            "sub_questions": [
+              {
+                "text": "What direct textual evidence explains the relationship in: Trạm P224 phụ thuộc vào những trạm lân cận nào?",
+                "tool": "retrieve_text",
+                "critical": true
+              }
+            ]
+          }
+        },
+        {
+          "name": "retrieve_evidence",
+          "status": "completed",
+          "query": null,
+          "tool": "retriever_director",
+          "duration_ms": null,
+          "sources_requested": null,
+          "sources_covered": null,
+          "evidence_count": 57,
+          "warning": null,
+          "metadata": {
+            "iteration": 0,
+            "queries": 1
+          }
+        },
+        {
+          "name": "crag_triage",
+          "status": "completed",
+          "query": null,
+          "tool": "crag_critic",
+          "duration_ms": null,
+          "sources_requested": null,
+          "sources_covered": null,
+          "evidence_count": 57,
+          "warning": "weak_evidence",
+          "metadata": {
+            "correct": 14,
+            "ambiguous": 7,
+            "incorrect": 36
+          }
+        },
+        {
+          "name": "rerank_evidence",
+          "status": "completed",
+          "query": null,
+          "tool": null,
+          "duration_ms": null,
+          "sources_requested": null,
+          "sources_covered": null,
+          "evidence_count": 8,
+          "warning": null,
+          "metadata": null
+        },
+        {
+          "name": "synthesize_answer",
+          "status": "completed",
+          "query": null,
+          "tool": "synthesizer",
+          "duration_ms": null,
+          "sources_requested": null,
+          "sources_covered": null,
+          "evidence_count": 8,
+          "warning": null,
+          "metadata": null
+        },
+        {
+          "name": "repair_answer",
+          "status": "completed",
+          "query": null,
+          "tool": "synthesizer",
+          "duration_ms": null,
+          "sources_requested": null,
+          "sources_covered": null,
+          "evidence_count": 8,
+          "warning": null,
+          "metadata": {
+            "unsupported_sentence_count": 0,
+            "invalid_citation_count": 0
+          }
+        },
+        {
+          "name": "verify_claims",
+          "status": "completed",
+          "query": null,
+          "tool": "guardrails",
+          "duration_ms": null,
+          "sources_requested": null,
+          "sources_covered": null,
+          "evidence_count": 43,
+          "warning": "Answer appears to conflict with retrieved evidence.",
+          "metadata": {
+            "verdict": "contradicted",
+            "unsupported_sentence_count": 0,
+            "invalid_citation_count": 0,
+            "answer_repair_attempted": true
+          }
+        }
+      ],
+      "repair_attempted": false,
+      "verification": {
+        "verdict": "contradicted",
+        "confidence": 0.8888888888888888,
+        "warning": "Answer appears to conflict with retrieved evidence.",
+        "unsupported_sentence_count": 0,
+        "invalid_citation_count": 0,
+        "repair_attempted": true
+      }
+    },
+    "sentence_coverage": null,
+    "used_entity_ids": [],
+    "used_relation_ids": []
+  },
+  "error": null
+}

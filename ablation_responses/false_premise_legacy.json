@@ -1,0 +1,239 @@
+{
+  "success": true,
+  "message": "Query answered successfully",
+  "data": {
+    "answer": "Tiền đề không chính xác:[1]. Mật khẩu admin của hệ thống không được tìm thấy trong các tài liệu cung cấp[1].",
+    "answer_language": "vi",
+    "query_language": "vi",
+    "translated_query": null,
+    "source_languages": [
+      "en",
+      "vi"
+    ],
+    "citations": [
+      {
+        "doc_id": "6a124eae48a253a8162ee23b",
+        "doc_name": "handwriting_good.png",
+        "page": 1,
+        "pages": [
+          1
+        ],
+        "block_id": "blk-9a15c4c5d629",
+        "block_type": "paragraph",
+        "snippet_original": "2) Hệ thống nên đọc được các ý chính và confidence cao. 3) Nếu ảnh mờ hoặc tối thì phải từ chối xử lý.",
+        "snippet_translated": null,
+        "bbox": {
+          "x1": 113.0,
+          "y1": 285.0899677650968,
+          "x2": 1153.0,
+          "y2": 461.0
+        },
+        "role": "primary",
+        "source_language": "vi",
+        "confidence": 0.5833333,
+        "evidence_blocks": [
+          {
+            "block_id": "blk-39625ebcd10f",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "Ghi chú kiểm thử handwriting pipeline: tay rõ ràng, đủ sáng, không bị nhòe. 1) Chữ viết",
+            "source_language": "vi",
+            "bbox": {
+              "x1": 121.0,
+              "y1": 82.0,
+              "x2": 990.0,
+              "y2": 251.0
+            },
+            "confidence": 0.8427618524039633,
+            "material_id": "6a124eae48a253a8162ee23b",
+            "doc_name": "handwriting_good.png",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-9a15c4c5d629",
+            "block_type": "paragraph",
+            "page": 1,
+            "snippet_original": "2) Hệ thống nên đọc được các ý chính và confidence cao. 3) Nếu ảnh mờ hoặc tối thì phải từ chối xử lý.",
+            "source_language": "vi",
+            "bbox": {
+              "x1": 113.0,
+              "y1": 285.0899677650968,
+              "x2": 1153.0,
+              "y2": 461.0
+            },
+            "confidence": 0.7166310279341657,
+            "material_id": "6a124eae48a253a8162ee23b",
+            "doc_name": "handwriting_good.png",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          }
+        ]
+      },
+      {
+        "doc_id": "6a1248b748a253a8162ee179",
+        "doc_name": "report_vn.pdf",
+        "page": 1,
+        "pages": [
+          1,
+          2
+        ],
+        "block_id": "blk-8999a585a884",
+        "block_type": "paragraph",
+        "snippet_original": "A. Kiem tra chat lugng khong Anh can du rang: Neu chat qua mo, do nghieng nho va chu in ro sang; thong nen tu choi xu ly thay vi tao cau tra Idi sai. luong thap, he B. Pipeline de xuat Buoc mot Ia kiem tra chat luong anh: Buoc hai Ia chay ' EasyOCR Buoc ba Ia luru block OCR va dua vao vector database de phuc VU truy van: van mau Truy C. Nguoi dung co the hoi: tai lieu nay noi ve muc tieu gi, pipeline OCR gom nhung buoc nao, hoac dieu kien tu choi anh kem chat luong Ia gi.",
+        "snippet_translated": null,
+        "bbox": {
+          "x1": 97.0,
+          "y1": 229.0,
+          "x2": 970.0,
+          "y2": 626.0
+        },
+        "role": "supporting",
+        "source_language": "en",
+        "confidence": 0.4047619,
+        "evidence_blocks": [
+          {
+            "block_id": "blk-1f0f0baa25e3",
+            "block_type": "heading",
+            "page": 1,
+            "snippet_original": "Trang Collection_B/scan_clearpng",
+            "source_language": "en",
+            "bbox": {
+              "x1": 76.0,
+              "y1": 1176.0,
+              "x2": 331.0,
+              "y2": 1197.0
+            },
+            "confidence": 0.8979779645305108,
+            "material_id": "6a1248b748a253a8162ee179",
+            "doc_name": "report_vn.pdf",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-4fc16a025630",
+            "block_type": "heading",
+            "page": 2,
+            "snippet_original": "Phu luc OCR Quy trinh xi Iy",
+            "source_language": "vi",
+            "bbox": {
+              "x1": 90.41625394677735,
+              "y1": 112.10030797009324,
+              "x2": 711.0,
+              "y2": 181.0
+            },
+            "confidence": 0.677927241105053,
+            "material_id": "6a1248b748a253a8162ee179",
+            "doc_name": "report_vn.pdf",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-8999a585a884",
+            "block_type": "paragraph",
+            "page": 2,
+            "snippet_original": "A. Kiem tra chat lugng khong Anh can du rang: Neu chat qua mo, do nghieng nho va chu in ro sang; thong nen tu choi xu ly thay vi tao cau tra Idi sai. luong thap, he B. Pipeline de xuat Buoc mot Ia kiem tra chat luong anh: Buoc hai Ia chay ' EasyOCR Buoc ba Ia luru block OCR va dua vao vector database de phuc VU truy van: van mau Truy C. Nguoi dung co the hoi: tai lieu nay noi ve muc tieu gi, pipeline OCR gom nhung buoc nao, hoac dieu kien tu choi anh kem chat luong Ia gi.",
+            "source_language": "vi",
+            "bbox": {
+              "x1": 97.0,
+              "y1": 229.0,
+              "x2": 970.0,
+              "y2": 626.0
+            },
+            "confidence": 0.7357185664316682,
+            "material_id": "6a1248b748a253a8162ee179",
+            "doc_name": "report_vn.pdf",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          },
+          {
+            "block_id": "blk-c96261bf9fb7",
+            "block_type": "heading",
+            "page": 2,
+            "snippet_original": "Trang 2 - PDF scan tieng Viet",
+            "source_language": "en",
+            "bbox": {
+              "x1": 93.1057085362868,
+              "y1": 1484.1747742652155,
+              "x2": 348.0,
+              "y2": 1517.8252257347845
+            },
+            "confidence": 0.7701447373833277,
+            "material_id": "6a1248b748a253a8162ee179",
+            "doc_name": "report_vn.pdf",
+            "audio_start_seconds": null,
+            "audio_end_seconds": null,
+            "audio_file": null
+          }
+        ]
+      }
+    ],
+    "confidence": 0.7671,
+    "was_refused": false,
+    "refusal_reason": null,
+    "reasoning_path": [
+      {
+        "step_type": "retrieve",
+        "entities": [],
+        "relations": [],
+        "entity_ids": [],
+        "relation_ids": [],
+        "confidence": 0.44746752800000006,
+        "description": "Retrieved 19 relevant chunks from 3 documents: workbook_multi.xlsx, report_vn.pdf, handwriting_good.png"
+      },
+      {
+        "step_type": "synthesize",
+        "entities": [],
+        "relations": [],
+        "entity_ids": [],
+        "relation_ids": [],
+        "confidence": 0.0,
+        "description": "Synthesized answer from top 5 most relevant chunks"
+      }
+    ],
+    "coverage": null,
+    "agent_trace": null,
+    "sentence_coverage": {
+      "enabled": true,
+      "total_sentences": 2,
+      "supported_count": 0,
+      "partial_count": 2,
+      "unsupported_count": 0,
+      "dropped_count": 0,
+      "coverage_ratio": 0.5,
+      "refused": false,
+      "sentences": [
+        {
+          "index": 0,
+          "text": "Tiền đề không chính xác:[1].",
+          "status": "partial",
+          "score": 0.5002560498609364,
+          "supporting_block_ids": [
+            "blk-9a15c4c5d629",
+            "blk-8999a585a884"
+          ],
+          "citation_refs": []
+        },
+        {
+          "index": 1,
+          "text": "Mật khẩu admin của hệ thống không được tìm thấy trong các tài liệu cung cấp[1].",
+          "status": "partial",
+          "score": 0.500084985796184,
+          "supporting_block_ids": [
+            "blk-8999a585a884",
+            "blk-9a15c4c5d629"
+          ],
+          "citation_refs": []
+        }
+      ]
+    },
+    "used_entity_ids": [],
+    "used_relation_ids": []
+  },
+  "error": null
+}

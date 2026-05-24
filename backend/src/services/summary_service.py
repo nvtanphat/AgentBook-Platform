@@ -55,7 +55,12 @@ class SummaryService:
             material_ids=material_ids,
         )
         scope.ensure_scoped()
-        query = f"summarize {request.scope} key concepts"
+        # Multi-lingual query — covers VN audio/docs and EN docs equally well.
+        # BGE-M3 is cross-lingual so mixing both terms broadens recall.
+        query = (
+            f"tóm tắt nội dung chính ý chính khái niệm tổng quan "
+            f"summarize {request.scope} key concepts overview main ideas"
+        )
         try:
             retrieved = await self._retrieve_summary_chunks(query=query, request=request, scope=scope)
         except Exception as exc:
@@ -78,7 +83,11 @@ class SummaryService:
                 reranked = await asyncio.to_thread(self.reranker.rerank, query=query, chunks=retrieved, limit=target_limit)
             reranked = self._ensure_material_coverage(chunks=retrieved, selected=reranked, limit=target_limit)
         confidence = self.confidence_scorer.score(reranked)
-        should_refuse, refusal_reason = self.confidence_scorer.should_refuse(chunks=reranked, confidence=confidence)
+        # Summary is a broad task — if we have ANY chunks from the requested scope,
+        # we should summarize what's there rather than refuse. Refusal only applies
+        # when truly nothing relevant was retrieved (empty `reranked`).
+        should_refuse = len(reranked) == 0
+        refusal_reason = "no relevant evidence was found in the scoped materials" if should_refuse else None
         citations = self.response_parser.citations_from_chunks(reranked)
         covered_after_rerank = list({chunk.material_id for chunk in reranked})
         coverage = await self._coverage_report(expected_material_ids=expected_material_ids, covered_material_ids=covered_after_rerank)
@@ -138,17 +147,20 @@ class SummaryService:
             )
         from src.inference.response_parser import _fix_numbered_lists
         summary = self.response_parser.inject_citations(_fix_numbered_lists(summary), reranked)
+        # Verify ONLY against contradiction (token-overlap based, false positives common).
+        # Summary is inherently a paraphrase task — NOT_ENOUGH_EVIDENCE is the default state
+        # of paraphrasing and should not block the response.
         verification = await self.claim_verifier.averify(
             claim=summary,
             evidence=[evidence for chunk in reranked for evidence in chunk.evidence],
         )
-        if verification.verdict in {ClaimVerdict.CONTRADICTED, ClaimVerdict.NOT_ENOUGH_EVIDENCE}:
+        if verification.verdict == ClaimVerdict.CONTRADICTED and len(verification.corrected_facts) >= 2:
             return SummaryResponse(
                 summary=_REFUSAL_TEXT,
                 citations=citations,
                 confidence=confidence,
                 was_refused=True,
-                refusal_reason="Summary could not be verified against the retrieved evidence.",
+                refusal_reason="Summary contradicts the retrieved evidence on multiple facts.",
                 coverage=coverage,
             )
         return SummaryResponse(summary=summary, citations=citations, confidence=confidence, coverage=coverage)

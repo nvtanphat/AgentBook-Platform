@@ -115,6 +115,11 @@ class FakeClaimVerifier:
         )
 
 
+class FakeCRAGEvaluator:
+    def evaluate(self, *, chunks):
+        return chunks
+
+
 class RepairingClaimVerifier:
     def __init__(self) -> None:
         self.calls = 0
@@ -132,7 +137,18 @@ class RepairingClaimVerifier:
 
 class FakeEngine:
     def __init__(self) -> None:
-        self.settings = SimpleNamespace(rerank_input_k=4, final_top_k=4)
+        self.settings = SimpleNamespace(
+            rerank_input_k=4,
+            final_top_k=4,
+            crag_correct_threshold=0.55,
+            crag_incorrect_threshold=0.25,
+            agentic_max_retrieval_iterations=2,
+            agentic_critic_activation_confidence=0.65,
+            agentic_anaphora_resolution_enabled=False,
+            agentic_planner_llm_enabled=False,
+            multi_query_enabled=False,
+            visual_embedding_enabled=False,
+        )
         self.intent_classifier = FakeIntentClassifier()
         self.query_router = QueryRouter()
         self.query_rewriter = object()
@@ -144,6 +160,8 @@ class FakeEngine:
         self.response_parser = FakeResponseParser()
         self.llm = FakeLLM()
         self.claim_verifier = FakeClaimVerifier()
+        self.crag_evaluator = FakeCRAGEvaluator()
+        self.visual_provider = None
 
     async def _answer_chitchat(self, query: str):
         raise AssertionError("not used")
@@ -219,7 +237,10 @@ def test_agentic_service_returns_trace_coverage_and_emits_steps() -> None:
     assert response.coverage is not None
     assert response.coverage.covered_count == 2
     assert "plan_query" in emitted
-    assert "retrieve_per_source" in emitted
+    # New coordinating engine merges per-source retrieval into the
+    # RetrieverDirector — the explicit step is "retrieve_evidence".
+    assert "retrieve_evidence" in emitted
+    assert "crag_triage" in emitted
     assert "rerank_evidence" in emitted
     assert "verify_claims" in emitted
 

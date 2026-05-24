@@ -1,5 +1,6 @@
 import { ReactNode, createContext, useContext, useEffect, useMemo, useState } from "react";
 import { Citation, MaterialUploadResponse, QueryResponse } from "../api/client";
+import { useAuth } from "./auth";
 
 const WORKSPACE_STORAGE_KEY = "prism.workspace.v1";
 const LEGACY_WORKSPACE_STORAGE_KEY = "agentbook.workspace.v2";
@@ -58,6 +59,10 @@ type WorkspaceContextValue = {
   setActiveQueryContext: (context: ActiveQueryContext | null) => void;
   chatDraft: string | null;
   setChatDraft: (draft: string | null) => void;
+  // When true, GraphTab will fetch a focused subgraph filtered to entities
+  // that back the last answer (using citations as evidence anchors).
+  graphFocusOnAnswer: boolean;
+  setGraphFocusOnAnswer: (value: boolean) => void;
   sourceScopeMode: "all" | "selected";
   selectedSourceIds: string[];
   setSourceScopeMode: (mode: "all" | "selected") => void;
@@ -106,12 +111,22 @@ function readWorkspaceStorage(): WorkspaceSettings {
 }
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
   const [workspace, setWorkspace] = useState<WorkspaceSettings>(() => readWorkspaceStorage());
+
+  // When logged-in user changes, sync owner_id so scoped queries use the auth user
+  useEffect(() => {
+    if (user && user.user_id !== workspace.ownerId) {
+      setWorkspace((prev) => ({ ...prev, ownerId: user.user_id, collectionId: "", collectionName: "" }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.user_id]);
   const [materials, setMaterials] = useState<UploadedMaterial[]>(() => readStorage(MATERIALS_STORAGE_KEY, []));
   const [selectedCitation, setSelectedCitation] = useState<Citation | null>(null);
   const [activeCitations, setActiveCitations] = useState<Citation[]>([]);
   const [activeQueryContext, setActiveQueryContext] = useState<ActiveQueryContext | null>(null);
   const [chatDraft, setChatDraft] = useState<string | null>(null);
+  const [graphFocusOnAnswer, setGraphFocusOnAnswer] = useState<boolean>(false);
   const [readySources, setReadySourcesState] = useState<ReadySourceSummary[]>([]);
   const [sourceScopeMode, setSourceScopeModeState] = useState<"all" | "selected">(() => {
     const stored = readStorage<{ mode: string; ids: string[] }>(SOURCE_SCOPE_STORAGE_KEY, { mode: "all", ids: [] });
@@ -218,6 +233,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       setActiveQueryContext,
       chatDraft,
       setChatDraft,
+      graphFocusOnAnswer,
+      setGraphFocusOnAnswer,
       sourceScopeMode,
       selectedSourceIds,
       setSourceScopeMode,
@@ -227,7 +244,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       readySources,
       setReadySources,
     };
-  }, [activeCitations, activeQueryContext, chatDraft, materials, readySources, selectedCitation, selectedSourceIds, sourceScopeMode, workspace]);
+  }, [activeCitations, activeQueryContext, chatDraft, graphFocusOnAnswer, materials, readySources, selectedCitation, selectedSourceIds, sourceScopeMode, workspace]);
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;
 }

@@ -21,19 +21,62 @@ from src.processing.types import BBox
 
 logger = logging.getLogger(__name__)
 
-# Prompt used for VLM captioning. Short and structured so the model stays focused.
+# VLM prompt — engineered for stylized/decorative Vietnamese text.
+# Key tactics:
+#   - Force structured Markdown output (sections + bullets) — easier for chunking
+#   - Explicit Vietnamese accent handling — model often drops diacritics
+#   - Reject hallucination ("if unsure, write [?]")
+#   - List terms separately to avoid run-on gibberish
 _CAPTION_PROMPT_VI = (
-    "Read all text visible in this image. "
-    "List every label, term, number, formula, and step you can see. "
-    "Respond in Vietnamese. Format as a structured list. "
-    "Only report what is actually shown, do not infer."
+    "Bạn là OCR + visual analyzer chuyên nghiệp. Đọc HÌNH ảnh này và trích xuất:\n"
+    "\n"
+    "1. **Tiêu đề chính** (heading lớn nhất)\n"
+    "2. **Các bước / mục** (numbered list nếu có)\n"
+    "3. **Thuật ngữ + định nghĩa** (term: definition)\n"
+    "4. **Số liệu / công thức** nếu xuất hiện\n"
+    "\n"
+    "Quy tắc QUAN TRỌNG:\n"
+    "- Viết bằng tiếng Việt CHUẨN có đầy đủ dấu (sắc, huyền, hỏi, ngã, nặng).\n"
+    "- KHÔNG ghép từ vô nghĩa. Nếu không đọc được rõ, ghi [không rõ] thay vì đoán.\n"
+    "- KHÔNG suy diễn. Chỉ ghi những gì thực sự nhìn thấy.\n"
+    "- Format Markdown: ## tiêu đề, - bullet, **bold** cho thuật ngữ.\n"
+    "- Mỗi mục một dòng riêng. Tránh chạy chữ liền nhau.\n"
 )
 _CAPTION_PROMPT_EN = (
-    "Read all text visible in this image. "
-    "List every label, term, number, formula, and step you can see. "
-    "Format as a structured list. "
-    "Only report what is actually shown, do not infer."
+    "You are a professional OCR + visual analyzer. Read this IMAGE and extract:\n"
+    "\n"
+    "1. **Main title** (largest heading)\n"
+    "2. **Steps / sections** (numbered list if present)\n"
+    "3. **Terms + definitions** (term: definition)\n"
+    "4. **Numbers / formulas** if shown\n"
+    "\n"
+    "IMPORTANT rules:\n"
+    "- If unsure, write [unclear] rather than guess.\n"
+    "- Do NOT infer. Report only what is visually present.\n"
+    "- Format as Markdown: ## title, - bullet, **bold** for terms.\n"
+    "- One item per line. Avoid run-on text.\n"
 )
+
+
+def _looks_like_gibberish(text: str) -> bool:
+    """Detect VLM hallucination / garbled output:
+       - Long runs of letters without spaces (>15 chars, no space)
+       - Mixed scripts mid-word
+       - Very low space-to-char ratio
+    """
+    if not text or len(text) < 30:
+        return False
+    # Check for word-monster: 15+ letters without space
+    long_runs = re.findall(r"[a-zA-ZÀ-ỹ]{15,}", text)
+    if len(long_runs) >= 2:
+        return True
+    # Check space ratio for non-Asian text
+    if re.search(r"[a-zA-Z]", text):
+        words = text.split()
+        avg_word_len = sum(len(w) for w in words) / max(len(words), 1)
+        if avg_word_len > 12:  # words too long on average
+            return True
+    return False
 
 # Vision models supported by Ollama, tried in order.
 _OLLAMA_VISION_MODELS = ["minicpm-v", "qwen2-vl", "llava", "moondream", "bakllava", "llava-phi3"]
@@ -48,10 +91,14 @@ class FigureCaptioner:
         ollama_base_url: str = "http://localhost:11434",
         language: str = "vi",
         ocr_fallback: bool = True,
+        timeout: float = 300.0,
+        image_max_side_px: int = 1024,
     ) -> None:
         self.ollama_base_url = ollama_base_url.rstrip("/")
         self.language = language
         self.ocr_fallback = ocr_fallback
+        self.timeout = timeout
+        self.image_max_side_px = image_max_side_px
         self._available_model: str | None = None
         self._model_checked: bool = False
         self._ocr_engine = None  # lazy-init, reused across all figures
@@ -75,10 +122,40 @@ class FigureCaptioner:
 
         bbox coordinates are in Docling's page coordinate system (points).
         """
+        caption, _ = self.caption_page_region_with_path(
+            page_image_path, bbox, page_width=page_width, page_height=page_height
+        )
+        return caption
+
+    def caption_page_region_with_path(
+        self,
+        page_image_path: Path,
+        bbox: BBox,
+        *,
+        page_width: int,
+        page_height: int,
+    ) -> tuple[str, Path | None]:
+        """Same as caption_page_region but also returns the crop file path.
+
+        The crop path is needed by the visual embedding pipeline to read the
+        image bytes for SigLIP. Returns (caption, crop_path | None).
+        """
         cropped = self._crop_region(page_image_path, bbox, page_width=page_width, page_height=page_height)
         if cropped is None:
-            return ""
-        return self._caption(image_path=cropped)
+            return "", None
+        return self._caption(image_path=cropped), cropped
+
+    def unload(self) -> None:
+        """Release lazy-loaded resources (OCR engine) to free RAM.
+
+        Safe to call multiple times. Should be called after all figures in a
+        document have been captioned, before the visual embedding step starts.
+        """
+        import gc
+        with self._ocr_engine_lock:
+            if self._ocr_engine is not None:
+                self._ocr_engine = None
+        gc.collect()
 
     # ── Internal ──────────────────────────────────────────────────────────────
 
@@ -108,7 +185,7 @@ class FigureCaptioner:
             return ""
 
         prompt = _CAPTION_PROMPT_VI if self.language == "vi" else _CAPTION_PROMPT_EN
-        image_b64 = self._encode_image_resized(image_path)
+        image_b64 = self._encode_image_resized(image_path, max_side=self.image_max_side_px)
 
         try:
             response = httpx.post(
@@ -120,7 +197,7 @@ class FigureCaptioner:
                     "stream": False,
                     "options": {"temperature": 0.1, "num_predict": 512},
                 },
-                timeout=300.0,
+                timeout=self.timeout,
             )
             response.raise_for_status()
             data = response.json()

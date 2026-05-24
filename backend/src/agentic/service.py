@@ -1,8 +1,30 @@
+"""AgenticCoordinatingEngine — multi-agent, multi-tool RAG orchestrator.
+
+This module implements the blackboard / shared-state coordination pattern
+described in the AgentBook plan. The previous `AgenticRagService` ran a
+linear pipeline and only fell back to a critic on low confidence; this
+engine instead drives a bounded async loop over specialist agents, each
+mutating a single shared `AgentState`.
+
+Loop sketch:
+  1. PlannerAgent          — decompose / re-decompose the query.
+  2. RetrieverDirectorAgent — dispatch sub-questions to the right tools.
+  3. CRAGCriticAgent       — triage evidence (CORRECT/AMBIGUOUS/INCORRECT).
+  4. (loop) if evidence weak and iteration budget left → planner replans.
+  5. SynthesizerAgent      — produce a grounded draft answer.
+  6. GuardrailsAgent       — NLI verification.
+  7. (loop) if guardrails fail → synthesizer repairs once.
+  8. Build QueryResponse + AgentTrace.
+
+Backward compatibility: `AgenticRagService` is kept as a thin wrapper that
+delegates `.answer(...)` to the engine. Existing callers
+(`QueryService.agentic_rag`) continue to work without changes.
+"""
+
 from __future__ import annotations
 
 import asyncio
 import inspect
-import json
 import logging
 import re
 import time
@@ -11,9 +33,30 @@ from dataclasses import dataclass
 
 from beanie import PydanticObjectId
 
-from src.agentic.planner import AgenticPlanner, AgenticSubQuestion
+from src.agentic.agents import (
+    CRAGCriticAgent,
+    CriticAgent,
+    GuardrailsAgent,
+    PlannerAgent,
+    RetrieverDirectorAgent,
+    SynthesizerAgent,
+)
+from src.agentic.planner import AgenticPlanner
+from src.agentic.state import AgentState
+from src.agentic.tools import (
+    GraphRelationSearchTool,
+    HybridTextSearchTool,
+    NLIVerifierTool,
+    TextCleanerTool,
+    VisualImageSearchTool,
+)
 from src.guardrails.claim_verifier import ClaimVerdict
-from src.inference.inference_engine import PUBLIC_GENERATION_ERROR, PUBLIC_RETRIEVAL_ERROR, REFUSAL_ANSWER, InferenceEngine
+from src.inference.inference_engine import (
+    PUBLIC_GENERATION_ERROR,
+    PUBLIC_RETRIEVAL_ERROR,
+    REFUSAL_ANSWER,
+    InferenceEngine,
+)
 from src.inference.intent_classifier import QueryIntent
 from src.inference.reasoning_path_builder import build_reasoning_path
 from src.models.common import PipelineStatus
@@ -33,38 +76,79 @@ from src.schemas.query import (
 logger = logging.getLogger(__name__)
 
 AgentStepCallback = Callable[[AgentTraceStep], Awaitable[None] | None]
-_CITATION_RE = re.compile(r"\[(\d+)\]")
-_SENTENCE_RE = re.compile(r"[^.!?\n]+[.!?]?")
 
 
 @dataclass(frozen=True)
-class EvidenceQualityReport:
-    sub_questions_requested: int
-    sub_questions_covered: int
-    sources_requested: int
-    sources_covered: int
-    evidence_count: int
-    missing_sub_questions: list[str]
+class _CoordinatorConfig:
+    """Snapshot of orchestration-level settings, sourced from engine.settings.
+
+    All thresholds and limits come from configuration — never hardcode here.
+    """
+
+    max_iterations: int
+    critic_activation_confidence: float
+    crag_correct_threshold: float
+    crag_incorrect_threshold: float
+    enable_visual_tool: bool
+    anaphora_resolution_enabled: bool
+    planner_llm_enabled: bool
 
 
-@dataclass(frozen=True)
-class AnswerGroundingReport:
-    unsupported_sentence_count: int
-    invalid_citation_count: int
+class AgenticCoordinatingEngine:
+    """Dynamic coordinator that drives the specialist agents over `AgentState`."""
 
-    @property
-    def passed(self) -> bool:
-        return self.unsupported_sentence_count == 0 and self.invalid_citation_count == 0
-
-
-class AgenticRagService:
-    """MVP agentic orchestration around the existing RAG engine."""
+    _ANAPHORA_RE = re.compile(
+        r"\b(nó|chúng|họ|điều này|điều đó|vấn đề này|khái niệm này|cái này|cái đó|"
+        r"it\b|they\b|them\b|this\b|that\b|these\b|those\b|"
+        r"the concept|the topic|the above|the same|the latter|the former)\b",
+        re.IGNORECASE,
+    )
 
     def __init__(self, *, engine: InferenceEngine) -> None:
         self.engine = engine
         self.planner = AgenticPlanner()
         self._rerank_fallback_semaphore = asyncio.Semaphore(1)
 
+        # ── Tool layer ────────────────────────────────────────────────────
+        self.text_tool = HybridTextSearchTool(retriever=engine.retriever)
+        self.graph_tool = GraphRelationSearchTool(
+            graph_retriever=engine.graph_retriever, engine=engine,
+        )
+        self.visual_tool = VisualImageSearchTool(
+            retriever=engine.retriever, visual_provider=getattr(engine, "visual_provider", None),
+        )
+        self.cleaner_tool = TextCleanerTool()
+        self.nli_tool = NLIVerifierTool(verifier=engine.claim_verifier)
+
+        # ── Agent layer ───────────────────────────────────────────────────
+        self.agent_planner = PlannerAgent(llm=engine.llm, planner=self.planner)
+        self.agent_director = RetrieverDirectorAgent(
+            text_tool=self.text_tool, graph_tool=self.graph_tool,
+        )
+        self.agent_crag = CRAGCriticAgent(
+            evaluator=engine.crag_evaluator,
+            cleaner=self.cleaner_tool,
+            correct_threshold=engine.settings.crag_correct_threshold,
+            incorrect_threshold=engine.settings.crag_incorrect_threshold,
+        )
+        self.agent_synthesizer = SynthesizerAgent(llm=engine.llm, engine=engine)
+        self.agent_guardrails = GuardrailsAgent(verifier_tool=self.nli_tool)
+        self.agent_critic = CriticAgent(llm=engine.llm)
+
+        # ── Coordinator config ────────────────────────────────────────────
+        self.config = _CoordinatorConfig(
+            max_iterations=max(1, getattr(engine.settings, "agentic_max_retrieval_iterations", 2) + 1),
+            critic_activation_confidence=float(
+                getattr(engine.settings, "agentic_critic_activation_confidence", 0.65)
+            ),
+            crag_correct_threshold=engine.settings.crag_correct_threshold,
+            crag_incorrect_threshold=engine.settings.crag_incorrect_threshold,
+            enable_visual_tool=bool(getattr(engine.settings, "visual_embedding_enabled", False)),
+            anaphora_resolution_enabled=bool(getattr(engine.settings, "agentic_anaphora_resolution_enabled", True)),
+            planner_llm_enabled=bool(getattr(engine.settings, "agentic_planner_llm_enabled", False)),
+        )
+
+    # ── Public entrypoint ────────────────────────────────────────────────
     async def answer(
         self,
         *,
@@ -75,6 +159,7 @@ class AgenticRagService:
         memory_context: str | None = None,
         on_step: AgentStepCallback | None = None,
     ) -> QueryResponse:
+        # 0) Intent classification — chitchat / off-topic short-circuits.
         intent = await self.engine.intent_classifier.classify(query)
         if intent == QueryIntent.CHITCHAT:
             response = await self.engine._answer_chitchat(query)
@@ -91,585 +176,436 @@ class AgenticRagService:
             )
             return response
 
-        # Anaphora resolution: rewrite pronouns/vague references using conversation context
-        resolved_query = query
-        if getattr(self.engine.settings, "agentic_anaphora_resolution_enabled", True) and memory_context:
-            resolved_query = await self._resolve_anaphora(query=query, memory_context=memory_context)
-            if resolved_query != query:
-                logger.info(
-                    "Anaphora resolved",
-                    extra={"original": query[:80], "resolved": resolved_query[:80], "owner_id": scope.owner_id},
-                )
-
+        # 1) Build initial state.
+        resolved_query = await self._maybe_resolve_anaphora(query=query, memory_context=memory_context, scope=scope)
         route = self.engine.query_router.route(resolved_query)
         expected_material_ids = scope.material_ids or await self._indexed_material_ids_for_scope(scope)
-        material_count = len(expected_material_ids)
-        if getattr(self.engine.settings, "agentic_planner_llm_enabled", False):
-            plan = await self.planner.build_with_llm(
-                query=resolved_query, route=route, material_count=material_count, llm=self.engine.llm
-            )
-        else:
-            plan = self.planner.build(query=resolved_query, route=route, material_count=material_count)
-        steps: list[AgentTraceStep] = []
-        await self._record_step(
-            steps,
-            AgentTraceStep(
-                name="plan_query",
-                status="completed",
-                query=query,
-                tool="planner",
-                sources_requested=material_count or None,
-                warning=plan.plan_type,
-                metadata={
-                    "sub_question_count": len(plan.sub_questions),
-                    "llm_planner_enabled": bool(getattr(self.engine.settings, "agentic_planner_llm_enabled", False)),
-                    "sub_questions": [item.model_dump() for item in plan.sub_questions],
-                },
-            ),
-            on_step,
+        processed = await self.engine.query_processor.process_async(
+            resolved_query, answer_language=answer_language,
+        )
+        use_multi_query = route.use_multi_query and bool(getattr(self.engine.settings, "multi_query_enabled", False))
+        original_query = getattr(processed, "original_query", resolved_query)
+        retrieval_queries = processed.retrieval_queries if use_multi_query else [original_query]
+
+        state = AgentState(
+            query=query,
+            resolved_query=resolved_query,
+            scope=scope,
+            memory_context=memory_context,
+            answer_language=processed.answer_language,
+            top_k=top_k,
+            expected_material_ids=list(expected_material_ids),
+            route=route,
+            processed_query=processed,
+            retrieval_queries=list(retrieval_queries),
+            use_multi_query=use_multi_query,
         )
 
         retrieval_limit = self.engine._scaled_limit(self.engine.settings.rerank_input_k, route)
-        final_limit = max(self.engine._scaled_limit(top_k or self.engine.settings.final_top_k, route), material_count or 1)
-        processed = await self.engine.query_processor.process_async(
-            resolved_query,
-            answer_language=answer_language,
+        # Only inflate final_limit for coverage when the user explicitly
+        # passed material_ids (= "answer using THESE docs"). Treating the
+        # full indexed-material set as a coverage floor bloated answers
+        # with 9+ chunks even when the user asked top_k=5.
+        user_pinned_materials = bool(scope.material_ids)
+        coverage_floor = len(expected_material_ids) if user_pinned_materials else 1
+        final_limit = max(
+            self.engine._scaled_limit(top_k or self.engine.settings.final_top_k, route),
+            coverage_floor,
         )
-        original_query = getattr(processed, "original_query", resolved_query)
-        use_multi_query = route.use_multi_query and bool(getattr(self.engine.settings, "multi_query_enabled", False))
-        retrieval_queries = processed.retrieval_queries if use_multi_query else [original_query]
 
-        retrieved: list[RetrievedChunk] = []
-        graph_chunks: list[RetrievedChunk] = []
-        try:
-            retrieved = await self._retrieve_multi_query(
-                queries=retrieval_queries,
-                scope=scope,
-                limit=retrieval_limit,
-                steps=steps,
-                step_name="retrieve_multi_query" if use_multi_query else "retrieve_text",
-                on_step=on_step,
-            )
-            if plan.use_per_source and expected_material_ids:
-                retrieved.extend(
-                    await self._retrieve_per_source(
-                        query=resolved_query,
-                        scope=scope,
-                        material_ids=expected_material_ids,
-                        limit=max(1, min(3, retrieval_limit)),
-                        steps=steps,
-                        on_step=on_step,
+        # ── Iterative retrieval loop ────────────────────────────────────
+        for iteration in range(self.config.max_iterations):
+            state.current_iteration = iteration
+            # 1.x) Plan / replan
+            try:
+                await self.agent_planner.act(state, use_llm=self.config.planner_llm_enabled)
+            except Exception as exc:
+                logger.warning("Planner failed — deterministic fallback used", extra={"error": str(exc)})
+                if state.route is not None:
+                    plan = self.planner.build(
+                        query=state.resolved_query or state.query,
+                        route=state.route,
+                        material_count=len(state.expected_material_ids),
                     )
-                )
-            if plan.sub_questions:
-                retrieved.extend(
-                    await self._retrieve_sub_questions(
-                        sub_questions=plan.sub_questions,
-                        scope=scope,
-                        limit=max(1, min(3, retrieval_limit)),
-                        steps=steps,
-                        on_step=on_step,
-                    )
-                )
-            if plan.use_graph:
-                graph_chunks = await self._trace_graph(query=resolved_query, scope=scope, steps=steps, priority=route.graph_priority, on_step=on_step)
-        except Exception as exc:
-            logger.error("Agentic retrieval failed", exc_info=True, extra={"owner_id": scope.owner_id, "error": str(exc)})
-            failure_step = AgentTraceStep(name="retrieve_text", status="failed", warning="retrieval_failed")
-            trace = AgentTrace(
-                plan_type=plan.plan_type,
-                steps=[*steps, failure_step],
-                repair_attempted=False,
-                verification=None,
-            )
-            await self._emit_step(failure_step, on_step)
-            return QueryResponse(
-                answer=REFUSAL_ANSWER,
-                answer_language=processed.answer_language,
-                query_language=processed.query_language,
-                translated_query=processed.translated_query,
-                source_languages=[],
-                citations=[],
-                confidence=0.0,
-                was_refused=True,
-                refusal_reason=PUBLIC_RETRIEVAL_ERROR,
-                agent_trace=trace,
-            )
+                    state.plan_type = plan.plan_type
+                    state.sub_questions = list(plan.sub_questions)
+                    state.use_graph = plan.use_graph
+                    state.use_per_source = plan.use_per_source
+                    state.use_multi_query = plan.use_multi_query
+                    state.requires_coverage = plan.requires_coverage
+            self._record_planning_step(state)
+            await self._emit_step(state.steps_history[-1], on_step)
 
-        candidates = dedupe_retrieved_chunks((graph_chunks + retrieved) if route.graph_priority else (retrieved + graph_chunks))
-        coverage = await self._coverage_report(expected_material_ids=expected_material_ids, chunks=candidates)
-        repair_attempted = False
-        if plan.requires_coverage and coverage.covered_count < coverage.requested_count:
-            repair_attempted = True
-            missing = [source.material_id for source in coverage.sources if not source.covered]
-            repaired = await self._retrieve_per_source(
-                query=resolved_query,
-                scope=scope,
-                material_ids=missing,
-                limit=max(2, min(4, retrieval_limit)),
-                steps=steps,
-                step_name="repair_retrieval",
-                on_step=on_step,
-            )
-            candidates = dedupe_retrieved_chunks([*candidates, *repaired])
-            coverage = await self._coverage_report(expected_material_ids=expected_material_ids, chunks=candidates)
-        elif plan.requires_coverage:
-            await self._record_step(
-                steps,
+            # 2.x) Retrieve via routed tools
+            try:
+                await self.agent_director.act(state, limit=retrieval_limit)
+            except Exception as exc:
+                logger.error(
+                    "Director retrieval failed",
+                    exc_info=True,
+                    extra={"owner_id": scope.owner_id, "error": str(exc)},
+                )
+                state.last_error = str(exc)
+                state.record_step(AgentTraceStep(name="retrieve_text", status="failed", warning="retrieval_failed"))
+                await self._emit_step(state.steps_history[-1], on_step)
+                return self._build_refusal_response(
+                    state, processed=processed, reason=PUBLIC_RETRIEVAL_ERROR,
+                )
+            state.record_step(
                 AgentTraceStep(
-                    name="verify_coverage",
-                    status="completed",
-                    sources_requested=coverage.requested_count,
-                    sources_covered=coverage.covered_count,
-                    evidence_count=len(candidates),
-                ),
-                on_step,
+                    name="retrieve_evidence",
+                    status="completed" if state.raw_evidence else "skipped",
+                    tool="retriever_director",
+                    evidence_count=len(state.raw_evidence),
+                    metadata={"iteration": iteration, "queries": len(state.retrieval_queries)},
+                )
+            )
+            await self._emit_step(state.steps_history[-1], on_step)
+
+            # 3.x) CRAG triage
+            await self.agent_crag.act(state)
+            state.record_step(
+                AgentTraceStep(
+                    name="crag_triage",
+                    status="completed" if state.cleaned_evidence else "skipped",
+                    tool="crag_critic",
+                    evidence_count=len(state.cleaned_evidence),
+                    warning="weak_evidence" if state.needs_more_evidence() else None,
+                    metadata={
+                        "correct": sum(1 for v in state.crag_verdicts if v.label.value == "correct"),
+                        "ambiguous": sum(1 for v in state.crag_verdicts if v.label.value == "ambiguous"),
+                        "incorrect": sum(1 for v in state.crag_verdicts if v.label.value == "incorrect"),
+                    },
+                )
+            )
+            await self._emit_step(state.steps_history[-1], on_step)
+
+            # Coverage report for tracing
+            state.coverage = await self._coverage_report(
+                expected_material_ids=state.expected_material_ids, chunks=state.cleaned_evidence,
             )
 
-        # Iterative retrieval with reflection: retry up to N times when sub-questions are still uncovered
-        max_iterations = max(1, getattr(self.engine.settings, "agentic_max_retrieval_iterations", 2))
-        evidence_quality = self._evidence_quality_report(
-            sub_questions=plan.sub_questions,
-            expected_material_ids=expected_material_ids,
-            chunks=candidates,
-        )
-        for iteration in range(max_iterations):
-            if not evidence_quality.missing_sub_questions:
+            if not state.needs_more_evidence() or iteration + 1 >= self.config.max_iterations:
                 break
-            if iteration == 0:
-                # First pass: re-retrieve the missing sub-questions directly
-                repair_attempted = True
-                repaired = await self._retrieve_sub_questions(
-                    sub_questions=[
-                        AgenticSubQuestion(text=text, tool="retrieve_text")
-                        for text in evidence_quality.missing_sub_questions[:3]
-                    ],
-                    scope=scope,
-                    limit=max(1, min(3, retrieval_limit)),
-                    steps=steps,
-                    step_name="repair_retrieval",
-                    on_step=on_step,
-                )
-            else:
-                # Subsequent passes: LLM reflection → refined queries
-                refined = await self._reflect_on_gaps(
-                    query=resolved_query,
-                    missing_sub_questions=evidence_quality.missing_sub_questions,
-                    chunks=candidates,
-                )
-                if not refined:
-                    break
-                repair_attempted = True
-                repaired = await self._retrieve_multi_query(
-                    queries=refined,
-                    scope=scope,
-                    limit=max(1, min(3, retrieval_limit)),
-                    steps=steps,
-                    step_name=f"iterative_retrieval_{iteration + 1}",
-                    on_step=on_step,
-                )
-            candidates = dedupe_retrieved_chunks([*candidates, *repaired])
-            coverage = await self._coverage_report(expected_material_ids=expected_material_ids, chunks=candidates)
-            evidence_quality = self._evidence_quality_report(
-                sub_questions=plan.sub_questions,
-                expected_material_ids=expected_material_ids,
+            # Otherwise: loop back; PlannerAgent.act will read critic_warnings
+            # and append targeted sub-questions on the next iteration.
+            state.repair_attempted = True
+
+        # ── Rerank cleaned evidence + finalise context ──────────────────
+        candidates = state.cleaned_evidence or state.raw_evidence
+        if candidates:
+            reranked = await self._arerank(
+                query=state.resolved_query,
+                queries=state.retrieval_queries,
                 chunks=candidates,
+                limit=final_limit,
+                use_mmr=route.use_mmr,
             )
-        await self._record_step(
-            steps,
-            AgentTraceStep(
-                name="verify_evidence_quality",
-                status="completed",
-                tool="quality_gate",
-                sources_requested=evidence_quality.sources_requested or None,
-                sources_covered=evidence_quality.sources_covered or None,
-                evidence_count=evidence_quality.evidence_count,
-                warning="Some sub-questions have weak evidence." if evidence_quality.missing_sub_questions else None,
-                metadata={
-                    "sub_questions_requested": evidence_quality.sub_questions_requested,
-                    "sub_questions_covered": evidence_quality.sub_questions_covered,
-                    "missing_sub_questions": evidence_quality.missing_sub_questions,
-                },
-            ),
-            on_step,
+            reranked = self._ensure_context_coverage(
+                selected=reranked, candidates=candidates,
+                expected_material_ids=state.expected_material_ids, limit=final_limit,
+            )
+            state.context_chunks = self.engine._pack_context_chunks(reranked)
+        else:
+            state.context_chunks = []
+        state.coverage = await self._coverage_report(
+            expected_material_ids=state.expected_material_ids, chunks=state.context_chunks,
         )
+        state.record_step(
+            AgentTraceStep(name="rerank_evidence", status="completed", evidence_count=len(state.context_chunks))
+        )
+        await self._emit_step(state.steps_history[-1], on_step)
 
-        reranked = await self._arerank(
-            query=resolved_query,
-            queries=retrieval_queries,
-            chunks=candidates,
-            limit=final_limit,
-            use_mmr=route.use_mmr,
+        # ── Confidence + early refusal ──────────────────────────────────
+        state.confidence_score = self.engine.confidence_scorer.score(state.context_chunks)
+        should_refuse, refusal_reason = self.engine.confidence_scorer.should_refuse(
+            chunks=state.context_chunks, confidence=state.confidence_score,
         )
-        reranked = self._ensure_context_coverage(selected=reranked, candidates=candidates, expected_material_ids=expected_material_ids, limit=final_limit)
-        context_chunks = self.engine._pack_context_chunks(reranked)
-        coverage = await self._coverage_report(expected_material_ids=expected_material_ids, chunks=context_chunks)
-        await self._record_step(
-            steps,
-            AgentTraceStep(name="rerank_evidence", status="completed", evidence_count=len(context_chunks)),
-            on_step,
-        )
-        confidence = self.engine.confidence_scorer.score(reranked)
-        should_refuse, refusal_reason = self.engine.confidence_scorer.should_refuse(chunks=reranked, confidence=confidence)
-
-        if route.route_type == RouteType.SUMMARIZATION and reranked:
+        if route.route_type == RouteType.SUMMARIZATION and state.context_chunks:
             should_refuse = False
             if refusal_reason not in (None, "partial_confidence"):
                 refusal_reason = None
-
-        citations = self.engine.response_parser.citations_from_chunks(context_chunks, focus_text=resolved_query)
+        state.citations = self.engine.response_parser.citations_from_chunks(
+            state.context_chunks, focus_text=state.resolved_query,
+        )
         if should_refuse:
-            trace = AgentTrace(plan_type=plan.plan_type, steps=steps, repair_attempted=repair_attempted)
-            return QueryResponse(
-                answer=REFUSAL_ANSWER,
-                answer_language=processed.answer_language,
-                query_language=processed.query_language,
-                translated_query=processed.translated_query,
-                source_languages=sorted({citation.source_language for citation in citations}),
-                citations=citations,
-                confidence=confidence,
-                was_refused=True,
-                refusal_reason=refusal_reason,
-                reasoning_path=build_reasoning_path(query=resolved_query, retrieved_chunks=retrieved, graph_chunks=graph_chunks, reranked_chunks=reranked, use_graph=route.use_graph),
-                coverage=coverage,
-                agent_trace=trace,
-            )
+            state.was_refused = True
+            state.refusal_reason = refusal_reason
+            return await self._build_query_response(state, processed=processed, route=route, answer=REFUSAL_ANSWER)
 
-        prompt = self.engine._build_prompt(
-            query=resolved_query,
-            chunks=context_chunks,
-            answer_language=processed.answer_language,
-            memory_context=memory_context or "",
-            route_type=route.route_type,
-            plan_type=plan.plan_type,
-        )
+        # ── Synthesize draft ────────────────────────────────────────────
         try:
-            answer = await self.engine.llm.generate(prompt=prompt)
+            await self.agent_synthesizer.act(state, mode="draft")
         except Exception as exc:
-            logger.error("Agentic LLM generation failed", exc_info=True, extra={"owner_id": scope.owner_id, "error": str(exc)})
-            trace = AgentTrace(plan_type=plan.plan_type, steps=steps, repair_attempted=repair_attempted)
-            return QueryResponse(
-                answer=REFUSAL_ANSWER,
-                answer_language=processed.answer_language,
-                query_language=processed.query_language,
-                translated_query=processed.translated_query,
-                source_languages=sorted({citation.source_language for citation in citations}),
-                citations=citations,
-                confidence=confidence,
-                was_refused=True,
-                refusal_reason=PUBLIC_GENERATION_ERROR,
-                reasoning_path=build_reasoning_path(query=resolved_query, retrieved_chunks=retrieved, graph_chunks=graph_chunks, reranked_chunks=reranked, use_graph=route.use_graph),
-                coverage=coverage,
-                agent_trace=trace,
+            logger.error(
+                "Synthesizer failed",
+                exc_info=True,
+                extra={"owner_id": scope.owner_id, "error": str(exc)},
             )
+            state.last_error = str(exc)
+            return self._build_refusal_response(state, processed=processed, reason=PUBLIC_GENERATION_ERROR)
 
-        if not answer.strip():
-            answer = REFUSAL_ANSWER
-            should_refuse = True
-            refusal_reason = "LLM returned an empty grounded answer"
-        else:
-            answer = self.engine.response_parser.inject_citations(answer, context_chunks)
+        answer = state.draft_answer.strip()
+        if not answer:
+            state.was_refused = True
+            state.refusal_reason = "LLM returned an empty grounded answer"
+            return await self._build_query_response(state, processed=processed, route=route, answer=REFUSAL_ANSWER)
+        answer = self.engine.response_parser.strip_unverified_acronym_expansions(answer, state.context_chunks)
+        answer = self.engine.response_parser.strip_language_drift(answer, state.answer_language or processed.answer_language)
+        answer = self.engine.response_parser.inject_citations(answer, state.context_chunks)
+        state.draft_answer = answer
+        state.final_answer = answer
+        state.record_step(
+            AgentTraceStep(
+                name="synthesize_answer", status="completed", tool="synthesizer",
+                evidence_count=len(state.context_chunks),
+            )
+        )
+        await self._emit_step(state.steps_history[-1], on_step)
 
-        await self._record_step(
-            steps,
-            AgentTraceStep(name="synthesize_answer", status="completed", tool="llm", evidence_count=len(context_chunks)),
-            on_step,
-        )
-        grounding = self._grounding_report(answer=answer, citation_count=len(citations))
-        verification = await self._verify_claim(
-            claim=answer,
-            evidence=[evidence for chunk in context_chunks for evidence in chunk.evidence],
-        )
-        answer_repair_attempted = False
-        if (
-            context_chunks
-            and not should_refuse
-            and (not grounding.passed or verification.verdict in {ClaimVerdict.CONTRADICTED, ClaimVerdict.NOT_ENOUGH_EVIDENCE})
-        ):
-            answer_repair_attempted = True
-            repaired_answer = await self._repair_answer(
-                query=resolved_query,
-                answer=answer,
-                chunks=context_chunks,
+        # ── Guardrails / NLI verification ───────────────────────────────
+        await self.agent_guardrails.act(state)
+        guard = state.guardrail_report
+        grounding_failed = (guard.unsupported_sentence_count > 0) or (guard.invalid_citation_count > 0)
+        verdict_failed = guard.verdict in {ClaimVerdict.CONTRADICTED.value, ClaimVerdict.NOT_ENOUGH_EVIDENCE.value}
+        if state.context_chunks and (grounding_failed or verdict_failed):
+            state.answer_repair_attempted = True
+            repaired = await self._repair_answer(
+                query=state.resolved_query,
+                answer=state.final_answer,
+                chunks=state.context_chunks,
                 answer_language=processed.answer_language,
                 warning=", ".join(
-                    item
-                    for item in [
-                        f"{grounding.unsupported_sentence_count} unsupported sentences" if grounding.unsupported_sentence_count else "",
-                        f"{grounding.invalid_citation_count} invalid citations" if grounding.invalid_citation_count else "",
-                        verification.verdict.value,
-                    ]
-                    if item
+                    item for item in [
+                        f"{guard.unsupported_sentence_count} unsupported sentences" if guard.unsupported_sentence_count else "",
+                        f"{guard.invalid_citation_count} invalid citations" if guard.invalid_citation_count else "",
+                        guard.verdict,
+                    ] if item
                 ),
             )
-            if repaired_answer.strip():
-                answer = self.engine.response_parser.inject_citations(repaired_answer, context_chunks)
-                grounding = self._grounding_report(answer=answer, citation_count=len(citations))
-                verification = await self._verify_claim(
-                    claim=answer,
-                    evidence=[evidence for chunk in context_chunks for evidence in chunk.evidence],
-                )
-            await self._record_step(
-                steps,
+            if repaired.strip():
+                repaired = self.engine.response_parser.strip_unverified_acronym_expansions(repaired, state.context_chunks)
+                repaired = self.engine.response_parser.strip_language_drift(repaired, state.answer_language or processed.answer_language)
+                state.final_answer = self.engine.response_parser.inject_citations(repaired, state.context_chunks)
+                await self.agent_guardrails.act(state)
+                guard = state.guardrail_report
+            state.record_step(
                 AgentTraceStep(
-                    name="repair_answer",
-                    status="completed",
-                    tool="llm",
-                    evidence_count=len(context_chunks),
-                    warning=None if grounding.passed else "Grounding issues remain after repair.",
+                    name="repair_answer", status="completed", tool="synthesizer",
+                    evidence_count=len(state.context_chunks),
+                    warning=None if not (guard.unsupported_sentence_count or guard.invalid_citation_count)
+                    else "Grounding issues remain after repair.",
                     metadata={
-                        "unsupported_sentence_count": grounding.unsupported_sentence_count,
-                        "invalid_citation_count": grounding.invalid_citation_count,
+                        "unsupported_sentence_count": guard.unsupported_sentence_count,
+                        "invalid_citation_count": guard.invalid_citation_count,
                     },
-                ),
-                on_step,
+                )
             )
+            await self._emit_step(state.steps_history[-1], on_step)
 
-        warning = None
-        if verification.verdict == ClaimVerdict.CONTRADICTED:
-            warning = "Answer appears to conflict with retrieved evidence."
-            answer = answer + "\n\n> Cảnh báo: Phát hiện mâu thuẫn giữa câu trả lời và bằng chứng gốc."
-        elif verification.verdict == ClaimVerdict.NOT_ENOUGH_EVIDENCE:
-            warning = "Evidence may not directly support every claim."
-            answer = answer + "\n\n> Cảnh báo: Một số nhận định chưa được bằng chứng hỗ trợ trực tiếp."
-        elif refusal_reason == "partial_confidence":
-            warning = "Answer is based on limited-confidence evidence."
-            answer = answer + "\n\n> Cảnh báo: Câu trả lời dựa trên bằng chứng có độ tin cậy hạn chế. Vui lòng kiểm tra nguồn gốc."
-
-        if verification.verdict in {ClaimVerdict.CONTRADICTED, ClaimVerdict.NOT_ENOUGH_EVIDENCE}:
+        # ── Final adjudication based on guardrail verdict ───────────────
+        warning: str | None = guard.warning
+        if guard.verdict == ClaimVerdict.CONTRADICTED.value:
+            state.final_answer = state.final_answer + "\n\n> Cảnh báo: Phát hiện mâu thuẫn giữa câu trả lời và bằng chứng gốc."
             should_refuse = True
-            refusal_reason = f"claim_verification_{verification.verdict.value}"
-            answer = REFUSAL_ANSWER
+            refusal_reason = f"claim_verification_{guard.verdict}"
+            state.final_answer = REFUSAL_ANSWER
+            warning = "Answer appears to conflict with retrieved evidence."
+        elif guard.verdict == ClaimVerdict.NOT_ENOUGH_EVIDENCE.value:
+            if route.route_type == RouteType.CLAIM_CHECK:
+                should_refuse = True
+                refusal_reason = f"claim_verification_{guard.verdict}"
+                state.final_answer = REFUSAL_ANSWER
+            else:
+                state.final_answer = state.final_answer + "\n\n> Cảnh báo: Một số nhận định chưa được bằng chứng hỗ trợ trực tiếp."
+                warning = "Evidence may not directly support every claim."
+        elif refusal_reason == "partial_confidence":
+            state.final_answer = state.final_answer + "\n\n> Cảnh báo: Câu trả lời dựa trên bằng chứng có độ tin cậy hạn chế. Vui lòng kiểm tra nguồn gốc."
+            warning = "Answer is based on limited-confidence evidence."
 
-        if not should_refuse and citations and answer_repair_attempted and not grounding.passed and verification.verdict == ClaimVerdict.NOT_ENOUGH_EVIDENCE:
+        if (
+            not should_refuse and state.citations and state.answer_repair_attempted
+            and (guard.unsupported_sentence_count or guard.invalid_citation_count)
+            and guard.verdict == ClaimVerdict.NOT_ENOUGH_EVIDENCE.value
+        ):
             should_refuse = True
             refusal_reason = "Không đủ bằng chứng đáng tin cậy để tạo câu trả lời có citation hợp lệ."
-            answer = REFUSAL_ANSWER
+            state.final_answer = REFUSAL_ANSWER
 
-        await self._record_step(
-            steps,
+        state.record_step(
             AgentTraceStep(
-                name="verify_claims",
+                name="verify_claims", status="completed", tool="guardrails",
+                evidence_count=sum(len(chunk.evidence) for chunk in state.context_chunks),
+                warning=warning,
+                metadata={
+                    "verdict": guard.verdict,
+                    "unsupported_sentence_count": guard.unsupported_sentence_count,
+                    "invalid_citation_count": guard.invalid_citation_count,
+                    "answer_repair_attempted": state.answer_repair_attempted,
+                },
+            )
+        )
+        await self._emit_step(state.steps_history[-1], on_step)
+
+        # ── Legacy critic loop (refine via follow-up retrieval) ─────────
+        if (
+            getattr(self.engine.settings, "agentic_critic_enabled", True)
+            and not should_refuse
+            and state.final_answer.strip()
+            and state.final_answer != REFUSAL_ANSWER
+            and self.agent_critic.should_fire(confidence=state.confidence_score, route_type=route.route_type.value)
+        ):
+            critic_verdict = await self.agent_critic.run(
+                query=state.resolved_query, answer=state.final_answer, context_chunks=state.context_chunks,
+            )
+            state.record_step(
+                AgentTraceStep(
+                    name="critic_review", status="completed", tool="critic",
+                    warning=critic_verdict.verdict,
+                    metadata={
+                        "verdict": critic_verdict.verdict,
+                        "reason": critic_verdict.reason,
+                        "follow_ups": critic_verdict.follow_up_queries,
+                    },
+                )
+            )
+            await self._emit_step(state.steps_history[-1], on_step)
+            if critic_verdict.verdict == "refine" and critic_verdict.follow_up_queries:
+                extras: list[RetrievedChunk] = []
+                for fq in critic_verdict.follow_up_queries[:2]:
+                    result = await self.text_tool.run(query=fq, scope=scope, limit=4)
+                    if result.success and result.data:
+                        extras.extend(result.data)
+                if extras:
+                    augmented = dedupe_retrieved_chunks(state.context_chunks + extras)[: final_limit + 4]
+                    state.context_chunks = augmented
+                    await self.agent_synthesizer.act(state, mode="repair")
+                    if state.final_answer.strip():
+                        state.final_answer = self.engine.response_parser.strip_unverified_acronym_expansions(
+                            state.final_answer, augmented,
+                        )
+                        state.final_answer = self.engine.response_parser.inject_citations(
+                            state.final_answer, augmented,
+                        )
+                        state.record_step(
+                            AgentTraceStep(
+                                name="critic_refined_synthesis", status="completed",
+                                tool="synthesizer", evidence_count=len(augmented),
+                                metadata={"added_chunks": len(extras)},
+                            )
+                        )
+                        await self._emit_step(state.steps_history[-1], on_step)
+
+        # ── Sentence-level evidence coverage (SLEC) ─────────────────────
+        # Drops sentences whose rerank-vs-chunk score falls below
+        # `slec_partial_threshold` and refuses the whole answer when the
+        # weighted coverage ratio is below `slec_refuse_below`. This is the
+        # only safeguard against the LLM stitching a fluent answer from
+        # chunks that merely mention the query topic without grounding it.
+        if (
+            not should_refuse
+            and self.engine.settings.slec_enabled
+            and state.context_chunks
+            and state.final_answer.strip()
+            and state.final_answer != REFUSAL_ANSWER
+        ):
+            try:
+                slec_answer, slec_report = await self.engine.sentence_coverage_gate.verify(
+                    answer=state.final_answer,
+                    chunks=state.context_chunks,
+                    route_type=route.route_type.value,
+                )
+                state.sentence_coverage_report = slec_report
+                if slec_report and slec_report.refused:
+                    should_refuse = True
+                    refusal_reason = "slec_coverage_below_floor"
+                    state.final_answer = REFUSAL_ANSWER
+                elif slec_report and slec_report.dropped_count > 0:
+                    state.final_answer = self.engine.response_parser.inject_citations(
+                        slec_answer, state.context_chunks,
+                    )
+                else:
+                    state.final_answer = slec_answer
+            except Exception as exc:
+                logger.warning("SLEC gate failed in agentic — keeping original answer", extra={"error": str(exc)})
+
+        state.was_refused = should_refuse
+        state.refusal_reason = refusal_reason
+        return await self._build_query_response(
+            state, processed=processed, route=route,
+            answer=state.final_answer if state.final_answer.strip() else REFUSAL_ANSWER,
+            warning=warning,
+        )
+
+    # ── Helpers ─────────────────────────────────────────────────────────
+    def _record_planning_step(self, state: AgentState) -> None:
+        state.record_step(
+            AgentTraceStep(
+                name="plan_query",
                 status="completed",
-                tool="claim_verifier",
-                evidence_count=sum(len(chunk.evidence) for chunk in context_chunks),
-                warning=warning,
+                query=state.query,
+                tool="planner",
+                sources_requested=len(state.expected_material_ids) or None,
+                warning=state.plan_type,
                 metadata={
-                    "unsupported_sentence_count": grounding.unsupported_sentence_count,
-                    "invalid_citation_count": grounding.invalid_citation_count,
-                    "answer_repair_attempted": answer_repair_attempted,
+                    "sub_question_count": len(state.sub_questions),
+                    "iteration": state.current_iteration,
+                    "llm_planner_enabled": self.config.planner_llm_enabled,
+                    "sub_questions": [item.model_dump() for item in state.sub_questions],
                 },
-            ),
-            on_step,
-        )
-        trace = AgentTrace(
-            plan_type=plan.plan_type,
-            steps=steps,
-            repair_attempted=repair_attempted,
-            verification=AgentVerification(
-                verdict=verification.verdict.value,
-                confidence=verification.confidence,
-                warning=warning,
-                unsupported_sentence_count=grounding.unsupported_sentence_count,
-                invalid_citation_count=grounding.invalid_citation_count,
-                repair_attempted=answer_repair_attempted,
-            ),
-        )
-
-        return QueryResponse(
-            answer=answer,
-            answer_language=processed.answer_language,
-            query_language=processed.query_language,
-            translated_query=processed.translated_query,
-            source_languages=sorted({citation.source_language for citation in citations}),
-            citations=citations,
-            confidence=confidence,
-            was_refused=should_refuse,
-            refusal_reason=refusal_reason,
-            reasoning_path=build_reasoning_path(query=resolved_query, retrieved_chunks=retrieved, graph_chunks=graph_chunks, reranked_chunks=reranked, use_graph=route.use_graph),
-            coverage=coverage,
-            agent_trace=trace,
-        )
-
-    async def _retrieve_multi_query(
-        self,
-        *,
-        queries: list[str],
-        scope: RetrievalScope,
-        limit: int,
-        steps: list[AgentTraceStep],
-        step_name: str,
-        on_step: AgentStepCallback | None = None,
-    ) -> list[RetrievedChunk]:
-        started = time.perf_counter()
-        tasks = [self.engine.retriever.retrieve(query=item, scope=scope, limit=limit) for item in queries]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        chunks: list[RetrievedChunk] = []
-        warnings: list[str] = []
-        for result in results:
-            if isinstance(result, Exception):
-                warnings.append("retrieval_failed")
-                continue
-            chunks.extend(result)
-        await self._record_step(
-            steps,
-            AgentTraceStep(
-                name=step_name,
-                status="completed" if chunks else "failed",
-                query=" | ".join(queries[:3]),
-                tool="retriever",
-                duration_ms=self._elapsed_ms(started),
-                evidence_count=len(chunks),
-                warning=", ".join(warnings) or None,
-                metadata={"query_count": len(queries)},
-            ),
-            on_step,
-        )
-        return chunks
-
-    async def _retrieve_per_source(
-        self,
-        *,
-        query: str,
-        scope: RetrievalScope,
-        material_ids: list[str],
-        limit: int,
-        steps: list[AgentTraceStep],
-        step_name: str = "retrieve_per_source",
-        on_step: AgentStepCallback | None = None,
-    ) -> list[RetrievedChunk]:
-        started = time.perf_counter()
-        scopes = [
-            RetrievalScope(owner_id=scope.owner_id, collection_id=scope.collection_id, material_ids=[mid])
-            for mid in material_ids
-        ]
-        results = await asyncio.gather(
-            *[self.engine.retriever.retrieve(query=query, scope=s, limit=limit) for s in scopes],
-            return_exceptions=True,
-        )
-        chunks: list[RetrievedChunk] = []
-        for result in results:
-            if not isinstance(result, Exception):
-                chunks.extend(result)
-        covered = len({chunk.material_id for chunk in chunks})
-        await self._record_step(
-            steps,
-            AgentTraceStep(
-                name=step_name,
-                status="completed" if chunks else "skipped",
-                query=query,
-                tool="retriever",
-                duration_ms=self._elapsed_ms(started),
-                sources_requested=len(material_ids),
-                sources_covered=covered,
-                evidence_count=len(chunks),
-                warning=None if covered == len(material_ids) else "Some sources returned no evidence.",
-            ),
-            on_step,
-        )
-        return chunks
-
-    async def _retrieve_sub_questions(
-        self,
-        *,
-        sub_questions: list[AgenticSubQuestion],
-        scope: RetrievalScope,
-        limit: int,
-        steps: list[AgentTraceStep],
-        step_name: str = "retrieve_sub_questions",
-        on_step: AgentStepCallback | None = None,
-    ) -> list[RetrievedChunk]:
-        # Only route text-retrieval sub-questions here; per-source and graph are
-        # handled by dedicated steps (_retrieve_per_source / _trace_graph).
-        text_only = [item for item in sub_questions if item.tool == "retrieve_text"]
-        if not text_only:
-            await self._record_step(
-                steps,
-                AgentTraceStep(name=step_name, status="skipped", tool="retriever", evidence_count=0,
-                               warning="All sub-questions use dedicated retrieval steps."),
-                on_step,
             )
-            return []
-        started = time.perf_counter()
-        tasks = [self.engine.retriever.retrieve(query=item.text, scope=scope, limit=limit) for item in text_only]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        chunks: list[RetrievedChunk] = []
-        covered: list[str] = []
-        warnings: list[str] = []
-        for sub_question, result in zip(text_only, results, strict=False):
-            if isinstance(result, Exception):
-                warnings.append(f"{sub_question.text}: retrieval_failed")
-                continue
-            if result:
-                covered.append(sub_question.text)
-                chunks.extend(result)
-        await self._record_step(
-            steps,
-            AgentTraceStep(
-                name=step_name,
-                status="completed" if chunks else "skipped",
-                tool="retriever",
-                duration_ms=self._elapsed_ms(started),
-                evidence_count=len(chunks),
-                warning=", ".join(warnings) or None,
-                metadata={
-                    "sub_questions_requested": len(text_only),
-                    "sub_questions_covered": len(covered),
-                    "covered_sub_questions": covered,
-                },
-            ),
-            on_step,
         )
-        return chunks
 
-    async def _trace_graph(
-        self,
-        *,
-        query: str,
-        scope: RetrievalScope,
-        steps: list[AgentTraceStep],
-        priority: bool,
-        on_step: AgentStepCallback | None = None,
-    ) -> list[RetrievedChunk]:
-        started = time.perf_counter()
+    async def _maybe_resolve_anaphora(self, *, query: str, memory_context: str | None, scope: RetrievalScope) -> str:
+        if not self.config.anaphora_resolution_enabled or not memory_context:
+            return query
+        if not memory_context.strip() or not self._ANAPHORA_RE.search(query):
+            return query
+        prompt = (
+            "Resolve any pronouns or vague references in the current question using the conversation history.\n"
+            "Return ONLY the rewritten, self-contained question. If nothing needs resolving, return the original exactly.\n\n"
+            f"Conversation history:\n{memory_context[:600]}\n\n"
+            f"Current question: {query}\n\n"
+            "Rewritten question:"
+        )
         try:
-            graph_paths = await self.engine.graph_retriever.retrieve_paths(query=query, scope=scope)
-            chunks = self.engine._chunks_from_graph_paths(graph_paths, scope=scope, priority=priority)
+            resolved = (await self.engine.llm.generate(prompt=prompt)).strip()
+            if resolved and len(resolved) <= len(query) * 3:
+                logger.info(
+                    "Anaphora resolved",
+                    extra={
+                        "owner_id": scope.owner_id,
+                        "original": query[:80],
+                        "resolved": resolved[:80],
+                    },
+                )
+                return resolved
         except Exception as exc:
-            await self._record_step(
-                steps,
-                AgentTraceStep(name="trace_graph", status="failed", query=query, tool="graph_retriever", duration_ms=self._elapsed_ms(started), warning="graph_retrieval_failed"),
-                on_step,
+            logger.debug("Anaphora resolution failed", extra={"error": str(exc)})
+        return query
+
+    async def _arerank(
+        self, *, query: str, queries: list[str], chunks: list[RetrievedChunk],
+        limit: int, use_mmr: bool,
+    ) -> list[RetrievedChunk]:
+        if hasattr(self.engine.reranker, "arerank_multilingual"):
+            return await self.engine.reranker.arerank_multilingual(
+                queries=queries, chunks=chunks, limit=limit, use_mmr=use_mmr,
             )
-            return []
-        await self._record_step(
-            steps,
-            AgentTraceStep(name="trace_graph", status="completed", query=query, tool="graph_retriever", duration_ms=self._elapsed_ms(started), evidence_count=len(chunks)),
-            on_step,
-        )
-        return chunks
-
-    @classmethod
-    async def _record_step(cls, steps: list[AgentTraceStep], step: AgentTraceStep, on_step: AgentStepCallback | None) -> None:
-        steps.append(step)
-        await cls._emit_step(step, on_step)
-
-    @staticmethod
-    async def _emit_step(step: AgentTraceStep, on_step: AgentStepCallback | None) -> None:
-        if on_step is None:
-            return
-        result = on_step(step)
-        if inspect.isawaitable(result):
-            await result
+        if hasattr(self.engine.reranker, "rerank_multilingual"):
+            async with self._rerank_fallback_semaphore:
+                return await asyncio.to_thread(
+                    self.engine.reranker.rerank_multilingual,
+                    queries=queries, chunks=chunks, limit=limit, use_mmr=use_mmr,
+                )
+        if hasattr(self.engine.reranker, "arerank"):
+            return await self.engine.reranker.arerank(query=query, chunks=chunks, limit=limit)
+        async with self._rerank_fallback_semaphore:
+            return await asyncio.to_thread(self.engine.reranker.rerank, query=query, chunks=chunks, limit=limit)
 
     async def _repair_answer(
-        self,
-        *,
-        query: str,
-        answer: str,
-        chunks: list[RetrievedChunk],
-        answer_language: str,
-        warning: str,
+        self, *, query: str, answer: str, chunks: list[RetrievedChunk],
+        answer_language: str, warning: str,
     ) -> str:
         evidence_text = self.engine.response_parser.format_evidence_for_prompt(chunks)
         prompt = (
@@ -691,171 +627,10 @@ class AgenticRagService:
             logger.warning("Agentic answer repair failed", exc_info=True)
             return ""
 
-    async def _verify_claim(self, *, claim: str, evidence: list) -> object:
-        verifier = self.engine.claim_verifier
-        if hasattr(verifier, "averify"):
-            return await verifier.averify(claim=claim, evidence=evidence)
-        result = verifier.verify(claim=claim, evidence=evidence)
-        if inspect.isawaitable(result):
-            return await result
-        return result
-
-    @staticmethod
-    def _evidence_quality_report(
-        *,
-        sub_questions: list[AgenticSubQuestion],
-        expected_material_ids: list[str],
-        chunks: list[RetrievedChunk],
-    ) -> EvidenceQualityReport:
-        covered_materials = {chunk.material_id for chunk in chunks if chunk.material_id}
-        missing_sub_questions: list[str] = []
-        covered_sub_questions = 0
-        for sub_question in sub_questions:
-            if not sub_question.critical:
-                continue
-            if AgenticRagService._has_text_overlap(sub_question.text, chunks):
-                covered_sub_questions += 1
-            else:
-                missing_sub_questions.append(sub_question.text)
-        critical_count = sum(1 for item in sub_questions if item.critical)
-        return EvidenceQualityReport(
-            sub_questions_requested=critical_count,
-            sub_questions_covered=covered_sub_questions,
-            sources_requested=len(expected_material_ids),
-            sources_covered=len([material_id for material_id in expected_material_ids if material_id in covered_materials]),
-            evidence_count=len(chunks),
-            missing_sub_questions=missing_sub_questions,
-        )
-
-    @staticmethod
-    def _grounding_report(*, answer: str, citation_count: int) -> AnswerGroundingReport:
-        if citation_count <= 0 or not answer.strip() or answer == REFUSAL_ANSWER:
-            return AnswerGroundingReport(unsupported_sentence_count=0, invalid_citation_count=0)
-        markers = [int(m.group(1)) for m in _CITATION_RE.finditer(answer)]
-        invalid = sum(1 for m in markers if m < 1 or m > citation_count)
-        # Paragraph-level grounding: LLMs write multi-sentence blocks ending with [N].
-        # Flagging each sentence individually causes too many false positives.
-        # Only count a paragraph as "unsupported" if it has ≥2 substantive sentences
-        # AND no citation marker anywhere in the paragraph.
-        paragraphs = re.split(r"\n\s*\n", answer)
-        unsupported = 0
-        for para in paragraphs:
-            if _CITATION_RE.search(para):
-                continue
-            sentences = [
-                s.strip() for s in _SENTENCE_RE.findall(para)
-                if len(s.strip()) >= 12 and not s.strip().startswith(">")
-            ]
-            if len(sentences) >= 2:
-                unsupported += 1
-        return AnswerGroundingReport(unsupported_sentence_count=unsupported, invalid_citation_count=invalid)
-
-    @staticmethod
-    def _has_text_overlap(query: str, chunks: list[RetrievedChunk]) -> bool:
-        # Use rerank_score as semantic coverage signal (set by reranker).
-        # Fall back to lexical only when rerank_score unavailable.
-        for chunk in chunks:
-            if chunk.rerank_score is not None:
-                if chunk.rerank_score >= 0.4:
-                    return True
-            else:
-                # Lexical fallback: require at least 2 matching terms to reduce false positives
-                query_terms = {term.lower() for term in re.findall(r"[\wÀ-ỹ]{4,}", query, flags=re.UNICODE)}
-                if not query_terms:
-                    return bool(chunks)
-                text = chunk.content
-                if chunk.evidence:
-                    text += " " + " ".join(e.snippet_original for e in chunk.evidence)
-                chunk_terms = {term.lower() for term in re.findall(r"[\wÀ-ỹ]{4,}", text, flags=re.UNICODE)}
-                if len(query_terms & chunk_terms) >= 2:
-                    return True
-        return False
-
-    @staticmethod
-    def _elapsed_ms(started: float) -> int:
-        return max(0, int((time.perf_counter() - started) * 1000))
-
-    _ANAPHORA_RE = re.compile(
-        r"\b(nó|chúng|họ|điều này|điều đó|vấn đề này|khái niệm này|cái này|cái đó|"
-        r"it\b|they\b|them\b|this\b|that\b|these\b|those\b|"
-        r"the concept|the topic|the above|the same|the latter|the former)\b",
-        re.IGNORECASE,
-    )
-
-    async def _resolve_anaphora(self, *, query: str, memory_context: str) -> str:
-        """Resolve pronouns/vague references in query using conversation history.
-        Skips LLM call when no anaphoric patterns are detected.
-        """
-        if not memory_context.strip() or not self._ANAPHORA_RE.search(query):
-            return query
-        prompt = (
-            "Resolve any pronouns or vague references in the current question using the conversation history.\n"
-            "Return ONLY the rewritten, self-contained question. If nothing needs resolving, return the original exactly.\n\n"
-            f"Conversation history:\n{memory_context[:600]}\n\n"
-            f"Current question: {query}\n\n"
-            "Rewritten question:"
-        )
-        try:
-            resolved = (await self.engine.llm.generate(prompt=prompt)).strip()
-            if resolved and len(resolved) <= len(query) * 3:
-                return resolved
-        except Exception as exc:
-            logger.debug("Anaphora resolution failed", extra={"error": str(exc)})
-        return query
-
-    async def _reflect_on_gaps(
-        self,
-        *,
-        query: str,
-        missing_sub_questions: list[str],
-        chunks: list[RetrievedChunk],
-    ) -> list[str]:
-        """Ask LLM to generate refined search queries for uncovered sub-questions."""
-        if not missing_sub_questions:
-            return []
-        evidence_preview = " | ".join(c.content[:100] for c in chunks[:5])
-        prompt = (
-            f"Retrieval planner. The following sub-questions are not yet covered by the evidence found.\n"
-            f"Original query: {query}\n"
-            f"Evidence found so far (preview): {evidence_preview}\n"
-            f"Missing sub-questions: {'; '.join(missing_sub_questions[:3])}\n\n"
-            "Generate 2 specific, distinct search queries (different phrasings) that would help find the missing evidence.\n"
-            'Output JSON only: {"queries": ["...", "..."]}'
-        )
-        try:
-            raw = await self.engine.llm.generate(prompt=prompt)
-            match = re.search(r"\{.*\}", raw, re.DOTALL)
-            if match:
-                data = json.loads(match.group(0))
-                return [q.strip() for q in data.get("queries", []) if isinstance(q, str) and q.strip()][:3]
-        except Exception as exc:
-            logger.debug("Gap reflection failed", extra={"error": str(exc)})
-        return []
-
-    async def _arerank(self, *, query: str, queries: list[str], chunks: list[RetrievedChunk], limit: int, use_mmr: bool) -> list[RetrievedChunk]:
-        if hasattr(self.engine.reranker, "arerank_multilingual"):
-            return await self.engine.reranker.arerank_multilingual(queries=queries, chunks=chunks, limit=limit, use_mmr=use_mmr)
-        if hasattr(self.engine.reranker, "rerank_multilingual"):
-            async with self._rerank_fallback_semaphore:
-                return await asyncio.to_thread(
-                    self.engine.reranker.rerank_multilingual,
-                    queries=queries,
-                    chunks=chunks,
-                    limit=limit,
-                    use_mmr=use_mmr,
-                )
-        if hasattr(self.engine.reranker, "arerank"):
-            return await self.engine.reranker.arerank(query=query, chunks=chunks, limit=limit)
-        async with self._rerank_fallback_semaphore:
-            return await asyncio.to_thread(self.engine.reranker.rerank, query=query, chunks=chunks, limit=limit)
-
     @staticmethod
     def _ensure_context_coverage(
-        *,
-        selected: list[RetrievedChunk],
-        candidates: list[RetrievedChunk],
-        expected_material_ids: list[str],
-        limit: int,
+        *, selected: list[RetrievedChunk], candidates: list[RetrievedChunk],
+        expected_material_ids: list[str], limit: int,
     ) -> list[RetrievedChunk]:
         if not expected_material_ids:
             return selected[:limit]
@@ -871,7 +646,10 @@ class AgenticRagService:
         for material_id in expected_material_ids:
             if len(result) >= limit or material_id in seen_materials:
                 continue
-            candidate = next((chunk for chunk in candidates if chunk.material_id == material_id and chunk.chunk_id not in seen_chunks), None)
+            candidate = next(
+                (c for c in candidates if c.material_id == material_id and c.chunk_id not in seen_chunks),
+                None,
+            )
             if candidate is None:
                 continue
             result.append(candidate)
@@ -884,10 +662,14 @@ class AgenticRagService:
         covered = {chunk.material_id for chunk in chunks if chunk.material_id}
         names = await self._material_names(expected)
         sources = [
-            CoverageSource(material_id=material_id, name=names.get(material_id, material_id), covered=material_id in covered)
-            for material_id in expected
+            CoverageSource(material_id=mid, name=names.get(mid, mid), covered=mid in covered)
+            for mid in expected
         ]
-        return CoverageReport(requested_count=len(sources), covered_count=sum(1 for source in sources if source.covered), sources=sources)
+        return CoverageReport(
+            requested_count=len(sources),
+            covered_count=sum(1 for s in sources if s.covered),
+            sources=sources,
+        )
 
     async def _indexed_material_ids_for_scope(self, scope: RetrievalScope) -> list[str]:
         if not scope.collection_id:
@@ -922,6 +704,123 @@ class AgenticRagService:
             return {}
         return {
             str(material.id): material.original_name or material.filename or str(material.id)
-            for material in materials
-            if material.id is not None
+            for material in materials if material.id is not None
         }
+
+    @staticmethod
+    async def _emit_step(step: AgentTraceStep, on_step: AgentStepCallback | None) -> None:
+        if on_step is None:
+            return
+        result = on_step(step)
+        if inspect.isawaitable(result):
+            await result
+
+    # ── Response builders ───────────────────────────────────────────────
+    async def _build_query_response(
+        self, state: AgentState, *, processed, route, answer: str, warning: str | None = None,
+    ) -> QueryResponse:
+        trace = AgentTrace(
+            plan_type=state.plan_type,
+            steps=list(state.steps_history),
+            repair_attempted=state.repair_attempted,
+            verification=AgentVerification(
+                verdict=state.guardrail_report.verdict,
+                confidence=state.guardrail_report.confidence,
+                warning=warning,
+                unsupported_sentence_count=state.guardrail_report.unsupported_sentence_count,
+                invalid_citation_count=state.guardrail_report.invalid_citation_count,
+                repair_attempted=state.answer_repair_attempted,
+            ) if state.guardrail_report.verdict != "not_run" else None,
+        )
+        return QueryResponse(
+            answer=answer,
+            answer_language=processed.answer_language,
+            query_language=processed.query_language,
+            translated_query=processed.translated_query,
+            source_languages=sorted({c.source_language for c in state.citations}),
+            citations=state.citations,
+            confidence=state.confidence_score,
+            was_refused=state.was_refused,
+            refusal_reason=state.refusal_reason,
+            reasoning_path=await build_reasoning_path(
+                query=state.resolved_query,
+                retrieved_chunks=state.raw_evidence,
+                graph_chunks=state.graph_evidence,
+                reranked_chunks=state.context_chunks,
+                use_graph=route.use_graph,
+            ),
+            coverage=state.coverage,
+            sentence_coverage=state.sentence_coverage_report,
+            agent_trace=trace,
+        )
+
+    def _build_refusal_response(self, state: AgentState, *, processed, reason: str) -> QueryResponse:
+        state.was_refused = True
+        state.refusal_reason = reason
+        trace = AgentTrace(
+            plan_type=state.plan_type,
+            steps=list(state.steps_history),
+            repair_attempted=state.repair_attempted,
+            verification=None,
+        )
+        return QueryResponse(
+            answer=REFUSAL_ANSWER,
+            answer_language=processed.answer_language,
+            query_language=processed.query_language,
+            translated_query=processed.translated_query,
+            source_languages=[],
+            citations=[],
+            confidence=0.0,
+            was_refused=True,
+            refusal_reason=reason,
+            agent_trace=trace,
+        )
+
+
+# ── Backward-compatible wrapper ────────────────────────────────────────
+class AgenticRagService:
+    """Thin wrapper preserving the previous public API.
+
+    Existing callers (`QueryService.agentic_rag`) instantiate this with an
+    `InferenceEngine` and invoke `.answer(...)` — both behaviours are kept.
+    All real work happens in `AgenticCoordinatingEngine`.
+    """
+
+    def __init__(self, *, engine: InferenceEngine) -> None:
+        self.engine = engine
+        self.coordinator = AgenticCoordinatingEngine(engine=engine)
+        # Expose individual agents for callers that introspected the old service.
+        self.planner = self.coordinator.planner
+        self.agent_planner = self.coordinator.agent_planner
+        self.agent_director = self.coordinator.agent_director
+        self.agent_synthesizer = self.coordinator.agent_synthesizer
+        self.agent_critic = self.coordinator.agent_critic
+        self.agent_crag = self.coordinator.agent_crag
+        self.agent_guardrails = self.coordinator.agent_guardrails
+
+    async def answer(
+        self,
+        *,
+        query: str,
+        scope: RetrievalScope,
+        top_k: int | None = None,
+        answer_language: str | None = None,
+        memory_context: str | None = None,
+        on_step: AgentStepCallback | None = None,
+    ) -> QueryResponse:
+        return await self.coordinator.answer(
+            query=query, scope=scope, top_k=top_k, answer_language=answer_language,
+            memory_context=memory_context, on_step=on_step,
+        )
+
+
+# Module-level constant exports retained for backward-compatibility with
+# imports like `from src.agentic.service import REFUSAL_ANSWER`.
+__all__ = [
+    "AgenticCoordinatingEngine",
+    "AgenticRagService",
+    "AgentStepCallback",
+    "PUBLIC_GENERATION_ERROR",
+    "PUBLIC_RETRIEVAL_ERROR",
+    "REFUSAL_ANSWER",
+]

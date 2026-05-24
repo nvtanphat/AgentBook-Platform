@@ -1,7 +1,8 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { AlertCircle, CheckCircle2, Loader2, X, Zap } from "lucide-react";
+import { AlertCircle, CheckCircle2, Loader2, Monitor, Moon, Sun, X, Zap } from "lucide-react";
 import { API_BASE_URL, API_V1_BASE_URL, CollectionSummary, checkHealth, getAdminMetrics, listCollections } from "../../api/client";
 import { useWorkspace } from "../../state/workspace";
+import { useTheme, type ThemeMode } from "../../state/theme";
 import { useSearchParams, useNavigate } from "react-router-dom";
 
 // ─── Pipeline settings API ────────────────────────────────────────────────────
@@ -48,6 +49,7 @@ function Toggle({ checked, onChange, disabled }: { checked: boolean; onChange: (
 
 export default function SettingsModal() {
   const { workspace, updateWorkspace, materials } = useWorkspace();
+  const { mode: themeMode, setMode: setThemeMode } = useTheme();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const isOpen = searchParams.get("settings") === "open";
@@ -157,10 +159,10 @@ export default function SettingsModal() {
         aria-modal="true"
         aria-label="Workspace Settings"
         tabIndex={-1}
-        className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-xl bg-white shadow-2xl outline-none"
+        className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-xl bg-surface text-text shadow-2xl outline-none"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-outline px-6 py-4 sticky top-0 bg-white z-10">
+        <div className="flex items-center justify-between border-b border-outline px-6 py-4 sticky top-0 bg-surface z-10">
           <h2 className="font-heading text-lg font-bold">Workspace Settings</h2>
           <button onClick={close} className="text-muted hover:text-text p-1"><X size={20} /></button>
         </div>
@@ -207,6 +209,40 @@ export default function SettingsModal() {
                 <span className="label-caps">Top K (Retrieval)</span>
                 <input className="mt-1 w-full rounded-md border border-outline px-3 py-2 text-sm" type="number" min="1" max="20" value={draft.topK} onChange={(e) => setDraft({ ...draft, topK: Number(e.target.value) || 5 })} />
               </label>
+            </div>
+
+            {/* ── Theme ── */}
+            <div className="rounded-lg border border-outline bg-slate-50 p-4 space-y-3">
+              <div className="flex items-center gap-2 mb-1">
+                <Sun size={13} className="text-primary" />
+                <p className="text-xs font-bold uppercase tracking-wider text-text">Giao diện</p>
+              </div>
+              <p className="text-xs text-muted">Chọn chế độ hiển thị. <span className="font-semibold">System</span> tự động theo thiết bị.</p>
+              <div className="grid grid-cols-3 gap-2">
+                {([
+                  { value: "light", label: "Sáng", icon: Sun },
+                  { value: "dark", label: "Tối", icon: Moon },
+                  { value: "system", label: "Hệ thống", icon: Monitor },
+                ] as { value: ThemeMode; label: string; icon: typeof Sun }[]).map(({ value, label, icon: Icon }) => {
+                  const active = themeMode === value;
+                  return (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setThemeMode(value)}
+                      aria-pressed={active}
+                      className={`flex flex-col items-center gap-1.5 rounded-md border px-3 py-2.5 text-xs font-semibold transition-colors ${
+                        active
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-outline bg-surface text-muted hover:bg-slate-50"
+                      }`}
+                    >
+                      <Icon size={16} />
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             {/* ── Pipeline Settings ── */}

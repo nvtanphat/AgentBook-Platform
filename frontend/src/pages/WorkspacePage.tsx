@@ -5,6 +5,7 @@ import { Group, Panel, Separator } from "react-resizable-panels";
 import SourcesPanel from "../components/workspace/SourcesPanel";
 import ChatPanel from "../components/workspace/ChatPanel";
 import StudioPanel from "../components/workspace/StudioPanel";
+import { useWorkspace } from "../state/workspace";
 
 export type StudioTab = "evidence" | "studio" | "visualize" | "compare";
 
@@ -80,6 +81,7 @@ function ResizeHandle({ onDoubleClick }: { onDoubleClick?: () => void }) {
 
 export default function WorkspacePage() {
   const [searchParams] = useSearchParams();
+  const { setGraphFocusOnAnswer } = useWorkspace();
   const [rightTab, setRightTab] = useState<StudioTab>("studio");
   const [visualizeMode, setVisualizeMode] = useState<"graph" | "mindmap">("graph");
   const [showSourcesMobile, setShowSourcesMobile] = useState(false);
@@ -111,6 +113,9 @@ export default function WorkspacePage() {
   }
 
   function handleTraceAnswerGraph() {
+    // Activate focus mode so GraphTab fetches a subgraph filtered to entities
+    // backing the last answer (via citation block_ids + material_ids).
+    setGraphFocusOnAnswer(true);
     setVisualizeMode("graph");
     handleTabChange("visualize");
   }

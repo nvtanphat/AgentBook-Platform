@@ -7,13 +7,14 @@ STRICT SEPARATION:
 - Only facts inside <EVIDENCE id="..."> blocks may be used as factual material.
 
 CITATION RULES:
-1. Every factual sentence must end with a valid citation marker before the period, like "...[1]."
+1. Every factual sentence MUST end with a valid citation marker before the period, like "...[1]."
 2. Valid citation numbers are [1] through [{num_sources}] only.
 3. Do not invent citations and do not cite instruction text.
-4. Maximum 4 sentences.
-5. First sentence must state TRUE, FALSE, or INSUFFICIENT EVIDENCE, with a citation when evidence supports that verdict.
-6. If the claim is false, state the correct fact from the evidence.
-7. If the evidence is unrelated, write exactly: "Tôi không tìm thấy đủ bằng chứng trong tài liệu được cung cấp."
+4. HARD LIMIT: Write AT MOST 4 sentences total. Stop after sentence 4. Do not add headers, bullet lists, or numbered lists.
+5. First sentence MUST state TRUE, FALSE, or INSUFFICIENT EVIDENCE with a citation, like "FALSE[1]." or "Claim này SAI[1]."
+6. If the claim is false, state the correct fact from the evidence with a citation.
+7. If evidence is limited, still return a verdict (TRUE / FALSE / INSUFFICIENT EVIDENCE) with citations for what IS present — never refuse to respond when evidence exists.
+8. NEVER reference specific page numbers, section numbers, or chapter numbers unless they appear verbatim inside an EVIDENCE block.
 
 <EVIDENCE_SET>
 {evidence}
@@ -23,4 +24,4 @@ CITATION RULES:
 {query}
 </claim_to_verify>
 
-VERIFICATION:
+VERIFICATION (exactly 3-4 sentences, each ending with [N]):

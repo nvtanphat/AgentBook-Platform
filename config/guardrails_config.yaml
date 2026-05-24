@@ -1,5 +1,5 @@
 upload:
-  max_file_size_mb: 20
+  max_file_size_mb: 100  # audio files (mp3/wav/m4a) can be larger than PDFs
   allowed_extensions:
     - "pdf"
     - "docx"
@@ -10,13 +10,61 @@ upload:
     - "csv"
     - "xlsx"
     - "xls"
+    # Audio formats — transcribed via faster-whisper at index time
+    - "mp3"
+    - "wav"
+    - "m4a"
+    - "ogg"
+    - "flac"
+    - "webm"
 
 refusal:
-  min_reranker_score: 0.30      # kept for reference, no longer used in refusal logic
-  min_evidence_confidence: 0.20  # sigmoid scale (0-1); reranker logit also normalized before comparison
+  # ── RefusalPolicy thresholds (all in sigmoid-normalised [0,1] space) ──────
+  # Rule a – NO_EVIDENCE: refuse when ALL chunks are below this floor
+  min_rerank_score: 0.30
+  # Rule b – LOW_CONFIDENCE: refuse (or warn) when the best chunk is below this
+  min_confidence_threshold: 0.40
+  # Rule d – CLAIM_CONTRADICTED: min token-overlap for claim check to fire
+  claim_overlap_threshold: 0.50
+  # Audit metric – acceptable false-accept rate for monitoring
+  max_false_accept_rate: 0.05
+  # ── Legacy / other subsystems ─────────────────────────────────────────────
+  min_evidence_confidence: 0.20  # sigmoid scale; used by ConfidenceScorer.score()
   min_graph_confidence: 0.40
   min_handwriting_quality_score: 0.72
   min_handwriting_confidence: 0.8
+
+claim_verification:
+  claim_overlap_threshold: 0.15   # min fraction of claim tokens that must appear in evidence to declare support
+  min_shared_tokens_contradiction: 2  # min shared tokens before checking directional contradiction
+  # Fraction of total claims that must be flagged CONTRADICTED before the
+  # whole answer is declared CONTRADICTED. NLI cross-encoders give frequent
+  # false positives on Vietnamese multi-hop graph queries. Raised to 0.85
+  # so that only near-unanimous NLI dissent flips an otherwise-grounded
+  # answer to refusal. Trade-off: marginally higher false-accept on
+  # genuinely contradicted answers, accepted for VN/graph route quality.
+  contradicted_majority_fraction: 0.85
+
+# Sentence-level Evidence Coverage (SLEC) — Adaptive Evidence-Guided RAG centerpiece.
+# After answer generation, every sentence is scored against the retrieved evidence
+# blocks using the BGE reranker as a support proxy. Three actions are possible:
+#   SUPPORTED (>= supported_threshold)      → keep as-is, citation enforced
+#   PARTIAL   (>= partial_threshold)        → keep but mark as hedged in the UI
+#   UNSUPPORTED (< partial_threshold)       → drop sentence OR refuse if too many
+# The whole answer is refused if final coverage ratio < refuse_below.
+sentence_coverage:
+  enabled: true
+  supported_threshold: 0.60       # raised from 0.50 to 0.60 — borderline-grounded sentences (0.50-0.60) now become PARTIAL and surface uncertainty in UI instead of passing as fully supported
+  partial_threshold: 0.28         # below this → unsupported
+  refuse_below: 0.40              # answer-level coverage floor; refuse when below
+  drop_unsupported: true          # true = drop unsupported sentences; false = keep with badge
+  min_sentence_chars: 12          # ignore very short tokens (headings, bullets, ack)
+  max_sentences: 24               # safety cap on scored sentences per answer
+  # Routes excluded from SLEC. CLAIM_CHECK uses claim_verifier; SUMMARIZATION
+  # answers are instruction-driven so reranker scores cluster low and SLEC
+  # over-refuses (observed in v14 eval — 1 false refusal on "tóm tắt các bước…").
+  # CHITCHAT bypasses retrieval entirely.
+  skip_routes: ["claim_check", "summarization"]
 
 image_quality:
   min_blur_variance: 80.0

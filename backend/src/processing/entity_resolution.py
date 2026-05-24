@@ -14,54 +14,13 @@ logger = logging.getLogger(__name__)
 # Lower-cased keys are used for matching.
 # ---------------------------------------------------------------------------
 
-_SYNONYM_GROUPS: list[list[str]] = [
-    # ── AI / ML field names ────────────────────────────────────────────────
-    ["Artificial Intelligence", "AI", "Trí tuệ nhân tạo", "trí tuệ nhân tạo"],
-    ["Machine Learning", "ML", "Học máy"],
-    ["Deep Learning", "DL", "Học sâu", "deep neural network"],
-    ["Natural Language Processing", "NLP", "Xử lý ngôn ngữ tự nhiên", "Xử lý ngôn ngữ"],
-    ["Computer Vision", "CV", "Thị giác máy tính"],
-    ["Reinforcement Learning", "RL", "Học tăng cường"],
-    ["Transfer Learning", "Học chuyển giao"],
-    ["Few-Shot Learning", "Few-shot", "Few Shot Learning"],
-    ["Zero-Shot Learning", "Zero-shot", "Zero Shot Learning"],
-    # ── Model families ─────────────────────────────────────────────────────
-    ["Neural Network", "NN", "Mạng neural", "Mạng nơ-ron", "Artificial Neural Network", "ANN"],
-    ["Convolutional Neural Network", "CNN", "Mạng tích chập"],
-    ["Recurrent Neural Network", "RNN", "Mạng hồi tiếp"],
-    ["Long Short-Term Memory", "LSTM"],
-    ["Gated Recurrent Unit", "GRU"],
-    ["Generative Adversarial Network", "GAN"],
-    ["Variational Autoencoder", "VAE"],
-    ["Large Language Model", "LLM"],
-    ["Retrieval-Augmented Generation", "RAG"],
-    # ── Algorithms / techniques ────────────────────────────────────────────
-    ["Gradient Descent", "Giảm gradient"],
-    ["Stochastic Gradient Descent", "SGD"],
-    ["Backpropagation", "Lan truyền ngược", "back propagation", "back-propagation"],
-    ["Batch Normalization", "BatchNorm", "Batch Norm"],
-    ["Layer Normalization", "LayerNorm", "Layer Norm"],
-    ["Dropout", "Dropout Regularization", "Dropout Layer"],
-    ["Attention Mechanism", "Attention", "Self-Attention", "Cơ chế Attention"],
-    ["Overfitting", "Quá khớp", "Over-fitting"],
-    ["Underfitting", "Chưa khớp", "Under-fitting"],
-    ["Knowledge Distillation", "Model Distillation"],
-    ["Fine-tuning", "Fine tuning", "Tinh chỉnh mô hình"],
-    # ── Metrics ────────────────────────────────────────────────────────────
-    ["Accuracy", "Độ chính xác"],
-    ["Precision", "Độ chính xác (Precision)"],
-    ["Recall", "Độ nhớ", "Sensitivity"],
-    ["F1-score", "F1 Score", "F1", "F-measure"],
-    ["Mean Average Precision", "MAP", "mAP"],
-    ["Area Under Curve", "AUC", "AUC-ROC", "ROC-AUC"],
-    # ── Normalisation aliases (legacy hard-coded list) ─────────────────────
-    ["L1 Regularization", "L1", "l1"],
-    ["L2 Regularization", "L2", "l2", "Weight Decay"],
-    ["Support Vector Machine", "SVM", "Support Vector Machines"],
-    ["K-Nearest Neighbors", "KNN", "K-Nearest Neighbours", "k-NN"],
-    ["Principal Component Analysis", "PCA"],
-    ["Random Forest", "Random Forests"],
-]
+# Synonym groups removed — fully domain-agnostic now.
+# Cross-document entity dedup is handled by:
+#   1. Exact normalised match (ASCII fold + lowercase) — handles "Dropout" ≡ "dropout"
+#   2. Fuzzy string match (rapidfuzz/difflib ≥ 88%) — handles "Transformer" ≡ "Transformers"
+#   3. BGE-M3 embedding cosine ≥ 0.82 — handles semantic+cross-lingual ("Học máy" ≡ "Machine Learning")
+# Add domain-specific synonyms here ONLY if you need to override the auto-detection.
+_SYNONYM_GROUPS: list[list[str]] = []
 
 # Build lookup: lower-cased surface form → canonical name
 _SYNONYM_MAP: dict[str, str] = {}

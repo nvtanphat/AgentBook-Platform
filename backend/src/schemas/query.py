@@ -17,6 +17,11 @@ class ReasoningStep(BaseModel):
     step_type: Literal["retrieve", "traverse", "synthesize"]
     entities: list[str] = Field(default_factory=list)  # Entity labels involved
     relations: list[str] = Field(default_factory=list)  # Relation types used
+    # G3 — structured ids so the frontend can highlight the exact graph elements
+    # used in this step (slug-form `entity:foo` matching GraphNode.id; Mongo
+    # `_id` strings for relations).
+    entity_ids: list[str] = Field(default_factory=list)
+    relation_ids: list[str] = Field(default_factory=list)
     confidence: float = Field(ge=0.0, le=1.0)
     description: str  # Human-readable explanation
 
@@ -34,6 +39,32 @@ class QueryRequest(BaseModel):
     rag_flags: dict[Literal["reranker_enabled", "agentic_rag_enabled"], bool] = Field(default_factory=dict)
 
 
+class QueryByGraphRequest(BaseModel):
+    """GraphRAG anchored query — user has selected one or more graph elements
+    in the UI; backend uses them as the primary retrieval anchor."""
+    owner_id: str = Field(min_length=1, max_length=128)
+    collection_id: str | None = None
+    material_ids: list[str] = Field(default_factory=list, max_length=50)
+    conversation_id: str = Field(default="default", min_length=1, max_length=128)
+    query: str = Field(min_length=1, max_length=4000)
+    entity_ids: list[str] = Field(default_factory=list, max_length=20)   # slug-form ids
+    relation_ids: list[str] = Field(default_factory=list, max_length=20) # Mongo Relation _id strings
+    hops: int = Field(default=2, ge=1, le=2)
+    top_k: int | None = Field(default=None, ge=1, le=20)
+    answer_language: str | None = None
+
+
+class QueryByImageRequest(BaseModel):
+    """Multipart form fields for /query/ask-image (image-as-query)."""
+    owner_id: str = Field(min_length=1, max_length=128)
+    collection_id: str | None = None
+    material_ids: list[str] = Field(default_factory=list, max_length=50)
+    conversation_id: str = Field(default="default", min_length=1, max_length=128)
+    query_text: str | None = Field(default=None, max_length=4000)
+    top_k: int | None = Field(default=None, ge=1, le=20)
+    answer_language: str | None = None
+
+
 class QueryResponse(BaseModel):
     answer: str
     answer_language: str = "vi"
@@ -49,6 +80,42 @@ class QueryResponse(BaseModel):
     reasoning_path: list[ReasoningStep] = Field(default_factory=list)
     coverage: "CoverageReport | None" = None
     agent_trace: "AgentTrace | None" = None
+    # Sentence-level Evidence Coverage report — populated by the SLEC gate.
+    # Frontend uses `sentences` to render per-sentence support badges.
+    sentence_coverage: "SentenceCoverageReport | None" = None
+    # GraphRAG provenance — populated when the answer was anchored by graph
+    # selection OR when reasoning_path captured graph elements. Frontend uses
+    # these slug-style ids / Mongo ids to highlight nodes + edges that backed
+    # the answer in GraphCanvas.
+    used_entity_ids: list[str] = Field(default_factory=list)
+    used_relation_ids: list[str] = Field(default_factory=list)
+
+
+class SentenceSupport(BaseModel):
+    """Per-sentence evidence support verdict — the visible artefact of SLEC.
+
+    `status` drives UI rendering: supported → solid citation, partial → soft hedge
+    marker (italic + question mark badge), unsupported → flagged or dropped server-side.
+    """
+    index: int                                     # position in original answer
+    text: str                                      # sentence text after final processing
+    status: Literal["supported", "partial", "unsupported"]
+    score: float = Field(ge=0.0, le=1.0)           # best reranker score vs any evidence block
+    supporting_block_ids: list[str] = Field(default_factory=list)  # top 1-2 blocks that grounded it
+    citation_refs: list[int] = Field(default_factory=list)         # citation indices into QueryResponse.citations (1-based)
+
+
+class SentenceCoverageReport(BaseModel):
+    """Output of the Sentence-level Evidence Coverage gate."""
+    enabled: bool = True
+    total_sentences: int = 0
+    supported_count: int = 0
+    partial_count: int = 0
+    unsupported_count: int = 0
+    dropped_count: int = 0                         # how many sentences were removed from final answer
+    coverage_ratio: float = Field(default=0.0, ge=0.0, le=1.0)  # supported / total (weighted: partial = 0.5)
+    refused: bool = False                          # whether the gate triggered a full refusal
+    sentences: list[SentenceSupport] = Field(default_factory=list)
 
 
 class CoverageSource(BaseModel):

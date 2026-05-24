@@ -43,3 +43,43 @@ class GraphPath(BaseModel):
     path: list[str]
     confidence: float
     evidence_refs: list[EvidenceBlock] = Field(default_factory=list)
+    source_chunk_ids: list[str] = Field(default_factory=list)
+
+
+class FigureIndexItem(BaseModel):
+    """A figure block ready to be embedded and upserted into the visual collection.
+
+    All evidence-trace fields are mandatory; image_path may be None for figures
+    whose pixel data could not be preserved (e.g. deleted DOCX temp files) — the
+    indexer will skip those with a debug log rather than raise.
+    """
+
+    owner_id: str
+    collection_id: str
+    material_id: str
+    document_name: str
+    page: int
+    block_id: str
+    block_type: str
+    caption: str
+    source_language: str
+    bbox: BBox | None = None
+    image_path: str | None = None
+
+
+class RetrievedVisualChunk(BaseModel):
+    """A figure retrieved from the visual Qdrant collection."""
+
+    point_id: str
+    owner_id: str
+    collection_id: str
+    material_id: str
+    document_name: str
+    page: int
+    block_id: str
+    block_type: str
+    caption: str
+    source_language: str
+    bbox: BBox | None = None
+    image_path: str | None = None
+    score: float = 0.0

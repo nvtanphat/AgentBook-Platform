@@ -15,7 +15,8 @@ from src.core.model_factory import build_llm
 from src.models.common import PipelineStatus, utc_now
 from src.models.material import Material, replace_material_pages
 from src.models.pipeline_job import PipelineJob
-from src.processing.chunking import LayoutAwareChunker, SemanticChunker, build_chunker
+from src.processing.audio_parser import AUDIO_EXTENSIONS, AudioParser
+from src.processing.chunking import AudioChunker, LayoutAwareChunker, SemanticChunker, SlideAwareChunker, build_chunker
 from src.processing.contextual_enricher import ContextualEnricher
 from src.processing.docling_parser import DoclingParser, SUPPORTED_DOCLING_EXTENSIONS
 from src.processing.cross_modal_linker import CrossModalLinker
@@ -34,6 +35,7 @@ from src.processing.ocr_quality_gate import score_ocr_document
 from src.processing.spreadsheet_parser import SpreadsheetParser, SUPPORTED_SPREADSHEET_EXTENSIONS
 from src.processing.types import BlockType, OCRQualityError, ParsedBlock, ParsedDocument, ParsedPage
 from src.rag.indexer import QdrantMongoIndexer
+from src.rag.types import FigureIndexItem
 
 
 IMAGE_EXTENSIONS = {"png", "jpg", "jpeg"}
@@ -64,6 +66,7 @@ class ParseIndexPipeline:
         self._ocr_engines: dict[str, EasyOCREngine] = {}
         self.spreadsheet_parser = spreadsheet_parser or SpreadsheetParser()
         self.handwriting_reader = handwriting_reader or HandwritingReader(settings=settings)
+        self.audio_parser = AudioParser(settings=settings)
         self.normalizer = normalizer or LayoutNormalizer()
         self.evidence_mapper = evidence_mapper or EvidenceMapper()
         _llm = build_llm(settings)
@@ -92,6 +95,13 @@ class ParseIndexPipeline:
             await self._mark(material=material, job=job, status=PipelineStatus.PARSING.value, stage=PipelineStatus.PARSING.value)
             parsed = await asyncio.to_thread(self._parse_material, material)
             parsed = await asyncio.to_thread(self._caption_figures, parsed, material.language)
+            # Collect figure items for visual indexing before normalization may
+            # drop block.extra fields.  Empty when visual embedding is disabled.
+            figure_items = (
+                self._collect_figure_items(parsed, material)
+                if self.settings.visual_embedding_enabled
+                else []
+            )
             normalized = await asyncio.to_thread(self.normalizer.normalize, parsed)
             detected_language, language_counts = self._apply_language_detection(normalized, declared_language=material.language)
             material.extra_metadata["detected_language"] = detected_language
@@ -121,12 +131,12 @@ class ParseIndexPipeline:
                 material_id=str(material.id),
                 document_name=material.original_name,
             )
-            chunker = self._resolve_chunker()
+            chunker = self._resolve_chunker(file_type=material.file_type)
             if isinstance(chunker, SemanticChunker):
                 chunks = await chunker.build_chunks_async(evidence_map)
             else:
                 chunks = chunker.build_chunks(evidence_map)
-            chunks = [c for c in chunks if len((c.content or "").strip()) >= 50]
+            chunks = [c for c in chunks if len((c.content or "").strip()) >= self.settings.chunk_min_content_chars]
             run_chunk_qa(chunks, material_id=str(material.id))
             entities = self.entity_resolver.resolve(await self.entity_extractor.extract_async(evidence_map))
             events, relations = self.event_extractor.extract(evidence_map, entities)
@@ -174,6 +184,12 @@ class ParseIndexPipeline:
                 relations=relations,
                 should_continue=lambda: self._material_exists(material_id),
             )
+
+            # Visual embedding step — runs after text indexing so SigLIP does
+            # not compete with BGE-M3 for RAM.  Graceful: failures are warned
+            # and skipped; text pipeline result is not affected.
+            if figure_items:
+                await self._index_visual_figures(figure_items, material_id=str(material.id))
 
             await self._ensure_material_exists(material_id)
             await self._mark(
@@ -243,9 +259,80 @@ class ParseIndexPipeline:
             logger.exception("Contextual enrichment failed entirely - continuing without context")
             return chunks
 
-    def _resolve_chunker(self) -> LayoutAwareChunker | SemanticChunker:
+    # ── Visual embedding helpers ───────────────────────────────────────────────
+
+    def _collect_figure_items(self, parsed: ParsedDocument, material) -> list[FigureIndexItem]:
+        """Build FigureIndexItem list from figure blocks that have an image path."""
+        items: list[FigureIndexItem] = []
+        for block in parsed.blocks:
+            if block.block_type != BlockType.FIGURE.value:
+                continue
+            img_path: str | None = block.extra.get("figure_image_path")
+            if not img_path:
+                continue
+            items.append(
+                FigureIndexItem(
+                    owner_id=material.owner_id,
+                    collection_id=str(material.collection_id),
+                    material_id=str(material.id),
+                    document_name=material.original_name,
+                    page=block.page_number,
+                    block_id=block.block_id,
+                    block_type=block.block_type,
+                    caption=block.content or "",
+                    source_language=block.language,
+                    bbox=block.bbox,
+                    image_path=img_path,
+                )
+            )
+        logger.info(
+            "Collected figure items for visual indexing",
+            extra={"count": len(items), "material_id": str(material.id)},
+        )
+        return items
+
+    async def _index_visual_figures(
+        self, figure_items: list[FigureIndexItem], *, material_id: str
+    ) -> None:
+        """Embed and index figure images with SigLIP; always unloads provider."""
+        from src.rag.embedding_factory import build_visual_provider
+
+        visual_provider = None
+        try:
+            visual_provider = build_visual_provider(self.settings)
+            if visual_provider is None:
+                return
+            await self.indexer.index_visual(
+                figure_items=figure_items, visual_provider=visual_provider
+            )
+        except Exception as exc:
+            logger.warning(
+                "Visual embedding failed — skipping (text index is unaffected)",
+                extra={"material_id": material_id, "error": str(exc)},
+            )
+        finally:
+            if visual_provider is not None:
+                try:
+                    visual_provider.unload()
+                except Exception as exc:
+                    logger.debug(
+                        "Visual provider unload error (non-fatal)",
+                        extra={"error": str(exc)},
+                    )
+
+    # ── Chunking ──────────────────────────────────────────────────────────────
+
+    def _resolve_chunker(self, *, file_type: str | None = None) -> LayoutAwareChunker | SemanticChunker | SlideAwareChunker | AudioChunker:
         if self._chunker_override is not None:
             return self._chunker_override
+        # PPTX: use slide-boundary-preserving chunker (1 chunk per slide).
+        # Semantic chunker splits across slides → fragments lose context.
+        if file_type and file_type.lower() == "pptx":
+            return SlideAwareChunker(self.settings)
+        # Audio: group whisper segments by time window (~45s/chunk).
+        # Preserves audio_start/end_seconds for citation deep-linking.
+        if file_type and file_type.lower() in AUDIO_EXTENSIONS:
+            return AudioChunker(self.settings)
         if self.settings.chunk_strategy == "semantic":
             embedder = None
             if self.indexer is not None and hasattr(self.indexer, "embedder"):
@@ -264,6 +351,8 @@ class ParseIndexPipeline:
             if "hand" in source_type or material.modality == "handwriting":
                 return self.handwriting_reader.parse_image(path, language=self._declared_language(material.language))
             return self._parse_image_vlm_first(path, declared_language=material.language)
+        if material.file_type in AUDIO_EXTENSIONS:
+            return self.audio_parser.parse(path, language=self._declared_language(material.language))
         raise ValueError(f"No Phase 2 parser is configured for .{material.file_type}")
 
     def _caption_figures(self, parsed: ParsedDocument, language: str) -> ParsedDocument:
@@ -287,57 +376,86 @@ class ParseIndexPipeline:
         captioner = FigureCaptioner(
             ollama_base_url=self.settings.ollama_base_url,
             language=language if language in {"vi", "en"} else "vi",
+            timeout=self.settings.ollama_caption_timeout_seconds,
+            image_max_side_px=self.settings.figure_image_max_side_px,
         )
         # Pre-check Ollama availability once before spawning threads, so threads
         # share the cached result and don't each trigger a 5s network probe.
         captioner._detect_available_model()
 
         # Locate rendered page images if available (PDF pipeline puts them in cache).
-        page_image_dir = Path(__file__).resolve().parents[3] / "data" / "cache" / "pdf_page_images"
+        page_image_dir = self.settings.data_dir / "cache" / "pdf_page_images"
+
+        # Persistent dir for DOCX/PPTX embedded figure images (needed by visual
+        # embedding step). Only created when visual_embedding is enabled.
+        figure_cache_dir: Path | None = None
+        if self.settings.visual_embedding_enabled:
+            figure_cache_dir = self.settings.data_dir / "cache" / "figure_images"
 
         def _caption_block(block):
             try:
-                caption = self._caption_one_figure(block, captioner, page_image_dir, parsed)
-                return block, caption, None
+                caption, img_path = self._caption_one_figure(
+                    block, captioner, page_image_dir, parsed, figure_cache_dir
+                )
+                return block, caption, img_path, None
             except Exception as exc:
-                return block, None, exc
+                return block, None, None, exc
 
-        max_workers = min(len(figure_blocks), 4)
+        max_workers = min(len(figure_blocks), self.settings.figure_captioner_max_workers)
         captioned_count = 0
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
-            for block, caption, exc in pool.map(_caption_block, figure_blocks):
+            for block, caption, img_path, exc in pool.map(_caption_block, figure_blocks):
                 if exc is not None:
                     logger.warning(
                         "Figure captioning failed for block",
                         extra={"block_id": block.block_id, "page": block.page_number, "error": str(exc)},
                     )
-                elif caption:
-                    block.content = caption
-                    block.extra.pop("needs_captioning", None)
-                    caption_source = "ocr" if caption.startswith(("[Hình", "[Figure")) else "vlm"
-                    block.extra["caption_source"] = caption_source
-                    block.extra["parse_method"] = "figure_caption"
-                    if caption_source == "vlm" and captioner._available_model:
-                        block.extra["vlm_model"] = captioner._available_model
-                    if caption_source == "ocr":
-                        block.extra["fallback_reason"] = "vlm_unavailable_or_empty"
-                    captioned_count += 1
+                else:
+                    if img_path:
+                        block.extra["figure_image_path"] = img_path
+                    if caption:
+                        block.content = caption
+                        block.extra.pop("needs_captioning", None)
+                        caption_source = "ocr" if caption.startswith(("[Hình", "[Figure")) else "vlm"
+                        block.extra["caption_source"] = caption_source
+                        block.extra["parse_method"] = "figure_caption"
+                        if caption_source == "vlm" and captioner._available_model:
+                            block.extra["vlm_model"] = captioner._available_model
+                        if caption_source == "ocr":
+                            block.extra["fallback_reason"] = "vlm_unavailable_or_empty"
+                        captioned_count += 1
 
         if captioned_count:
             logger.info(
                 "Figure captioning complete",
                 extra={"captioned": captioned_count, "total_figures": len(figure_blocks), "source": parsed.source_path},
             )
+
+        # Unload captioner's OCR engine to free RAM before visual embedding loads SigLIP.
+        captioner.unload()
         return parsed
 
     @staticmethod
-    def _caption_one_figure(block, captioner: FigureCaptioner, page_image_dir: Path, parsed: ParsedDocument) -> str:
-        from uuid import NAMESPACE_URL, uuid5
+    def _caption_one_figure(
+        block,
+        captioner: FigureCaptioner,
+        page_image_dir: Path,
+        parsed: ParsedDocument,
+        figure_cache_dir: Path | None = None,
+    ) -> tuple[str, str | None]:
+        """Return (caption, image_path | None).
+
+        image_path is the on-disk path of the figure image so the visual
+        embedding pipeline can load it later.  None when the image could not
+        be persisted (PDF without page render, unsupported type, etc.).
+        """
         import base64
         import tempfile
+        from uuid import NAMESPACE_URL, uuid5
+
         source_path = Path(parsed.source_path)
 
-        # For PDF: find the rendered page image and crop the figure region
+        # PDF: crop the bbox region from the pre-rendered page image.
         if parsed.file_type == "pdf":
             page_img_name = f"{uuid5(NAMESPACE_URL, f'{source_path}:{block.page_number}').hex}.png"
             page_img_path = page_image_dir / page_img_name
@@ -347,20 +465,24 @@ class ParseIndexPipeline:
                     img = cv2.imread(str(page_img_path))
                     if img is not None:
                         ph, pw = img.shape[:2]
-                        return captioner.caption_page_region(
+                        caption, crop_path = captioner.caption_page_region_with_path(
                             page_img_path, block.bbox, page_width=pw, page_height=ph
                         )
+                        return caption, str(crop_path) if crop_path else None
                 except ImportError:
                     pass
 
-        # For standalone image: caption the whole file
+        # Standalone image: caption the whole file; the path is already on disk.
         if parsed.file_type in {"png", "jpg", "jpeg"}:
-            return captioner.caption_image_path(source_path)
+            return captioner.caption_image_path(source_path), str(source_path)
 
-        # For DOCX/PPTX embedded figures: caption the embedded image payload when available.
+        # DOCX/PPTX embedded figure: decode the data-URI.
+        # When visual_embedding is enabled, save to figure_cache_dir so the file
+        # persists for SigLIP.  Otherwise use a temp file (legacy behaviour).
         embedded_uri = block.extra.get("embedded_image_uri")
         if isinstance(embedded_uri, str) and embedded_uri.startswith("data:image/"):
             try:
+                import hashlib as _hashlib
                 header, encoded = embedded_uri.split(",", 1)
                 suffix = ".png"
                 if "jpeg" in header or "jpg" in header:
@@ -368,11 +490,20 @@ class ParseIndexPipeline:
                 elif "webp" in header:
                     suffix = ".webp"
                 data = base64.b64decode(encoded)
+
+                if figure_cache_dir is not None:
+                    figure_cache_dir.mkdir(parents=True, exist_ok=True)
+                    img_hash = _hashlib.sha1(encoded[:256].encode()).hexdigest()[:12]
+                    save_path = figure_cache_dir / f"fig-{img_hash}{suffix}"
+                    save_path.write_bytes(data)
+                    caption = captioner.caption_image_path(save_path)
+                    return caption, str(save_path)
+
                 with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as handle:
                     handle.write(data)
                     tmp_path = Path(handle.name)
                 try:
-                    return captioner.caption_image_path(tmp_path)
+                    return captioner.caption_image_path(tmp_path), None
                 finally:
                     try:
                         tmp_path.unlink(missing_ok=True)
@@ -381,7 +512,7 @@ class ParseIndexPipeline:
             except Exception:
                 pass
 
-        return ""
+        return "", None
 
     def _parse_image_vlm_first(self, path: Path, *, declared_language: str) -> ParsedDocument:
         """For standalone image files: try VLM captioning first, OCR fallback.
@@ -395,11 +526,22 @@ class ParseIndexPipeline:
             ollama_base_url=self.settings.ollama_base_url,
             language=language,
             ocr_fallback=False,  # we handle OCR ourselves below
+            timeout=self.settings.ollama_caption_timeout_seconds,
+            image_max_side_px=self.settings.figure_image_max_side_px,
         )
         vlm_model = captioner._detect_available_model()
         fallback_reason = "vlm_unavailable"
         if vlm_model:
+            from src.processing.figure_captioner import _looks_like_gibberish
             caption = captioner.caption_image_path(path)
+            # Reject gibberish output (VLM hallucination on stylized text)
+            if caption and _looks_like_gibberish(caption):
+                logger.warning(
+                    "VLM produced gibberish — falling back to OCR",
+                    extra={"model": vlm_model, "image": path.name, "preview": caption[:120]},
+                )
+                fallback_reason = "vlm_gibberish_detected"
+                caption = ""
             if caption and len(caption.strip()) >= 80:
                 logger.info(
                     "Standalone image parsed via VLM",

@@ -13,7 +13,7 @@ CITATION RULES:
 4. Maximum 5 sentences.
 5. Start with the specific techniques, steps, or ideas being summarized.
 6. No markdown tables, headers, numbered lists, or bullet lists.
-7. If evidence is insufficient or unrelated, write exactly: "Tôi không tìm thấy đủ bằng chứng trong tài liệu được cung cấp."
+7. Always summarize using the evidence provided. If coverage is partial, summarize what IS present and note gaps briefly — never refuse to answer when evidence exists.
 
 <EVIDENCE_SET>
 {evidence}

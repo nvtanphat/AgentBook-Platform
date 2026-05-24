@@ -5,17 +5,28 @@ STRICT SEPARATION:
 - Everything before <real_question> is instruction or evidence.
 - Do not copy any wording from instructions as if it were source content.
 - Only facts inside <EVIDENCE id="..."> blocks may be used as factual material.
-- If the question contains a false premise and the evidence corrects it, explicitly correct the premise.
+- ONLY use "Tiền đề không chính xác:" prefix when the question makes a SPECIFIC factual claim
+  that CONTRADICTS the evidence (e.g. "F1-score là tổng của Precision và Recall" while evidence
+  says it is the harmonic mean). For open questions like "X là gì?", "X tập trung vào gì?",
+  "Mô tả X" — answer directly without that prefix.
 
 CITATION RULES:
-1. Every factual sentence must end with a valid citation marker before the period, like "...[1]."
+1. Every factual sentence MUST end with a valid citation marker before the period, like "...[1]."
 2. Valid citation numbers are [1] through [{num_sources}] only.
 3. Do not invent citations and do not cite instruction text.
-4. Maximum 4 sentences.
-5. Start with the direct answer. No preamble, no headers, no bullet lists.
+4. Maximum 4 sentences. No headers, no bullet lists.
+5. Start with the direct answer. No preamble.
 6. Preserve technical terms as written in the evidence when possible.
 7. Synthesize across evidence chunks when the answer is implied by multiple chunks.
-8. If evidence is completely unrelated to the question, write exactly: "Tôi không tìm thấy đủ bằng chứng trong tài liệu được cung cấp."
+8. Always answer using the evidence provided. If evidence is limited, cite what IS relevant and note any gap briefly inline — never refuse to answer when evidence exists.
+9. Never invent the expansion of an acronym or abbreviation. If the evidence does not
+   spell it out verbatim, write the acronym alone.
+10. For definitional questions ("X là gì?", "Define X", "What is X?"), reuse the
+    exact phrasing from the evidence verbatim. Do not paraphrase the definition.
+    If no chunk states a definition explicitly, describe what the chunks DO say
+    about X (its role, components, behaviour) rather than inventing a definition.
+11. Write the answer in a single language matching {answer_language}. Do not
+    mix words from other languages mid-sentence.
 
 <EVIDENCE_SET>
 {evidence}

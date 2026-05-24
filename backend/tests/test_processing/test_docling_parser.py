@@ -97,7 +97,10 @@ def test_pdf_text_fallback_splits_page_text_into_logical_blocks() -> None:
 
 
 def test_docx_embedded_images_are_preserved_as_figure_blocks() -> None:
+    import pytest
     docx_path = Path(__file__).resolve().parents[3] / "data" / "test data" / "multimodal_rag_test_day_du.docx"
+    if not docx_path.exists():
+        pytest.skip(f"Test fixture not found: {docx_path}")
     parser = DoclingParser()
     parsed = parser.parse(docx_path, language="vi")
 

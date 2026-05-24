@@ -1,12 +1,15 @@
-import { Outlet, NavLink } from "react-router-dom";
+import { Outlet, NavLink, useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
-import { Activity, Database, Settings } from "lucide-react";
+import { Activity, Database, LogOut, Settings } from "lucide-react";
 import { API_BASE_URL, checkHealth, getAdminMetrics } from "../api/client";
 import { useWorkspace } from "../state/workspace";
+import { useAuth } from "../state/auth";
 import SettingsModal from "./workspace/SettingsModal";
 
 export default function AppShell() {
   const { workspace } = useWorkspace();
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
   const [health, setHealth] = useState<"checking" | "online" | "offline">("checking");
   const [indexedDocs, setIndexedDocs] = useState<number | null>(null);
 
@@ -43,7 +46,7 @@ export default function AppShell() {
   }, []);
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden" style={{ background: 'linear-gradient(135deg, #f0f2f8 0%, #e8ecf4 100%)' }}>
+    <div className="flex h-screen flex-col overflow-hidden" style={{ background: 'linear-gradient(135deg, var(--c-app-grad-from) 0%, var(--c-app-grad-to) 100%)' }}>
       {/* ── Premium Header ── */}
       <header className="app-header flex h-14 shrink-0 items-center justify-between px-5">
         <div className="flex items-center gap-3">
@@ -94,8 +97,8 @@ export default function AppShell() {
             title={`Owner: ${workspace.ownerId} — Click để mở Settings`}
             className="user-avatar-ring"
           >
-            <div className="flex items-center gap-2 bg-white pl-3 pr-1 py-1 text-xs font-semibold text-text">
-              <span className="hidden sm:inline">{ownerLabel}</span>
+            <div className="flex items-center gap-2 bg-surface pl-3 pr-1 py-1 text-xs font-semibold text-text">
+              <span className="hidden sm:inline">{user?.display_name || ownerLabel}</span>
               <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary text-[10px] font-bold sm:hidden">
                 {ownerInitials}
               </div>
@@ -104,6 +107,16 @@ export default function AppShell() {
               </div>
             </div>
           </NavLink>
+
+          {/* Logout */}
+          <button
+            type="button"
+            title="Đăng xuất"
+            onClick={() => { logout(); navigate("/login", { replace: true }); }}
+            className="flex h-7 w-7 items-center justify-center rounded-full border border-outline text-muted transition hover:border-red-300 hover:bg-red-50 hover:text-red-600"
+          >
+            <LogOut size={13} />
+          </button>
         </div>
       </header>
 
