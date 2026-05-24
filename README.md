@@ -1,6 +1,4 @@
 <div align="center">
-  <img src="docs/assets/noelys_system_architecture_paper.png" alt="AgentBook-PME Banner" width="600px" style="border-radius: 8px; margin-bottom: 20px;" />
-  
   # 🚀 AgentBook-PME
   <h3><i>Universal Multimodal Educational Q&A Workspace with Progressive Multi-modal Enrichment</i></h3>
 
