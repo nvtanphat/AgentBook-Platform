@@ -60,6 +60,30 @@ adaptive_retrieval:
   strong_hit_min_score: 0.35
   eligible_routes: ["factual", "general", "claim_check"]
 
+# ── Knowledge graph / mindmap rendering ──────────────────────────────────────
+# Controls cross-document entity dedup, display filters, and per-request fetch
+# caps for the graph endpoint. All thresholds live here so behaviour stays
+# tunable without touching the route.
+graph:
+  fuzzy_dedup_threshold: 0.88          # token-set string similarity to merge near-identical names
+  semantic_dedup_threshold: 0.82       # BGE-M3 cosine threshold for cross-lingual / paraphrase dedup
+  display_min_confidence: 0.5          # entity must clear this confidence OR meet min_mentions
+  display_min_mentions: 2              # …to be shown when confidence < display_min_confidence
+  max_entities_fetch: 400              # cap entities loaded from Mongo per graph request
+  max_relations_fetch: 400             # cap relations loaded per graph request
+  max_visible_nodes: 150               # final cap after dedup / filtering
+  focus_primary_cap: 15                # max primary entities kept in focus mode
+  focus_neighbor_cap: 12               # 1-hop neighbours added around primary set
+  focus_fallback_cap: 20               # fallback node count when name matching yields nothing
+  mindmap_entity_fetch: 160            # entities pulled for mindmap construction
+  mindmap_entity_cap: 60               # entities kept after dedup for mindmap
+
+  # ── LLM semantic relation extractor (per-material call) ──────────────────
+  semantic_relation:
+    max_concepts: 25
+    max_passages: 18
+    max_passage_chars: 600
+
 chunking:
   strategy: semantic
   target_token_count: 512

@@ -183,6 +183,23 @@ class Settings(BaseSettings):
     min_contrast: float = 18.0
     max_abs_skew_degrees: float = 12.0
 
+    # Knowledge-graph endpoint thresholds + fetch caps (see retrieval_config.yaml → graph)
+    graph_fuzzy_dedup_threshold: float = 0.88
+    graph_semantic_dedup_threshold: float = 0.82
+    graph_display_min_confidence: float = 0.5
+    graph_display_min_mentions: int = 2
+    graph_max_entities_fetch: int = 400
+    graph_max_relations_fetch: int = 400
+    graph_max_visible_nodes: int = 150
+    graph_focus_primary_cap: int = 15
+    graph_focus_neighbor_cap: int = 12
+    graph_focus_fallback_cap: int = 20
+    graph_mindmap_entity_fetch: int = 160
+    graph_mindmap_entity_cap: int = 60
+    graph_semantic_relation_max_concepts: int = 25
+    graph_semantic_relation_max_passages: int = 18
+    graph_semantic_relation_max_passage_chars: int = 600
+
     # Phase B — Adaptive Retrieval Budget (skip sparse + graph on easy factuals)
     adaptive_retrieval_enabled: bool = True
     adaptive_dense_skip_threshold: float = 0.55
@@ -314,6 +331,8 @@ def get_settings() -> Settings:
     chunking_config = retrieval_config.get("chunking", {})
     adaptive_retrieval_config = retrieval_config.get("adaptive_retrieval", {})
     crag_config = retrieval_config.get("crag", {})
+    graph_config = retrieval_config.get("graph", {})
+    graph_semrel_config = graph_config.get("semantic_relation", {})
 
     return Settings(
         max_upload_size_mb=upload_config.get("max_file_size_mb", 20),
@@ -454,4 +473,19 @@ def get_settings() -> Settings:
         self_rag_reflection_enabled=env_bool(
             "SELF_RAG_REFLECTION_ENABLED", llm_config.get("self_rag_reflection_enabled", False)
         ),
+        graph_fuzzy_dedup_threshold=float(graph_config.get("fuzzy_dedup_threshold", 0.88)),
+        graph_semantic_dedup_threshold=float(graph_config.get("semantic_dedup_threshold", 0.82)),
+        graph_display_min_confidence=float(graph_config.get("display_min_confidence", 0.5)),
+        graph_display_min_mentions=int(graph_config.get("display_min_mentions", 2)),
+        graph_max_entities_fetch=int(graph_config.get("max_entities_fetch", 400)),
+        graph_max_relations_fetch=int(graph_config.get("max_relations_fetch", 400)),
+        graph_max_visible_nodes=int(graph_config.get("max_visible_nodes", 150)),
+        graph_focus_primary_cap=int(graph_config.get("focus_primary_cap", 15)),
+        graph_focus_neighbor_cap=int(graph_config.get("focus_neighbor_cap", 12)),
+        graph_focus_fallback_cap=int(graph_config.get("focus_fallback_cap", 20)),
+        graph_mindmap_entity_fetch=int(graph_config.get("mindmap_entity_fetch", 160)),
+        graph_mindmap_entity_cap=int(graph_config.get("mindmap_entity_cap", 60)),
+        graph_semantic_relation_max_concepts=int(graph_semrel_config.get("max_concepts", 25)),
+        graph_semantic_relation_max_passages=int(graph_semrel_config.get("max_passages", 18)),
+        graph_semantic_relation_max_passage_chars=int(graph_semrel_config.get("max_passage_chars", 600)),
     )

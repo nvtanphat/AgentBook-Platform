@@ -45,6 +45,10 @@ e2e_*.txt
 eval_*.txt
 ablation_*.txt
 
+# Local debug dumps at repo root (graph/chat/mindmap probe responses)
+/check_*.json
+/graph_tk*.json
+
 # Markdown files
 # Ignore top-level markdown files except README.md
 /*.md

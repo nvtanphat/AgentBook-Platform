@@ -1,5 +1,8 @@
 $ErrorActionPreference = "SilentlyContinue"
 
+# Resolve project root from script location so this works on any machine.
+$ProjectRoot = $PSScriptRoot
+
 function Write-Step($msg) { Write-Host "`n>> $msg" -ForegroundColor Cyan }
 function Write-OK($msg)   { Write-Host "   [OK] $msg" -ForegroundColor Green }
 function Write-Warn($msg) { Write-Host "   [!!] $msg" -ForegroundColor Yellow }
@@ -20,7 +23,7 @@ Start-Sleep -Seconds 2
 # ── Clear log files safely (rename-then-delete avoids lock errors) ─────────────
 Write-Step "Clearing log files..."
 foreach ($log in @("backend.out.log", "backend.err.log", "frontend.out.log", "frontend.err.log")) {
-    $path = "d:\GenAI\DoAn01\$log"
+    $path = Join-Path $ProjectRoot $log
     $tmp  = "$path.old"
     if (Test-Path $path) {
         Rename-Item $path $tmp -Force -ErrorAction SilentlyContinue
@@ -80,7 +83,7 @@ if ($qdrantReady) {
 }
 
 # ── Guard: ensure .env points to Docker Qdrant, not a local path ───────────────
-$envFile = "d:\GenAI\DoAn01\backend\.env"
+$envFile = Join-Path $ProjectRoot "backend\.env"
 $envLines = Get-Content $envFile -ErrorAction SilentlyContinue
 $needsPatch = $false
 $envLines = $envLines | ForEach-Object {
@@ -102,9 +105,9 @@ $env:PYTHONIOENCODING = "utf-8"
 
 Start-Process -FilePath "python" `
     -ArgumentList "-m uvicorn src.main:app --port 8000" `
-    -WorkingDirectory "d:\GenAI\DoAn01\backend" `
-    -RedirectStandardOutput "d:\GenAI\DoAn01\backend.out.log" `
-    -RedirectStandardError  "d:\GenAI\DoAn01\backend.err.log" `
+    -WorkingDirectory (Join-Path $ProjectRoot "backend") `
+    -RedirectStandardOutput (Join-Path $ProjectRoot "backend.out.log") `
+    -RedirectStandardError  (Join-Path $ProjectRoot "backend.err.log") `
     -WindowStyle Hidden
 
 Write-Host "   Waiting for backend (up to 120s)..." -ForegroundColor Gray
@@ -117,7 +120,7 @@ for ($i = 0; $i -lt 120; $i++) {
     $elapsed = $i + 1
     if ($elapsed % 20 -eq 0) {
         Write-Host "   ...still loading ($elapsed s)" -ForegroundColor Gray
-        $lastErr = Get-Content "d:\GenAI\DoAn01\backend.err.log" -Tail 2 -ErrorAction SilentlyContinue
+        $lastErr = Get-Content (Join-Path $ProjectRoot "backend.err.log") -Tail 2 -ErrorAction SilentlyContinue
         if ($lastErr) { $lastErr | ForEach-Object { Write-Host "      $_" -ForegroundColor DarkGray } }
     }
     Start-Sleep -Seconds 1
@@ -129,7 +132,7 @@ if ($backendReady) {
     Write-Fail "Backend did not respond in 120s"
     Write-Host ""
     Write-Host "   Last errors from backend.err.log:" -ForegroundColor Yellow
-    Get-Content "d:\GenAI\DoAn01\backend.err.log" -Tail 20 -ErrorAction SilentlyContinue |
+    Get-Content (Join-Path $ProjectRoot "backend.err.log") -Tail 20 -ErrorAction SilentlyContinue |
         ForEach-Object { Write-Host "   $_" -ForegroundColor Red }
     exit 1
 }
@@ -138,9 +141,9 @@ if ($backendReady) {
 Write-Step "Starting Frontend (Vite on :5173)..."
 Start-Process -FilePath "npm.cmd" `
     -ArgumentList "run dev" `
-    -WorkingDirectory "d:\GenAI\DoAn01\frontend" `
-    -RedirectStandardOutput "d:\GenAI\DoAn01\frontend.out.log" `
-    -RedirectStandardError  "d:\GenAI\DoAn01\frontend.err.log" `
+    -WorkingDirectory (Join-Path $ProjectRoot "frontend") `
+    -RedirectStandardOutput (Join-Path $ProjectRoot "frontend.out.log") `
+    -RedirectStandardError  (Join-Path $ProjectRoot "frontend.err.log") `
     -WindowStyle Hidden
 
 $frontendReady = $false

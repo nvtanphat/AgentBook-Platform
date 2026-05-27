@@ -16,12 +16,13 @@ from src.models.common import PipelineStatus, utc_now
 from src.models.material import Material, replace_material_pages
 from src.models.pipeline_job import PipelineJob
 from src.processing.audio_parser import AUDIO_EXTENSIONS, AudioParser
-from src.processing.chunking import AudioChunker, LayoutAwareChunker, SemanticChunker, SlideAwareChunker, build_chunker
+from src.processing.chunking import AudioChunker, LayoutAwareChunker, SemanticChunker, SlideAwareChunker
 from src.processing.contextual_enricher import ContextualEnricher
 from src.processing.docling_parser import DoclingParser, SUPPORTED_DOCLING_EXTENSIONS
 from src.processing.cross_modal_linker import CrossModalLinker
 from src.processing.entity_extractor import EntityExtractor
 from src.processing.entity_resolution import EntityResolver
+from src.processing.semantic_relation_extractor import LLMSemanticRelationExtractor
 from src.processing.event_extractor import EventExtractor
 from src.processing.evidence_mapper import EvidenceMapper
 from src.processing.graph_quality_gate import GraphQualityGate
@@ -74,6 +75,19 @@ class ParseIndexPipeline:
         self.entity_resolver = entity_resolver or EntityResolver()
         self.event_extractor = event_extractor or EventExtractor()
         self.cross_modal_linker = cross_modal_linker or CrossModalLinker()
+        # Semantic relation extraction adds an extra LLM call per material on
+        # top of entity extraction. Small local models (qwen2.5:3b) saturate
+        # the Ollama queue and time out, leaving 0 semantic relations and
+        # wasted compute. Only activate the extractor when a cloud LLM is
+        # configured (OpenAI-compatible endpoint) so latency / reliability
+        # match the workload.
+        _semantic_llm = _llm if (settings.llm_default_provider or "").lower() != "local" else None
+        self.semantic_relation_extractor = LLMSemanticRelationExtractor(
+            llm=_semantic_llm,
+            max_concepts=settings.graph_semantic_relation_max_concepts,
+            max_passages=settings.graph_semantic_relation_max_passages,
+            max_passage_chars=settings.graph_semantic_relation_max_passage_chars,
+        )
         self.graph_quality_gate = graph_quality_gate or GraphQualityGate(
             min_entity_confidence=settings.min_graph_confidence,
             min_relation_confidence=settings.min_graph_confidence,
@@ -141,8 +155,21 @@ class ParseIndexPipeline:
             entities = self.entity_resolver.resolve(await self.entity_extractor.extract_async(evidence_map))
             events, relations = self.event_extractor.extract(evidence_map, entities)
             cm_entities, cm_relations = self.cross_modal_linker.link(evidence_map, entities)
+            # LLM-driven typed semantic relations between concept entities
+            # (uses / extends / improves / compared_with / …). Empty when
+            # the LLM is unavailable or the doc has < 2 concept entities.
+            try:
+                semantic_relations = await self.semantic_relation_extractor.extract_async(
+                    evidence_map, entities,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Semantic relation extraction failed (non-fatal)",
+                    extra={"error": str(exc), "error_type": type(exc).__name__},
+                )
+                semantic_relations = []
             entities = list(entities) + cm_entities
-            relations = list(relations) + cm_relations
+            relations = list(relations) + cm_relations + semantic_relations
 
             # Apply graph quality gates
             entities = self.graph_quality_gate.prune_entities(entities)
@@ -473,7 +500,7 @@ class ParseIndexPipeline:
                     pass
 
         # Standalone image: caption the whole file; the path is already on disk.
-        if parsed.file_type in {"png", "jpg", "jpeg"}:
+        if parsed.file_type in IMAGE_EXTENSIONS:
             return captioner.caption_image_path(source_path), str(source_path)
 
         # DOCX/PPTX embedded figure: decode the data-URI.
