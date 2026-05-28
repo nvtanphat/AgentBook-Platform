@@ -296,20 +296,44 @@ def prune_tree_to_focus(nodes: list[MindmapNode], focus_block_ids: set[str]) -> 
 _ARTICLE_RE = re.compile(r"điều\s+(\d+)", re.IGNORECASE)
 
 
+def _query_keywords(text: str) -> set[str]:
+    """Extract meaningful keywords from query text for article heading match.
+
+    Keeps Vietnamese diacritics intact — "kết hôn" must match "kết hôn" in
+    headings. Folding to ASCII loses distinction between "hôn" (marriage) and
+    generic syllables, making the match useless.
+    """
+    _VN_STOPS = {
+        # Vietnamese function words (with diacritics) — too generic to help
+        "của", "và", "là", "có", "được", "không", "theo", "trong", "với",
+        "khi", "đã", "này", "đó", "các", "để", "trên", "tại", "về", "một",
+        "hai", "ba", "đúng", "phải", "luôn", "rằng", "đến", "từ", "cho",
+        "bằng", "nhau", "thì", "hay", "nếu", "vì", "do", "mà",
+        # English stopwords
+        "the", "and", "or", "is", "are", "not", "this", "that",
+    }
+    words = re.split(r"[^\wÀ-ỹĐđ]+", text, flags=re.UNICODE)
+    return {w.lower() for w in words if len(w) >= 3 and w.lower() not in _VN_STOPS}
+
+
 def build_citation_network(
     *,
     sections: list[tuple[HeadingItem, str]],
     viz_config: dict,
     focus_block_ids: set[str] | None = None,
+    focus_query_text: str | None = None,
 ) -> tuple[list[GraphNode], list[GraphEdge]]:
     """Build a real node-edge graph for legal docs: one node per Điều, an edge
     "dẫn chiếu" whenever an article's text references another article.
 
-    This is what makes the Knowledge Graph tab a graph (not a tree) for law:
-    nodes = articles, edges = cross-references. `sections` is a list of
-    (heading, concatenated body text of that section).
+    Focus is determined by TWO signals (OR-combined):
+    1. Citation block_ids → map to the article the cited block belongs to.
+    2. Query-text keyword match → articles whose title contains query keywords
+       (catches "Điều 8 Điều kiện kết hôn" when query asks about "tuổi kết hôn"
+        but retriever didn't find it directly).
     """
     focus_block_ids = focus_block_ids or set()
+    query_kws = _query_keywords(focus_query_text) if focus_query_text else set()
     limits = viz_config.get("limits", {}) or {}
     max_edges = int(limits.get("max_reference_edges", 200))
 
@@ -347,12 +371,46 @@ def build_citation_network(
         if len(raw_edges) >= max_edges:
             break
 
-    # Focus: keep only cited articles + their 1-hop reference neighbours.
+    # Gather all focused articles from BOTH signals before building keep_arts.
+    # (keep_arts must be built after all signal collection — order matters.)
+
+    # Signal 1: citation block_ids → article containing that block.
     cited_arts: set[str] = set()
     if focus_block_ids:
         for art, heading in node_by_art.items():
             if heading.block_id and heading.block_id in focus_block_ids:
                 cited_arts.add(art)
+
+    # Signal 2: query keyword match against article heading text.
+    # Keeps diacritics intact ("kết hôn" matches "kết hôn", score=2).
+    # Cap at top-12 by overlap score to avoid over-highlighting.
+    if query_kws:
+        scored: list[tuple[int, str]] = []
+        for art, heading in node_by_art.items():
+            head_kws = {w.lower() for w in re.split(r"[^\wÀ-ỹĐđ]+", heading.text, flags=re.UNICODE) if len(w) >= 3}
+            score = len(query_kws & head_kws)
+            if score >= 2:
+                scored.append((score, art))
+        # Dynamic threshold: include all articles scoring ≥ max(2, top_score//2)
+        # so the MOST relevant articles always appear even when globally rare.
+        # Hard cap at 25 to avoid flooding when many headings mention all keywords.
+        # Build 2-gram phrases from query for phrase-level heading match.
+        # "kết hôn" as a phrase in the query must match "kết hôn" in a heading
+        # even when the unigram score is low (short heading = few overlapping words).
+        query_words_list = [w.lower() for w in re.split(r"[^\wÀ-ỹĐđ]+", focus_query_text or "", flags=re.UNICODE) if len(w) >= 2]
+        query_bigrams = {f"{query_words_list[i]} {query_words_list[i+1]}" for i in range(len(query_words_list)-1)}
+        if scored:
+            # Rank by unigram overlap first, cap at 20.
+            top20 = {art for _, art in sorted(scored, reverse=True)[:20]}
+            for art in top20:
+                cited_arts.add(art)
+        # Bigram match: always include if heading contains a query bigram (≥6 chars).
+        for art, heading in node_by_art.items():
+            head_lower = heading.text.lower()
+            if any(bg in head_lower and len(bg) >= 6 for bg in query_bigrams):
+                cited_arts.add(art)
+
+    # Build keep_arts AFTER both signals are collected: cited + 1-hop neighbours.
     keep_arts: set[str] | None = None
     if cited_arts:
         keep_arts = set(cited_arts)

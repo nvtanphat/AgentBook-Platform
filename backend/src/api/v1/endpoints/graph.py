@@ -1516,6 +1516,7 @@ async def auto_viz(
             sections=section_texts,
             viz_config=settings.viz_config,
             focus_block_ids=relevant_heading_ids if is_focus else None,
+            focus_query_text=(body.focus_query_text or None) if is_focus else None,
         )
         if c_nodes:
             graph = GraphResponse(nodes=c_nodes, edges=c_edges)
