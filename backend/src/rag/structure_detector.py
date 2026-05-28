@@ -195,6 +195,19 @@ def _short(text: str, limit: int = 80) -> str:
     return compact if len(compact) <= limit else compact[: limit - 1].rstrip() + "…"
 
 
+def _article_label(text: str, max_words: int = 6) -> str:
+    """Truncate article heading to ≤ max_words so the frontend label filter passes.
+
+    Frontend cleanGraphLabel rejects labels with > 6 words. Article headings
+    like "Điều 59. Nguyên tắc giải quyết tài sản..." are 14 words and get
+    dropped. We keep the article number ("Điều N.") + first few content words.
+    """
+    words = text.split()
+    if len(words) <= max_words:
+        return text
+    return " ".join(words[:max_words]) + "…"
+
+
 def build_hierarchy_tree(
     *,
     root_topic: str,
@@ -359,7 +372,7 @@ def build_citation_network(
         h = node_by_art[art]
         nodes.append(GraphNode(
             id=f"dieu:{art}",
-            label=_short(h.text, 60),
+            label=_article_label(h.text),
             type="article",
             confidence=None,
             is_focused=art in cited_arts,
@@ -376,8 +389,8 @@ def build_citation_network(
             source=sid,
             target=tid,
             relation_type="dẫn chiếu",
-            source_label=_short(node_by_art[src].text, 60),
-            target_label=_short(node_by_art[tgt].text, 60),
+            source_label=_article_label(node_by_art[src].text),
+            target_label=_article_label(node_by_art[tgt].text),
             confidence=None,
             evidence_count=1,
             evidence_refs=_ref(node_by_art[src]),
