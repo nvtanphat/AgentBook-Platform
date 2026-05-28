@@ -102,6 +102,9 @@ if ($needsPatch) {
 # ── Backend ────────────────────────────────────────────────────────────────────
 Write-Step "Starting Backend (Uvicorn on :8000)..."
 $env:PYTHONIOENCODING = "utf-8"
+# Allow EasyOCR + VietOCR + BGE-M3 (multiple torch stacks) to coexist without the
+# Windows OpenMP duplicate-runtime crash (libiomp5 loaded more than once).
+$env:KMP_DUPLICATE_LIB_OK = "TRUE"
 
 Start-Process -FilePath "python" `
     -ArgumentList "-m uvicorn src.main:app --port 8000" `

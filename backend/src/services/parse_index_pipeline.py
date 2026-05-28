@@ -13,6 +13,7 @@ from beanie import PydanticObjectId
 from src.core.config import Settings
 from src.core.model_factory import build_llm
 from src.models.common import PipelineStatus, utc_now
+from src.models.collection import KnowledgeCollection
 from src.models.material import Material, replace_material_pages
 from src.models.pipeline_job import PipelineJob
 from src.processing.audio_parser import AUDIO_EXTENSIONS, AudioParser
@@ -31,7 +32,7 @@ from src.processing.layout_normalizer import LayoutNormalizer
 from src.processing.language_detector import detect_block_language, detect_document_language
 from src.processing.chunk_qa import run_chunk_qa
 from src.processing.figure_captioner import FigureCaptioner
-from src.processing.ocr_engine import EasyOCREngine
+from src.processing.ocr_engine import EasyOCREngine, VietOCRRecognizer
 from src.processing.ocr_quality_gate import score_ocr_document
 from src.processing.spreadsheet_parser import SpreadsheetParser, SUPPORTED_SPREADSHEET_EXTENSIONS
 from src.processing.types import BlockType, OCRQualityError, ParsedBlock, ParsedDocument, ParsedPage
@@ -40,6 +41,32 @@ from src.rag.types import FigureIndexItem
 
 
 IMAGE_EXTENSIONS = {"png", "jpg", "jpeg"}
+
+# Heuristic threshold for "figure block is really the whole page" detection.
+# Docling marks scanned-text PDF pages as a single FIGURE block with a bbox
+# covering most of the page; we want full-page OCR in that case, not a crop.
+_FULL_PAGE_AREA_RATIO = 0.7
+
+
+def _bbox_covers_most_of_page(bbox, page_width: int, page_height: int) -> bool:
+    """True when the bbox area exceeds _FULL_PAGE_AREA_RATIO of the page area.
+
+    Accepts either a BBox dataclass / pydantic model (with x/y/width/height
+    attrs) or a dict shaped like {"x":..., "y":..., "width":..., "height":...}.
+    Returns False on any malformed input so the caller falls back to the
+    normal crop path.
+    """
+    if bbox is None or page_width <= 0 or page_height <= 0:
+        return False
+    width = getattr(bbox, "width", None) or (bbox.get("width") if isinstance(bbox, dict) else None)
+    height = getattr(bbox, "height", None) or (bbox.get("height") if isinstance(bbox, dict) else None)
+    if not width or not height:
+        return False
+    try:
+        area_ratio = (float(width) * float(height)) / (float(page_width) * float(page_height))
+    except (TypeError, ValueError, ZeroDivisionError):
+        return False
+    return area_ratio >= _FULL_PAGE_AREA_RATIO
 
 
 class ParseIndexPipeline:
@@ -71,7 +98,12 @@ class ParseIndexPipeline:
         self.normalizer = normalizer or LayoutNormalizer()
         self.evidence_mapper = evidence_mapper or EvidenceMapper()
         _llm = build_llm(settings)
-        self.entity_extractor = entity_extractor or EntityExtractor(llm=_llm)
+        self.entity_extractor = entity_extractor or EntityExtractor(
+            llm=_llm,
+            default_entity_types=settings.extraction_default_entity_types,
+            few_shots=settings.extraction_few_shots,
+            mode=settings.extraction_mode,
+        )
         self.entity_resolver = entity_resolver or EntityResolver()
         self.event_extractor = event_extractor or EventExtractor()
         self.cross_modal_linker = cross_modal_linker or CrossModalLinker()
@@ -152,7 +184,10 @@ class ParseIndexPipeline:
                 chunks = chunker.build_chunks(evidence_map)
             chunks = [c for c in chunks if len((c.content or "").strip()) >= self.settings.chunk_min_content_chars]
             run_chunk_qa(chunks, material_id=str(material.id))
-            entities = self.entity_resolver.resolve(await self.entity_extractor.extract_async(evidence_map))
+            domain_hint = await self._fetch_domain_hint(material)
+            entities = self.entity_resolver.resolve(
+                await self.entity_extractor.extract_async(evidence_map, domain_hint=domain_hint)
+            )
             events, relations = self.event_extractor.extract(evidence_map, entities)
             cm_entities, cm_relations = self.cross_modal_linker.link(evidence_map, entities)
             # LLM-driven typed semantic relations between concept entities
@@ -209,6 +244,7 @@ class ParseIndexPipeline:
                 entities=entities,
                 events=events,
                 relations=relations,
+                material_id=str(material.id),
                 should_continue=lambda: self._material_exists(material_id),
             )
 
@@ -252,6 +288,22 @@ class ParseIndexPipeline:
                 error="The processing pipeline failed. Please retry or inspect server logs.",
             )
             raise
+
+    async def _fetch_domain_hint(self, material: Material) -> str | None:
+        """Look up the configured hint field on the material's collection.
+
+        Returns None when collection or field is missing — extractor handles
+        that gracefully by skipping the domain hint block in the prompt.
+        """
+        field = self.settings.extraction_domain_hint_field or "subject"
+        try:
+            collection = await KnowledgeCollection.get(material.collection_id)
+        except Exception:
+            return None
+        if collection is None:
+            return None
+        value = getattr(collection, field, None)
+        return str(value).strip() if value else None
 
     @staticmethod
     async def _ensure_material_exists(material_id: str) -> None:
@@ -492,9 +544,24 @@ class ParseIndexPipeline:
                     img = cv2.imread(str(page_img_path))
                     if img is not None:
                         ph, pw = img.shape[:2]
+                        # Detect "figure-only page": Docling sometimes treats a
+                        # whole scanned legal page as 1 figure block with a tiny
+                        # or missing bbox. Crop-then-OCR loses the page text.
+                        # When bbox is missing OR covers >70% of the page area,
+                        # caption the FULL page so EasyOCR sees the whole text.
+                        bbox = block.bbox
+                        if bbox is None or _bbox_covers_most_of_page(bbox, pw, ph):
+                            caption = captioner.caption_image_path(page_img_path)
+                            return caption, str(page_img_path)
                         caption, crop_path = captioner.caption_page_region_with_path(
-                            page_img_path, block.bbox, page_width=pw, page_height=ph
+                            page_img_path, bbox, page_width=pw, page_height=ph
                         )
+                        # If crop-based captioning came back empty (typical for
+                        # scanned-text figures where the VLM/OCR couldn't read
+                        # the cropped region), retry on the full page image.
+                        if not (caption or "").strip():
+                            caption = captioner.caption_image_path(page_img_path)
+                            return caption, str(page_img_path)
                         return caption, str(crop_path) if crop_path else None
                 except ImportError:
                     pass
@@ -672,7 +739,16 @@ class ParseIndexPipeline:
             return self.ocr_engine
         if language not in self._ocr_engines:
             lang = "vi" if language == "vi" else "en"
-            self._ocr_engines[language] = EasyOCREngine(lang=lang, gpu=False)
+            # For Vietnamese, attach the VietOCR recognizer when configured — it
+            # reads tone marks far better than EasyOCR on scanned text. EN stays
+            # on EasyOCR (VietOCR is Vietnamese-only).
+            recognizer = None
+            if lang == "vi" and self.settings.ocr_recognition_engine == "vietocr":
+                recognizer = VietOCRRecognizer(
+                    device=self.settings.ocr_vietocr_device,
+                    model_name=self.settings.ocr_vietocr_model_name,
+                )
+            self._ocr_engines[language] = EasyOCREngine(lang=lang, gpu=False, recognizer=recognizer)
         return self._ocr_engines[language]
 
     @staticmethod

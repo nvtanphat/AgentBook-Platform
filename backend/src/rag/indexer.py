@@ -45,9 +45,16 @@ class QdrantMongoIndexer:
         entities: list[ExtractedEntity],
         events: list[ExtractedEvent],
         relations: list[ExtractedRelation],
+        material_id: str | None = None,
         should_continue: Callable[[], Awaitable[bool]] | None = None,
     ) -> list[Chunk]:
         material_ids = _collect_material_ids(chunks=chunks, entities=entities, events=events, relations=relations)
+        # Always include the material being (re)processed, even when this run
+        # produced 0 chunks/entities. Otherwise a re-parse that yields nothing
+        # (e.g. Docling fail → pypdf fallback with no text) leaves the previous
+        # run's chunks orphaned, breaking the evidence block↔page mapping.
+        if material_id:
+            material_ids.add(material_id)
         if material_ids:
             await self._ensure_collection_async()
             await self._cleanup_existing_material_artifacts(material_ids)

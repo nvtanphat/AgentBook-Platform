@@ -396,11 +396,14 @@ async def retry_material(
     request: Request,
     material_id: str,
     owner_id: str = Query(..., min_length=1),
+    force: bool = Query(default=False),
     material_service: MaterialService = Depends(get_material_service),
 ) -> APIResponse[dict]:
     verify_owner_access(request, owner_id)
     try:
-        result = await material_service.retry_material(material_id=material_id, owner_id=owner_id)
+        result = await material_service.retry_material(
+            material_id=material_id, owner_id=owner_id, force=force,
+        )
     except ValueError as exc:
         logger.exception("Invalid retry request", extra={"material_id": material_id, "owner_id": owner_id})
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid retry request.") from exc

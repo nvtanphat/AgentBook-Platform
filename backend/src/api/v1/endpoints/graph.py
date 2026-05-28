@@ -15,10 +15,17 @@ from src.core.model_factory import build_llm
 from src.dependencies import get_app_settings, verify_owner_access
 from src.models.chunk import Chunk
 from src.models.knowledge_graph import Entity, Relation
-from src.models.material import Material
+from src.models.material import Material, MaterialPageDocument
 from src.rag.graph_builder import build_digraph, compute_communities, compute_degrees, compute_pagerank
+from src.rag.structure_detector import (
+    HeadingItem,
+    build_citation_network,
+    build_hierarchy_tree,
+    detect_structure,
+    prune_tree_to_focus,
+)
 from src.schemas.common import APIResponse
-from src.schemas.graph import GraphEdge, GraphNode, GraphResponse, MindmapRequest
+from src.schemas.graph import AutoVizResponse, GraphEdge, GraphNode, GraphResponse, MindmapRequest, VizSignals
 from src.schemas.mindmap import MindmapNode, MindmapResponse
 
 router = APIRouter(prefix="/graph", tags=["graph"])
@@ -1406,6 +1413,132 @@ async def entity_subgraph(
         success=True,
         message="Entity subgraph loaded successfully",
         data=GraphResponse(nodes=nodes, edges=edges),
+        error=None,
+    )
+
+
+@router.post("/auto", response_model=APIResponse[AutoVizResponse])
+async def auto_viz(
+    request: Request,
+    body: MindmapRequest,
+    settings: Settings = Depends(get_app_settings),
+) -> APIResponse[AutoVizResponse]:
+    """Structure-adaptive visualization: pick the viz mode from MEASURED document
+    structure (not domain name) and return the matching payload.
+
+    - hierarchy / citation_network → nested section `tree` (good for legal/manuals)
+    - concept_graph → `signals` only; the client then calls POST /graph
+      (avoids duplicating the 200-line graph builder here)
+    - timeline → falls back to tree/graph until a dedicated builder lands
+    """
+    verify_owner_access(request, body.owner_id)
+    scope = _scope_query(body)
+
+    entity_query = dict(scope)
+    relation_query = dict(scope)
+    page_query = dict(scope)
+    if body.material_ids:
+        material_oids = [PydanticObjectId(m) for m in body.material_ids]
+        entity_query["mention_refs.material_id"] = {"$in": material_oids}
+        relation_query["evidence_refs.material_id"] = {"$in": material_oids}
+        page_query["material_id"] = {"$in": material_oids}
+
+    entities = await Entity.find(entity_query).limit(settings.graph_max_entities_fetch).to_list()
+    relations = await Relation.find(relation_query).limit(settings.graph_max_relations_fetch).to_list()
+    pages = await MaterialPageDocument.find(page_query).to_list()
+
+    # Collect headings (ordered) + all block texts for the signal computations.
+    heading_items: list[HeadingItem] = []
+    block_texts: list[str] = []
+    text_block_count = 0
+    # Focus = which sections back the last answer. Citations give CONTENT block
+    # ids / pages; we map each cited block to the heading section that owns it
+    # (nearest preceding heading in reading order) so the tree can be pruned to
+    # just the cited Điều + their ancestor chapters.
+    focus_block_ids = set(body.focus_block_ids or [])
+    focus_pages = set(body.focus_pages or [])
+    is_focus = bool(focus_block_ids or focus_pages)
+    relevant_heading_ids: set[str] = set()
+
+    # Per-section body text (heading → concatenated content) for citation edges.
+    sections: list[tuple[HeadingItem, list[str]]] = []
+    current_section: tuple[HeadingItem, list[str]] | None = None
+
+    ordered_pages = sorted(pages, key=lambda p: (str(p.material_id), p.page_number))
+    last_heading_by_material: dict[str, str] = {}
+    for page in ordered_pages:
+        mat = str(page.material_id)
+        for block in sorted(page.blocks, key=lambda b: b.reading_order):
+            content = (block.content or "").strip()
+            if not content:
+                continue
+            block_texts.append(content)
+            text_block_count += 1
+            if block.block_type == "heading":
+                hi = HeadingItem(
+                    text=content, material_id=mat, page=page.page_number, block_id=block.block_id,
+                )
+                heading_items.append(hi)
+                current_section = (hi, [])
+                sections.append(current_section)
+                last_heading_by_material[mat] = block.block_id
+            elif current_section is not None:
+                current_section[1].append(content)
+            if is_focus:
+                page_key = f"{mat}:{page.page_number}"
+                cited = block.block_id in focus_block_ids or page_key in focus_pages
+                if cited:
+                    if block.block_type == "heading":
+                        relevant_heading_ids.add(block.block_id)
+                    elif mat in last_heading_by_material:
+                        relevant_heading_ids.add(last_heading_by_material[mat])
+
+    signals = detect_structure(
+        headings=[h.text for h in heading_items],
+        total_text_blocks=text_block_count,
+        block_texts=block_texts,
+        entities=entities,
+        relations=relations,
+        viz_config=settings.viz_config,
+    )
+
+    mode = signals.recommended_mode
+    tree: list[MindmapNode] = []
+    graph: GraphResponse | None = None
+
+    if mode in {"hierarchy", "citation_network"} and heading_items:
+        root_topic = body.root_topic or "Cấu trúc tài liệu"
+        # Citation network = a real node-edge graph (Điều + cross-references) so
+        # the Knowledge Graph tab stays a graph, not a tree. The hierarchy tree
+        # is still returned (for the Mindmap tab / outline use).
+        section_texts = [(hi, " ".join(texts)) for hi, texts in sections]
+        c_nodes, c_edges = build_citation_network(
+            sections=section_texts,
+            viz_config=settings.viz_config,
+            focus_block_ids=relevant_heading_ids if is_focus else None,
+        )
+        if c_nodes:
+            graph = GraphResponse(nodes=c_nodes, edges=c_edges)
+        tree = build_hierarchy_tree(
+            root_topic=root_topic, headings=heading_items, viz_config=settings.viz_config,
+        )
+        if is_focus and relevant_heading_ids:
+            tree = prune_tree_to_focus(tree, relevant_heading_ids)
+        # Nothing usable from structure → let the client fall back to concept graph.
+        if not graph and not tree:
+            mode = "concept_graph"
+
+    viz_signals = VizSignals(
+        hierarchy=signals.hierarchy,
+        reference=signals.reference,
+        semantic=signals.semantic,
+        temporal=signals.temporal,
+        counts=signals.counts,
+    )
+    return APIResponse(
+        success=True,
+        message=f"Visualization mode '{mode}' selected from document structure",
+        data=AutoVizResponse(viz_mode=mode, signals=viz_signals, tree=tree, graph=graph),
         error=None,
     )
 

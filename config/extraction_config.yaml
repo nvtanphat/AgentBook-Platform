@@ -1,0 +1,62 @@
+# ── Knowledge graph entity extraction config ──────────────────────────────────
+# Domain-agnostic prompt knobs. Inspired by Microsoft GraphRAG defaults +
+# LlamaIndex 3-tier mode + LangChain LLMGraphTransformer schema flexibility.
+#
+# Goal: same pipeline works for ML, law, history, medicine, ... without
+# touching code. New domain = just set collection.subject text.
+
+extraction:
+  # Universal type seeds. Inject into prompt as {entity_types}.
+  # Keep small + truly universal so model isn't biased toward any field.
+  # Per-collection extensions come from `collection.subject` injected as hint.
+  default_entity_types:
+    - concept            # abstract ideas, terms, principles
+    - person             # named individuals (any role)
+    - organization       # companies, agencies, institutions
+    - location           # geographic places
+    - event              # happenings, ceremonies, milestones
+    - artifact           # named works, models, products, regulations, documents
+    - time               # dates, periods, eras
+    - quantity           # measurements, statistics, scores
+
+  # Extraction mode (mirrors LlamaIndex schema flexibility tiers):
+  #   simple  - no type list given, LLM extracts anything meaningful (max recall)
+  #   dynamic - default_entity_types as hints, LLM may add domain-specific types
+  #   strict  - only default_entity_types accepted, others rejected
+  # `dynamic` is the recommended default: bounded but extensible.
+  mode: dynamic
+
+  # Output format:
+  #   json      - structured JSON array, validated downstream. Works on GPT-4 /
+  #               Claude / MiMo cloud reliably; fragile on small local models.
+  #   delimiter - GraphRAG-style ("entity"<|>NAME<|>TYPE<|>DESC) format.
+  #               More robust on Qwen 3B / small models (no nested brackets).
+  # Auto-routing per provider lives in `model_factory.py` — this is the fallback.
+  output_format: json
+
+  # Multi-pass gleaning (GraphRAG pattern): re-prompt "anything missed?" to
+  # boost recall ~15-30% on dense chunks. 0 disables, 1 = one extra pass.
+  # Each gleaning pass = 1 extra LLM call per chunk batch, so cost scales.
+  max_gleanings: 0
+
+  # Field on KnowledgeCollection to inject as domain context (e.g. "Pháp luật
+  # Việt Nam", "Machine learning research"). When empty → prompt skips the hint.
+  domain_hint_field: subject
+
+  # Generic fictional few-shots — taught Verdantis-style to avoid domain bias.
+  # Demonstrate STRUCTURE (entity vs noise, multi-type, reject empty) without
+  # anchoring the model to ML, law, or any specific field.
+  few_shots:
+    - input: |-
+        Tổ chức Verdantis được Pavel Novak sáng lập năm 1998 tại thành phố Aurelia
+        nhằm nghiên cứu phương pháp Cánh-Cửa-Xanh trong lĩnh vực Năng-lượng-Tái-tạo.
+      output:
+        - {name: "Verdantis", type: "organization", confidence: 0.95}
+        - {name: "Pavel Novak", type: "person", confidence: 0.92}
+        - {name: "1998", type: "time", confidence: 0.90}
+        - {name: "Aurelia", type: "location", confidence: 0.90}
+        - {name: "Cánh-Cửa-Xanh", type: "concept", confidence: 0.85}
+        - {name: "Năng-lượng-Tái-tạo", type: "concept", confidence: 0.82}
+    - input: |-
+        Bảng 3 cho thấy kết quả trên trang 12. Xem thêm ở phần 4.2.
+      output: []

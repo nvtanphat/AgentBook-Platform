@@ -300,7 +300,7 @@ class MaterialService:
             )
             raise
 
-    async def retry_material(self, *, material_id: str, owner_id: str) -> dict:
+    async def retry_material(self, *, material_id: str, owner_id: str, force: bool = False) -> dict:
         try:
             mid = PydanticObjectId(material_id)
         except Exception as exc:
@@ -310,7 +310,9 @@ class MaterialService:
         if material is None or material.owner_id != owner_id:
             raise LookupError("Material not found for this owner")
 
-        non_retryable = {PipelineStatus.INDEXED.value}
+        # INDEXED materials aren't retryable by default — they're done. `force`
+        # is the escape hatch for re-running after extraction config changes.
+        non_retryable = set() if force else {PipelineStatus.INDEXED.value}
         if material.status in non_retryable:
             raise ValueError(f"Cannot retry material in status '{material.status}'")
 

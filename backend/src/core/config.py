@@ -183,6 +183,24 @@ class Settings(BaseSettings):
     min_contrast: float = 18.0
     max_abs_skew_degrees: float = 12.0
 
+    # Structure-adaptive visualization config (see config/viz_config.yaml).
+    # Loaded as a nested dict (ladders/patterns/thresholds) — consumed by the
+    # structure detector. Empty dict = detector uses built-in defaults.
+    viz_config: dict = Field(default_factory=dict)
+
+    # Entity extraction config (see config/extraction_config.yaml)
+    extraction_mode: str = "dynamic"  # simple | dynamic | strict
+    extraction_default_entity_types: list[str] = Field(
+        default_factory=lambda: [
+            "concept", "person", "organization", "location",
+            "event", "artifact", "time", "quantity",
+        ]
+    )
+    extraction_output_format: str = "json"  # json | delimiter
+    extraction_max_gleanings: int = 0
+    extraction_domain_hint_field: str = "subject"
+    extraction_few_shots: list[dict] = Field(default_factory=list)
+
     # Knowledge-graph endpoint thresholds + fetch caps (see retrieval_config.yaml → graph)
     graph_fuzzy_dedup_threshold: float = 0.88
     graph_semantic_dedup_threshold: float = 0.82
@@ -242,6 +260,9 @@ class Settings(BaseSettings):
     ocr_rec_score_threshold: float = 0.5
     ocr_enable_grayscale_variant: str = "auto"
     ocr_grayscale_trigger_confidence: float = 0.85
+    ocr_recognition_engine: str = "easyocr"  # easyocr | vietocr (vi-only)
+    ocr_vietocr_model_name: str = "vgg_transformer"
+    ocr_vietocr_device: str = "cpu"
     pdf_render_scale: float = 1.5
 
     # Audio (faster-whisper)
@@ -333,6 +354,14 @@ def get_settings() -> Settings:
     crag_config = retrieval_config.get("crag", {})
     graph_config = retrieval_config.get("graph", {})
     graph_semrel_config = graph_config.get("semantic_relation", {})
+    try:
+        extraction_config = load_yaml_config("extraction_config.yaml").get("extraction", {})
+    except FileNotFoundError:
+        extraction_config = {}
+    try:
+        viz_config = load_yaml_config("viz_config.yaml").get("visualization", {})
+    except FileNotFoundError:
+        viz_config = {}
 
     return Settings(
         max_upload_size_mb=upload_config.get("max_file_size_mb", 20),
@@ -443,6 +472,9 @@ def get_settings() -> Settings:
         ocr_rec_score_threshold=float(ocr_config.get("rec_score_threshold", 0.5)),
         ocr_enable_grayscale_variant=str(ocr_config.get("enable_grayscale_variant", "auto")).lower(),
         ocr_grayscale_trigger_confidence=float(ocr_config.get("grayscale_trigger_confidence", 0.85)),
+        ocr_recognition_engine=str(ocr_config.get("recognition_engine", "easyocr")).lower(),
+        ocr_vietocr_model_name=str(ocr_config.get("vietocr_model_name", "vgg_transformer")),
+        ocr_vietocr_device=env_value("OCR_VIETOCR_DEVICE", ocr_config.get("vietocr_device", "cpu")),
         pdf_render_scale=float(pdf_config.get("render_scale", 1.5)),
         visual_embedding_enabled=env_bool(
             "VISUAL_EMBEDDING_ENABLED", visual_config.get("enabled", False)
@@ -488,4 +520,17 @@ def get_settings() -> Settings:
         graph_semantic_relation_max_concepts=int(graph_semrel_config.get("max_concepts", 25)),
         graph_semantic_relation_max_passages=int(graph_semrel_config.get("max_passages", 18)),
         graph_semantic_relation_max_passage_chars=int(graph_semrel_config.get("max_passage_chars", 600)),
+        extraction_mode=str(extraction_config.get("mode", "dynamic")).lower(),
+        extraction_default_entity_types=list(
+            extraction_config.get(
+                "default_entity_types",
+                ["concept", "person", "organization", "location",
+                 "event", "artifact", "time", "quantity"],
+            )
+        ),
+        extraction_output_format=str(extraction_config.get("output_format", "json")).lower(),
+        extraction_max_gleanings=int(extraction_config.get("max_gleanings", 0)),
+        extraction_domain_hint_field=str(extraction_config.get("domain_hint_field", "subject")),
+        extraction_few_shots=list(extraction_config.get("few_shots", [])),
+        viz_config=dict(viz_config),
     )

@@ -334,19 +334,65 @@ def _merge_fragmented_lines(blocks: list[ParsedBlock], *, gap_px: float = 12.0) 
     return merged
 
 
+# ── VietOCR recognizer (Vietnamese tone-accurate recognition) ─────────────────
+
+class VietOCRRecognizer:
+    """Transformer-based Vietnamese text-line recognizer.
+
+    EasyOCR's detection (box finding) is solid but its recognition drops
+    Vietnamese tone marks on scanned text. VietOCR (vgg_transformer, trained
+    on Vietnamese) reads diacritics far better. We keep EasyOCR for detection
+    and swap in VietOCR for per-box recognition.
+
+    Recognition-only: needs a cropped single text-line image, returns the
+    decoded string. Lazy-loads the predictor on first use.
+    """
+
+    def __init__(self, *, device: str = "cpu", model_name: str = "vgg_transformer") -> None:
+        self.device = device
+        self.model_name = model_name
+        self._predictor = None
+
+    @property
+    def predictor(self):
+        if self._predictor is None:
+            try:
+                from vietocr.tool.config import Cfg
+                from vietocr.tool.predictor import Predictor
+            except ImportError as exc:
+                raise DependencyUnavailableError("vietocr is required for VietOCR recognition") from exc
+            cfg = Cfg.load_config_from_name(self.model_name)
+            cfg["device"] = self.device
+            # Avoid re-downloading the CNN backbone; the seq model weights are enough.
+            cfg["cnn"]["pretrained"] = False
+            self._predictor = Predictor(cfg)
+        return self._predictor
+
+    def predict(self, pil_image) -> str:
+        """Recognize a single cropped text-line PIL image. Returns '' on failure."""
+        try:
+            text = self.predictor.predict(pil_image)
+        except Exception:
+            logger.exception("VietOCR recognition failed on a crop")
+            return ""
+        return (text or "").strip()
+
+
 # ── EasyOCR engine (Vietnamese primary) ──────────────────────────────────────
 
 class EasyOCREngine:
-    """OCR engine backed by EasyOCR — primary choice for Vietnamese images.
+    """OCR engine backed by EasyOCR for detection + recognition.
 
-    EasyOCR ships its own Vietnamese recognition model trained on real
-    Vietnamese text (with tone marks), so it avoids the tone-mark loss
-    that PaddleOCR v3's Latin model suffers from.
+    EasyOCR ships its own Vietnamese recognition model, but on scanned text it
+    loses tone marks. When a `recognizer` (e.g. VietOCRRecognizer) is attached,
+    EasyOCR is used only for box DETECTION and each box is re-recognized by the
+    recognizer — best-of-breed: EasyOCR detection + VietOCR Vietnamese reading.
     """
 
-    def __init__(self, *, lang: str = "vi", gpu: bool = False) -> None:
+    def __init__(self, *, lang: str = "vi", gpu: bool = False, recognizer: "VietOCRRecognizer | None" = None) -> None:
         self.lang = lang
         self.gpu = gpu
+        self.recognizer = recognizer
         self._reader = None
 
     @property
@@ -376,21 +422,21 @@ class EasyOCREngine:
         )
 
     def _run_ocr_with_preprocessing(self, image_path: Path, *, language: str) -> tuple[list[ParsedBlock], dict]:
-        primary = self._ocr_blocks(image_path, language=language)
+        # Variant selection uses EasyOCR confidence only (recognizer OFF) — cheap.
+        # The VietOCR recognition pass (expensive) runs ONCE on the winning variant.
+        primary = self._ocr_blocks(image_path, language=language, apply_recognizer=False)
 
         cache_dir = _workspace_cache_dir("ocr_preprocess")
         preprocessed = _ImagePreprocessor.build_variants(image_path, cache_dir=cache_dir)
 
-        if not preprocessed:
-            return self._finalize(primary), {"ocr_preprocessing": "original_only"}
-
+        best_path = image_path
         best = primary
         best_conf = self._avg_confidence(primary)
         variants_used = ["original"]
 
-        for variant_name, variant_path in preprocessed.items():
+        for variant_name, variant_path in (preprocessed or {}).items():
             try:
-                variant_blocks = self._ocr_blocks(variant_path, language=language)
+                variant_blocks = self._ocr_blocks(variant_path, language=language, apply_recognizer=False)
             except Exception:
                 logger.exception("EasyOCR on variant '%s' failed", variant_name)
                 continue
@@ -400,26 +446,44 @@ class EasyOCREngine:
                 extra={"variant": variant_name, "blocks": len(variant_blocks), "avg_confidence": round(avg, 3)},
             )
             if avg > best_conf:
-                best = variant_blocks
-                best_conf = avg
+                best, best_conf, best_path = variant_blocks, avg, variant_path
             variants_used.append(variant_name)
 
-        return self._finalize(best), {
-            "ocr_preprocessing": "multi_variant",
-            "ocr_variants": variants_used,
-            "avg_confidence": round(best_conf, 3),
-        }
+        # Single recognition pass on the winning variant when a recognizer is set.
+        if self.recognizer is not None:
+            best = self._ocr_blocks(best_path, language=language, apply_recognizer=True)
 
-    def _ocr_blocks(self, image_path: Path, *, language: str) -> list[ParsedBlock]:
+        meta = (
+            {"ocr_preprocessing": "original_only"}
+            if not preprocessed
+            else {"ocr_preprocessing": "multi_variant", "ocr_variants": variants_used, "avg_confidence": round(best_conf, 3)}
+        )
+        return self._finalize(best), meta
+
+    def _ocr_blocks(self, image_path: Path, *, language: str, apply_recognizer: bool = True) -> list[ParsedBlock]:
         raw = self.reader.readtext(str(image_path), detail=1, paragraph=False)
+        # When a recognizer is attached, re-read each detected box from the
+        # source image — EasyOCR boxes, recognizer text (better VN diacritics).
+        source_image = None
+        if apply_recognizer and self.recognizer is not None and raw:
+            try:
+                from PIL import Image
+                source_image = Image.open(str(image_path)).convert("RGB")
+            except Exception:
+                logger.exception("Failed to open image for recognizer; using EasyOCR text")
+                source_image = None
         blocks: list[ParsedBlock] = []
         for idx, item in enumerate(raw or []):
             if not isinstance(item, (list, tuple)) or len(item) < 3:
                 continue
             polygon, text, confidence = item[0], str(item[1]).strip(), float(item[2])
+            bbox = self._bbox_from_polygon(polygon)
+            if source_image is not None and bbox is not None:
+                recognized = self._recognize_crop(source_image, bbox)
+                if recognized:
+                    text, confidence = recognized, max(confidence, 0.5)
             if not text:
                 continue
-            bbox = self._bbox_from_polygon(polygon)
             blocks.append(
                 ParsedBlock(
                     block_id=f"blk-{uuid5(NAMESPACE_URL, f'{image_path}:easyocr:1:{idx}:{text}').hex[:12]}",
@@ -449,6 +513,21 @@ class EasyOCREngine:
     def _avg_confidence(blocks: list[ParsedBlock]) -> float:
         scores = [b.ocr_confidence for b in blocks if b.ocr_confidence is not None]
         return sum(scores) / len(scores) if scores else 0.0
+
+    def _recognize_crop(self, source_image, bbox: BBox) -> str:
+        """Crop the bbox region (with small padding) and recognize via VietOCR."""
+        if self.recognizer is None:
+            return ""
+        w, h = source_image.size
+        pad = 2
+        left = max(0, int(bbox.x1) - pad)
+        top = max(0, int(bbox.y1) - pad)
+        right = min(w, int(bbox.x2) + pad)
+        bottom = min(h, int(bbox.y2) + pad)
+        if right <= left or bottom <= top:
+            return ""
+        crop = source_image.crop((left, top, right, bottom))
+        return self.recognizer.predict(crop)
 
     @staticmethod
     def _bbox_from_polygon(polygon) -> BBox | None:

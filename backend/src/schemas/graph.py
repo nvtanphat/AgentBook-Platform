@@ -39,6 +39,29 @@ class GraphResponse(BaseModel):
     edges: list[GraphEdge] = Field(default_factory=list)
 
 
+class VizSignals(BaseModel):
+    hierarchy: float = 0.0
+    reference: float = 0.0
+    semantic: float = 0.0
+    temporal: float = 0.0
+    counts: dict = Field(default_factory=dict)
+
+
+class AutoVizResponse(BaseModel):
+    """Structure-adaptive visualization payload.
+
+    `viz_mode` is chosen from measured document structure. Exactly one of
+    `tree` / `graph` is populated depending on the mode; `signals` is always
+    returned so the UI can show why this mode was picked (and offer overrides).
+    """
+    viz_mode: str
+    signals: VizSignals
+    # Populated for hierarchy / citation_network modes (nested sections).
+    tree: list = Field(default_factory=list)
+    # Populated for concept_graph mode (entity nodes + relation edges).
+    graph: GraphResponse | None = None
+
+
 class MindmapRequest(BaseModel):
     owner_id: str = Field(min_length=1, max_length=128)
     collection_id: str | None = None

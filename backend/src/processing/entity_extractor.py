@@ -158,18 +158,37 @@ def _load_prompt_template() -> str:
     return _PROMPT_TEMPLATE
 
 
+_DEFAULT_TYPES = (
+    "concept", "person", "organization", "location",
+    "event", "artifact", "time", "quantity",
+)
+
+
 class EntityExtractor:
     """
     Two-path entity extractor:
     - Async (LLM-based): structured extraction with few-shot prompting + heuristic cleaning.
     - Sync  (regex-based): fast fallback when LLM is unavailable.
 
+    Domain-agnostic by design — types/few-shots come from extraction_config.yaml,
+    domain hint comes from KnowledgeCollection.subject at call time.
+
     Public interface is unchanged: extract(evidence_map) → list[ExtractedEntity].
-    New async interface:         extract_async(evidence_map) → list[ExtractedEntity].
+    New async interface:         extract_async(evidence_map, domain_hint=…) → list[ExtractedEntity].
     """
 
-    def __init__(self, *, llm: BaseLLM | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        llm: BaseLLM | None = None,
+        default_entity_types: list[str] | None = None,
+        few_shots: list[dict] | None = None,
+        mode: str = "dynamic",
+    ) -> None:
         self._llm = llm
+        self._default_types: tuple[str, ...] = tuple(default_entity_types or _DEFAULT_TYPES)
+        self._few_shots: list[dict] = list(few_shots or [])
+        self._mode: str = (mode or "dynamic").lower()
         self._underthesea_ner = None
         self._underthesea_checked = False
 
@@ -181,12 +200,22 @@ class EntityExtractor:
         """Sync regex-based extraction. Used when no LLM is configured."""
         return self._extract_regex(evidence_map)
 
-    async def extract_async(self, evidence_map: EvidenceMap) -> list[ExtractedEntity]:
-        """Async LLM-first extraction with regex fallback."""
+    async def extract_async(
+        self,
+        evidence_map: EvidenceMap,
+        *,
+        domain_hint: str | None = None,
+    ) -> list[ExtractedEntity]:
+        """Async LLM-first extraction with regex fallback.
+
+        `domain_hint` is a free-text description of the collection topic
+        (typically `KnowledgeCollection.subject`). It tunes the LLM toward
+        domain-specific entity types without code changes.
+        """
         if self._llm is None:
             return self._extract_regex(evidence_map)
         try:
-            return await self._extract_llm(evidence_map)
+            return await self._extract_llm(evidence_map, domain_hint=domain_hint)
         except Exception as exc:
             logger.warning(
                 "LLM entity extraction failed, falling back to regex",
@@ -198,12 +227,14 @@ class EntityExtractor:
     # LLM path
     # ------------------------------------------------------------------
 
-    async def _extract_llm(self, evidence_map: EvidenceMap) -> list[ExtractedEntity]:
+    async def _extract_llm(
+        self, evidence_map: EvidenceMap, *, domain_hint: str | None = None,
+    ) -> list[ExtractedEntity]:
         """Batch blocks into LLM calls, parse structured JSON output."""
         batches = self._make_batches(evidence_map.blocks)
         all_raw: list[tuple[dict, EvidenceBlock]] = []
 
-        tasks = [self._call_llm_batch(batch) for batch in batches]
+        tasks = [self._call_llm_batch(batch, domain_hint=domain_hint) for batch in batches]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         for batch, result in zip(batches, results):
@@ -229,6 +260,9 @@ class EntityExtractor:
             entity_type = str(raw.get("type", "concept")).lower()
             confidence = float(raw.get("confidence", 0.7))
             if confidence < 0.5:
+                continue
+            # Strict mode: drop entities whose type isn't in the default seed list
+            if self._mode == "strict" and entity_type not in self._default_types:
                 continue
 
             key = name.lower()
@@ -266,15 +300,73 @@ class EntityExtractor:
         )
         return extracted
 
-    async def _call_llm_batch(self, blocks: list[EvidenceBlock]) -> list[dict]:
+    async def _call_llm_batch(
+        self, blocks: list[EvidenceBlock], *, domain_hint: str | None = None,
+    ) -> list[dict]:
         """Call LLM for a batch of blocks, return parsed JSON list."""
         text = "\n\n".join(b.snippet_original for b in blocks if b.snippet_original.strip())
         if not text.strip():
             return []
 
-        prompt = _load_prompt_template().format(text=text[:_MAX_CHARS_PER_BATCH])
+        prompt = _load_prompt_template().format(
+            text=text[:_MAX_CHARS_PER_BATCH],
+            entity_types_block=self._render_entity_types_block(),
+            domain_hint_block=self._render_domain_hint_block(domain_hint),
+            few_shots_block=self._render_few_shots_block(),
+        )
         raw = await self._llm.generate(prompt=prompt)  # type: ignore[union-attr]
         return self._parse_llm_json(raw)
+
+    # ------------------------------------------------------------------
+    # Prompt rendering helpers
+    # ------------------------------------------------------------------
+
+    def _render_entity_types_block(self) -> str:
+        """Bullet list for prompt {entity_types_block}. Empty when mode=simple."""
+        if self._mode == "simple":
+            return "(không bắt buộc loại cụ thể — hãy chọn nhãn snake_case phù hợp nhất với ngữ cảnh)\n"
+        return "".join(f"- {t}\n" for t in self._default_types)
+
+    @staticmethod
+    def _render_domain_hint_block(domain_hint: str | None) -> str:
+        """Optional context line. Empty when no hint provided."""
+        hint = (domain_hint or "").strip()
+        if not hint:
+            return ""
+        return (
+            f"Tài liệu thuộc lĩnh vực: {hint}.\n"
+            "Khi gặp thực thể không khớp các loại bên dưới, hãy đề xuất loại mới snake_case "
+            "tiếng Anh phù hợp lĩnh vực này (vd. \"regulation\", \"court_case\", \"dataset\").\n\n"
+        )
+
+    def _render_few_shots_block(self) -> str:
+        """Render YAML-loaded few-shot examples into prompt-ready text.
+
+        Falls back to one minimal abstract example if no shots configured —
+        keeps the prompt grounded even with empty extraction_config.yaml.
+        """
+        shots = self._few_shots or [{
+            "input": "Tổ chức A được B sáng lập năm 2020 tại C để nghiên cứu D.",
+            "output": [
+                {"name": "A", "type": "organization", "confidence": 0.9},
+                {"name": "B", "type": "person", "confidence": 0.85},
+                {"name": "2020", "type": "time", "confidence": 0.95},
+                {"name": "C", "type": "location", "confidence": 0.9},
+                {"name": "D", "type": "concept", "confidence": 0.7},
+            ],
+        }]
+        parts: list[str] = []
+        for shot in shots:
+            inp = str(shot.get("input", "")).strip()
+            out = shot.get("output", [])
+            if not inp:
+                continue
+            try:
+                out_json = json.dumps(out, ensure_ascii=False)
+            except (TypeError, ValueError):
+                continue
+            parts.append(f"Input: \"{inp}\"\nOutput:\n{out_json}\n")
+        return "\n".join(parts) + "\n"
 
     @staticmethod
     def _parse_llm_json(raw: str) -> list[dict]:

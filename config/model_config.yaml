@@ -64,6 +64,13 @@ ocr:
   rec_score_threshold: 0.5
   enable_grayscale_variant: "always"   # merge only replaces blocks when the variant scores better
   grayscale_trigger_confidence: 0.97   # used when enable_grayscale_variant is auto
+  # Recognition engine for Vietnamese OCR:
+  #   easyocr  - EasyOCR detect + recognize (fast, but drops tone marks on scans)
+  #   vietocr  - EasyOCR detect + VietOCR recognize (tone-accurate, ~2-3x slower)
+  # Only affects vi-language OCR; en stays on EasyOCR.
+  recognition_engine: "vietocr"
+  vietocr_model_name: "vgg_transformer"   # vgg_transformer (accurate) | vgg_seq2seq (faster)
+  vietocr_device: "cpu"
 
 pdf:
   render_scale: 2.0                    # accuracy-first OCR fallback for scanned PDF pages

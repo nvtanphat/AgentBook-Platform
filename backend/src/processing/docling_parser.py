@@ -19,6 +19,21 @@ def _workspace_cache_dir(name: str) -> Path:
     return Path(__file__).resolve().parents[3] / "data" / "cache" / name
 
 
+def _is_empty_figure_only(blocks: list[ParsedBlock]) -> bool:
+    """True when the page's only blocks are figure placeholders with no text.
+
+    Docling marks scanned-text legal PDF pages as a single FIGURE block with
+    `needs_captioning=True` and empty content. Those pages must still go
+    through EasyOCR — otherwise the entire page text is lost downstream.
+    """
+    if not blocks:
+        return True
+    return all(
+        block.block_type == BlockType.FIGURE.value and not (block.content or "").strip()
+        for block in blocks
+    )
+
+
 def _configure_docling_cache() -> None:
     os.environ.setdefault("USE_TF", "0")
     os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
@@ -309,7 +324,12 @@ class DoclingParser:
         try:
             for page_index in range(len(pdf)):
                 page_number = page_index + 1
-                if page_number in pages_by_number:
+                # Skip pages Docling already parsed with REAL text content.
+                # Pages where the only blocks are empty figure placeholders
+                # (typical for scanned legal PDFs Docling treats as images)
+                # must still go through EasyOCR — otherwise the page text is lost.
+                existing = pages_by_number.get(page_number, [])
+                if existing and not _is_empty_figure_only(existing):
                     continue
                 page = pdf[page_index]
                 try:
@@ -326,6 +346,7 @@ class DoclingParser:
                     for index, block in enumerate(parsed.blocks)
                 ]
                 if blocks:
+                    # Replace empty figure placeholder with the OCR'd text blocks.
                     pages_by_number[page_number] = blocks
         finally:
             pdf.close()

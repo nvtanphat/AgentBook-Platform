@@ -16,6 +16,16 @@ logger = logging.getLogger(__name__)
 
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?\u3002\uff01\uff1f])\s+")
 _PARAGRAPH_SPLIT = re.compile(r"\n\s*\n")
+
+# Strips a printed page-number that OCR bled into the start of a block's text,
+# e.g. "172 33/2005/QH11\u2026" or "95 tin v\u00e0 chuy\u1ec3n giao\u2026". Conservative: only a
+# bare leading number (\u22644 digits) followed by whitespace \u2014 does NOT touch clause
+# markers like "1." or "2)" (those have trailing punctuation, not whitespace).
+_LEADING_PAGE_NUMBER = re.compile(r"^\s*\d{1,4}\s+(?=\S)")
+
+
+def _strip_leading_page_number(text: str) -> str:
+    return _LEADING_PAGE_NUMBER.sub("", text, count=1)
 _LIST_ITEM = re.compile(r"^[\s]*(?:[\u25a1\u2022\u25cf\u25aa\u25ab\u2013\u2014\-\*\u25c6\u25c7\u25cb]|\d+\.|\w\))\s+", re.MULTILINE)
 _CODE_BLOCK = re.compile(r"```[\s\S]*?```|`[^`\n]+`")
 _TABLE_BLOCK_TYPE = BlockType.TABLE.value
@@ -273,7 +283,9 @@ class LayoutAwareChunker:
         return last_is_table != incoming_is_table
 
     def _make_chunk(self, evidence_map: EvidenceMap, blocks: list[EvidenceBlock]) -> TextChunk:
-        content = "\n".join(block.snippet_original for block in blocks).strip()
+        # Strip OCR'd page-number prefixes per block so they don't bleed into
+        # chunk text / citations (also catches page-boundary blocks mid-chunk).
+        content = "\n".join(_strip_leading_page_number(block.snippet_original) for block in blocks).strip()
         pages = sorted({block.page for block in blocks})
         block_ids = [block.block_id for block in blocks]
         bboxes = [block.bbox for block in blocks if block.bbox is not None]

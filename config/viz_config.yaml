@@ -1,0 +1,43 @@
+# ── Structure-adaptive visualization config ───────────────────────────────────
+# Picks the visualization mode from MEASURED document structure, never from the
+# domain name. A legal code and a contract both score high "hierarchy" → tree;
+# a research paper scores high "semantic" → concept graph. No per-domain code.
+
+visualization:
+  # Mode is chosen by whichever signal is dominant (highest normalized score
+  # above its activation floor). Falls back to llm_mindmap when nothing clears.
+  default_mode: concept_graph        # used when no signal is dominant and LLM off
+  fallback_mode: llm_mindmap         # universal fallback (LLM adapts to any domain)
+
+  # Activation floors — a signal must clear its floor to be eligible as the mode.
+  thresholds:
+    hierarchy_min: 0.30              # fraction of headings that fit a level ladder
+    reference_min: 0.15             # internal references per text block
+    semantic_min: 0.20              # typed concept relations per displayed entity
+    temporal_min: 0.20             # time/date/event entities per total entities
+
+  # Caps to keep payloads renderable.
+  limits:
+    max_tree_nodes: 300
+    max_tree_depth: 6
+    max_timeline_nodes: 120
+    max_reference_edges: 200
+
+  # ── Hierarchy level inference (universal, ladder is just a hint) ────────────
+  # Ordered ladders: earlier = higher (shallower) level. Used to assign a depth
+  # to flat heading blocks. Numbering ("1.2.3") depth is used when no ladder hits.
+  # Add a new language/domain ladder here — no code change needed.
+  hierarchy_ladders:
+    vi_legal: ["phần", "chương", "mục", "tiểu mục", "điều", "khoản", "điểm"]
+    generic_doc: ["part", "chapter", "section", "subsection", "article", "clause"]
+    outline: ["i.", "ii.", "iii.", "a.", "b.", "c."]
+
+  # Regex (Python) for internal cross-references → citation-network edges.
+  # Domain-agnostic set; extend per corpus without touching code.
+  reference_patterns:
+    - "điều\\s+\\d+"
+    - "khoản\\s+\\d+"
+    - "chương\\s+[ivxlcdm\\d]+"
+    - "article\\s+\\d+"
+    - "section\\s+\\d+(?:\\.\\d+)*"
+    - "\\[\\d+\\]"
