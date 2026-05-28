@@ -1,7 +1,7 @@
 ﻿import { useState, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { AlertCircle, BookOpen, FileText, Link2, Loader2, Maximize2, MessageCircleQuestion, Network, RefreshCw, Send, ShieldCheck, Sparkles, Target, X } from "lucide-react";
-import { GraphResponse, MindmapResponse, QueryResponse, askWithGraphAnchor, loadGraph, loadMindmap } from "../../../api/client";
+import { GraphResponse, MindmapResponse, QueryResponse, askWithGraphAnchor, loadAutoViz, loadGraph, loadMindmap } from "../../../api/client";
 import GraphCanvas, { CanvasEdge, CanvasNode } from "../../GraphCanvas";
 import MarkdownRenderer from "../../MarkdownRenderer";
 import { useWorkspace } from "../../../state/workspace";
@@ -871,6 +871,9 @@ export default function GraphTab({
   const [selectedRelation, setSelectedRelation] = useState<SelectedRelation | null>(null);
   const [rootTopic, setRootTopic] = useState("");
   const [graphResult, setGraphResult] = useState<GraphResponse | null>(null);
+  // viz_mode chosen by /graph/auto (citation_network / concept_graph …) — shown
+  // as a small badge so users know why the graph looks the way it does.
+  const [autoMode, setAutoMode] = useState<string | null>(null);
   const [mindmapResult, setMindmapResult] = useState<MindmapResponse | null>(null);
   const [mindmapDetail, setMindmapDetail] = useState<"brief" | "overview" | "detailed">("overview");
   const [mindmapUseLlm, setMindmapUseLlm] = useState(false);
@@ -888,6 +891,10 @@ export default function GraphTab({
   const materialNameMap = new Map<string, string>(
     materials.map((m) => [m.materialId, m.originalName || m.filename || m.materialId]),
   );
+  // Knowledge Graph tab always renders a node-edge graph. For legal docs the
+  // backend supplies a citation graph (Điều + dẫn-chiếu); for concept docs the
+  // usual entity graph. Hierarchy trees live in the Mindmap tab, not here.
+  const canvasRenderMode: "graph" | "mindmap" = mode;
   const canvas = mode === "graph"
     ? toGraph(graphResult, graphFocus)
     : toMindmap(mindmapResult, materialNameMap);
@@ -965,7 +972,7 @@ export default function GraphTab({
             if (citation.block_id) focusBlockIds.push(citation.block_id);
           }
         }
-        const response = await loadGraph({
+        const focusPayload = {
           owner_id: workspace.ownerId,
           collection_id: workspace.collectionId || null,
           material_ids: graphMaterialIds,
@@ -977,8 +984,18 @@ export default function GraphTab({
           focus_answer_text: graphFocusOnAnswer && activeQueryContext && !activeQueryContext.response.was_refused
             ? activeQueryContext.response.answer
             : undefined,
-        });
-        setGraphResult(response);
+        };
+        // Structure-adaptive: backend returns a citation graph (Điều + dẫn-chiếu
+        // edges) for legal/hierarchical docs, or null for concept docs. Either
+        // way the Knowledge Graph tab renders a node-edge graph (never a tree).
+        const auto = await loadAutoViz(focusPayload);
+        setAutoMode(auto.viz_mode);
+        if (auto.graph && auto.graph.nodes.length > 0) {
+          setGraphResult(auto.graph);
+        } else {
+          const response = await loadGraph(focusPayload);
+          setGraphResult(response);
+        }
         setSelectedNode(null);
         setSelectedRelation(null);
       } else {
@@ -1007,6 +1024,7 @@ export default function GraphTab({
     setError(null);
     setSelectedNode(null);
     setSelectedRelation(null);
+    setAutoMode(null);
   }, [mode]);
 
   useEffect(() => {
@@ -1203,6 +1221,17 @@ export default function GraphTab({
                     </span>
                   </span>
                 )}
+                {autoMode && (
+                  <span className="flex items-center gap-1 rounded bg-primary/8 px-1.5 py-0.5 text-primary font-medium" title="Kiểu graph tự chọn theo cấu trúc tài liệu">
+                    {autoMode === "citation_network"
+                      ? "Mạng dẫn chiếu điều luật"
+                      : autoMode === "hierarchy"
+                        ? "Graph theo Điều/Mục"
+                        : autoMode === "timeline"
+                          ? "Dòng thời gian"
+                          : "Đồ thị khái niệm"}
+                  </span>
+                )}
                 <span className="ml-auto">Click node · Chuột phải để hành động</span>
               </div>
             </div>
@@ -1244,7 +1273,7 @@ export default function GraphTab({
           {hasCanvas && (
             <div className="h-full bg-white">
               <GraphCanvas
-                mode={mode}
+                mode={canvasRenderMode}
                 onSelect={handleSelect}
                 onEdgeSelect={handleEdgeSelect}
                 canvasNodes={canvas.nodes!}
@@ -1255,7 +1284,7 @@ export default function GraphTab({
                 searchQuery={graphSearch}
                 answerEntityIds={graphAnswerHighlights}
               />
-              {mode === "graph" && <GraphLegend />}
+              {canvasRenderMode === "graph" && <GraphLegend />}
             </div>
           )}
         </div>
@@ -1295,7 +1324,7 @@ export default function GraphTab({
 
       {fullscreen && hasCanvas && (
         <FullscreenOverlay
-          mode={mode}
+          mode={canvasRenderMode}
           canvas={canvas}
           selectedNode={selectedNode}
           selectedRelation={selectedRelation}

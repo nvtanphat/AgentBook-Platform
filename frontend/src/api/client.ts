@@ -866,6 +866,38 @@ export function loadGraph(payload: {
   return apiPost<GraphResponse>("/graph", payload);
 }
 
+// Structure-adaptive visualization: backend picks viz_mode from measured
+// document structure (hierarchy tree for legal/manuals, concept graph for
+// papers). For hierarchy/citation_network it returns a nested `tree`.
+export type VizSignals = {
+  hierarchy: number;
+  reference: number;
+  semantic: number;
+  temporal: number;
+  counts: Record<string, number>;
+};
+
+export type AutoVizResponse = {
+  viz_mode: "hierarchy" | "citation_network" | "concept_graph" | "timeline" | string;
+  signals: VizSignals;
+  tree: MindmapNode[];
+  graph: GraphResponse | null;
+};
+
+export function loadAutoViz(payload: {
+  owner_id: string;
+  collection_id?: string | null;
+  material_ids?: string[];
+  root_topic?: string | null;
+  focus_block_ids?: string[];
+  focus_material_ids?: string[];
+  focus_pages?: string[];
+  focus_query_text?: string;
+  focus_answer_text?: string;
+}) {
+  return apiPost<AutoVizResponse>("/graph/auto", payload);
+}
+
 export type SummaryRequest = {
   owner_id: string;
   collection_id?: string | null;
