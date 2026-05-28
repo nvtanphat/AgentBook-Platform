@@ -1,5 +1,6 @@
 import dagre from "@dagrejs/dagre";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import ReactFlow, {
   Background,
   Controls,
@@ -116,6 +117,49 @@ function typeColor(type: string) {
   };
 }
 
+// ── Verification status (verify mode only) ──────────────────────────────────
+// Derived from evidence count + confidence + whether the node was cited
+// (focused). Thresholds live here so they are easy to tweak.
+const VERIFY_STRONG_CONF = 0.7;   // ≥ → verified (green)
+const VERIFY_PARTIAL_CONF = 0.4;  // ≥ → partial (amber); below w/ evidence → weak (red)
+const VERIFY_ARC_MAX_NODES = 50;  // above this, skip per-node confidence arcs (perf)
+
+type VerifyStatus = "verified" | "partial" | "weak" | "unverified";
+
+const VERIFY_COLORS: Record<VerifyStatus, { ring: string; badge: string; icon: string; label: string }> = {
+  verified:   { ring: "#22c55e", badge: "#16a34a", icon: "✓", label: "Đã xác minh" },
+  partial:    { ring: "#f59e0b", badge: "#d97706", icon: "≈", label: "Xác minh một phần" },
+  weak:       { ring: "#ef4444", badge: "#dc2626", icon: "!", label: "Bằng chứng yếu" },
+  unverified: { ring: "#94a3b8", badge: "#64748b", icon: "?", label: "Chưa có bằng chứng" },
+};
+
+function verifyStatusOf(
+  confidence: number | null | undefined,
+  evidenceCount: number,
+  focused: boolean,
+): VerifyStatus {
+  if (focused) {
+    // Directly cited by the answer — treat as backed unless confidence is clearly low.
+    const c = confidence ?? VERIFY_STRONG_CONF; // citation-graph nodes have null conf → verified
+    if (c >= VERIFY_PARTIAL_CONF) return "verified";
+    return "partial";
+  }
+  if (evidenceCount > 0) {
+    const c = confidence ?? VERIFY_PARTIAL_CONF; // has evidence but no numeric conf → partial
+    if (c >= VERIFY_STRONG_CONF) return "verified";
+    if (c >= VERIFY_PARTIAL_CONF) return "partial";
+    return "weak";
+  }
+  return "unverified";
+}
+
+function confidenceTierColor(confidence: number | null | undefined): string {
+  const c = confidence ?? 0;
+  if (c >= VERIFY_STRONG_CONF) return "#22c55e";
+  if (c >= VERIFY_PARTIAL_CONF) return "#f59e0b";
+  return "#ef4444";
+}
+
 type CircleNodeData = {
   label: string;
   entityType: string;
@@ -130,6 +174,12 @@ type CircleNodeData = {
   // G4 — GraphRAG answer trace highlight
   answerHighlight?: boolean;
   evidenceRefs?: Array<Record<string, string | number>>;
+  // Verify mode — set only when graphFocusOnAnswer is on
+  verifyMode?: boolean;
+  verifyStatus?: VerifyStatus;
+  evidenceCount?: number;
+  totalNodes?: number;  // for arc perf fallback
+  sourceLabel?: string | null;  // doc · page, for hover tooltip
 };
 
 // Distinct community colors (Tableau 20 palette subset)
@@ -156,8 +206,22 @@ function CircleNode({ data, selected }: NodeProps<CircleNodeData>) {
   // Hub nodes are 30% larger; primary focused entities (from citations) are 40% larger
   const importance = data.importance ?? 0;
   const sizeBoost = isPrimaryFocus ? 40 : isHub ? 30 : Math.round(importance * 15);
-  const size = 72 + Math.min(deg, 10) * 4 + sizeBoost;
+  // Verify mode: focused (cited) nodes get a noticeably bigger boost so they
+  // stand apart from search highlight.
+  const isVerifyMode = Boolean(data.verifyMode);
+  const vStatus = data.verifyStatus;
+  const vColor = vStatus ? VERIFY_COLORS[vStatus] : null;
+  const evidenceCount = data.evidenceCount ?? 0;
+  const verifyBoost = isVerifyMode && isPrimaryFocus ? 18 : 0;
+  const size = 72 + Math.min(deg, 10) * 4 + sizeBoost + verifyBoost;
   const commColor = communityColor(data.community);
+
+  // Confidence arc geometry (verify mode, small graphs only). Stroke-dashoffset
+  // fills the ring proportional to confidence; colour by tier.
+  const showArc = isVerifyMode && (data.totalNodes ?? 0) <= VERIFY_ARC_MAX_NODES && data.confidence != null;
+  const arcPct = Math.max(0, Math.min(1, data.confidence ?? 0));
+  const arcR = size / 2 + 6;
+  const arcC = 2 * Math.PI * arcR;
 
   const centerHandle: React.CSSProperties = {
     left: "50%",
@@ -179,16 +243,27 @@ function CircleNode({ data, selected }: NodeProps<CircleNodeData>) {
   // Community color provides a soft outer ring even when not selected
   // Primary focused entity (from citations) gets a distinct gold ring
   // GraphRAG answer-trace nodes get a magenta ring + glow, outranking other highlights.
-  const borderColor = isAnswerHighlight
-    ? "#d946ef"
-    : isPrimaryFocus
-      ? "#fbbf24"
-      : isSearchMatch
+  // In verify mode the status ring colour takes priority so the user can read
+  // verification state at a glance. Focused (cited) nodes keep a thick ring.
+  const borderColor = isVerifyMode && vColor
+    ? vColor.ring
+    : isAnswerHighlight
+      ? "#d946ef"
+      : isPrimaryFocus
         ? "#fbbf24"
-        : selected
-          ? "#ffffff"
-          : commColor;
-  const borderWidth = isAnswerHighlight ? 5 : isPrimaryFocus ? 4 : selected || isFocused || isSearchMatch ? 3 : isHub ? 3 : 2;
+        : isSearchMatch
+          ? "#fbbf24"
+          : selected
+            ? "#ffffff"
+            : commColor;
+  const borderWidth = isVerifyMode
+    ? (isPrimaryFocus ? 5 : 3)
+    : isAnswerHighlight ? 5 : isPrimaryFocus ? 4 : selected || isFocused || isSearchMatch ? 3 : isHub ? 3 : 2;
+  const verifyGlow = isVerifyMode && vColor
+    ? (isPrimaryFocus
+        ? `0 0 0 6px ${vColor.ring}33, 0 0 26px ${vColor.ring}88, 0 10px 26px ${vColor.ring}55`
+        : `0 0 0 3px ${vColor.ring}22, 0 0 14px ${vColor.ring}55`)
+    : null;
   return (
     <div
       style={{
@@ -204,7 +279,9 @@ function CircleNode({ data, selected }: NodeProps<CircleNodeData>) {
         gap: 3,
         padding: 8,
         opacity: isDimmed ? 0.18 : 1,
-        boxShadow: isAnswerHighlight
+        boxShadow: verifyGlow
+          ? verifyGlow
+          : isAnswerHighlight
           ? `0 0 0 7px rgba(217,70,239,0.30), 0 0 22px rgba(217,70,239,0.55), 0 12px 30px rgba(192,38,211,0.40)`
           : isSearchMatch
             ? `0 0 0 6px rgba(251,191,36,0.25), 0 10px 28px rgba(245,158,11,0.35)`
@@ -221,7 +298,83 @@ function CircleNode({ data, selected }: NodeProps<CircleNodeData>) {
         position: "relative",
       }}
     >
-      {isHub && (
+      {/* Confidence arc (verify mode, small graphs) — thin ring just outside node */}
+      {showArc && (
+        <svg
+          width={arcR * 2}
+          height={arcR * 2}
+          viewBox={`0 0 ${arcR * 2} ${arcR * 2}`}
+          style={{
+            position: "absolute",
+            left: "50%",
+            top: "50%",
+            transform: "translate(-50%, -50%) rotate(-90deg)",
+            pointerEvents: "none",
+            overflow: "visible",
+            zIndex: 0,
+          }}
+        >
+          <circle cx={arcR} cy={arcR} r={arcR} fill="none" stroke="rgba(148,163,184,0.25)" strokeWidth={3} />
+          <circle
+            cx={arcR}
+            cy={arcR}
+            r={arcR}
+            fill="none"
+            stroke={confidenceTierColor(data.confidence)}
+            strokeWidth={3}
+            strokeLinecap="round"
+            strokeDasharray={arcC}
+            strokeDashoffset={arcC * (1 - arcPct)}
+          />
+        </svg>
+      )}
+      {/* Verify-status badge (top-left) — replaces nothing, glanceable state */}
+      {isVerifyMode && vColor && (
+        <span
+          title={vColor.label}
+          style={{
+            position: "absolute",
+            top: -6,
+            left: -4,
+            background: vColor.badge,
+            color: "#ffffff",
+            fontSize: 11,
+            fontWeight: 900,
+            width: 18,
+            height: 18,
+            lineHeight: "18px",
+            textAlign: "center",
+            borderRadius: 999,
+            border: "2px solid #ffffff",
+            boxShadow: "0 2px 4px rgba(0,0,0,0.3)",
+            zIndex: 3,
+          }}
+        >
+          {vColor.icon}
+        </span>
+      )}
+      {/* Evidence count badge (top-right) — in verify mode prefer this over hub star */}
+      {isVerifyMode && evidenceCount > 0 ? (
+        <span
+          title={`${evidenceCount} bằng chứng`}
+          style={{
+            position: "absolute",
+            top: -6,
+            right: -4,
+            background: vColor ? vColor.badge : "#16a34a",
+            color: "#ffffff",
+            fontSize: 9,
+            fontWeight: 800,
+            padding: "1px 5px",
+            borderRadius: 999,
+            border: "2px solid #ffffff",
+            boxShadow: "0 2px 4px rgba(0,0,0,0.25)",
+            zIndex: 3,
+          }}
+        >
+          {evidenceCount} 📎
+        </span>
+      ) : isHub && (
         <span
           title="Hub node — high centrality"
           style={{

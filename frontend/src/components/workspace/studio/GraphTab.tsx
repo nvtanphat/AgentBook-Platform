@@ -768,6 +768,143 @@ function TraceHeader({
   );
 }
 
+// ─── Verification dashboard (verify mode) ───────────────────────────────────
+// Thresholds — easy to tweak, no magic numbers inline.
+const VERIFY_STRONG = 0.7;
+const VERIFY_PARTIAL_T = 0.4;
+const HUB_DEGREE_MIN = 3;  // node with degree ≥ this + no evidence = important gap
+
+function nodeVerifyStatus(n: CanvasNode): "verified" | "partial" | "weak" | "unverified" {
+  const ev = (n.evidence_refs ?? []).length;
+  const focused = Boolean(n.focused);
+  if (focused) return (n.confidence ?? VERIFY_STRONG) >= VERIFY_PARTIAL_T ? "verified" : "partial";
+  if (ev > 0) {
+    const c = n.confidence ?? VERIFY_PARTIAL_T;
+    if (c >= VERIFY_STRONG) return "verified";
+    if (c >= VERIFY_PARTIAL_T) return "partial";
+    return "weak";
+  }
+  return "unverified";
+}
+
+function VerificationDashboard({
+  question,
+  coverage,
+  nodes,
+  edges,
+  sourceCount,
+}: {
+  question: string | null;
+  coverage: { coverage_ratio: number; total_sentences?: number; supported?: number; partial?: number; unsupported?: number } | null;
+  nodes: CanvasNode[];
+  edges: CanvasEdge[];
+  sourceCount: number;
+}) {
+  // Overall score: prefer answer-level sentence coverage; else fall back to the
+  // fraction of graph nodes that are verified.
+  const statuses = nodes.map(nodeVerifyStatus);
+  const verifiedCount = statuses.filter((s) => s === "verified").length;
+  const partialCount = statuses.filter((s) => s === "partial").length;
+  const weakCount = statuses.filter((s) => s === "weak").length;
+  const unverifiedCount = statuses.filter((s) => s === "unverified").length;
+  const total = nodes.length || 1;
+
+  const score = coverage
+    ? Math.round((coverage.coverage_ratio || 0) * 100)
+    : Math.round((verifiedCount / total) * 100);
+  const scoreColor = score >= 70 ? "#16a34a" : score >= 40 ? "#d97706" : "#dc2626";
+  const scoreLabel = score >= 70 ? "Đáng tin cậy" : score >= 40 ? "Cần xem xét" : "Yếu";
+
+  const edgesWithEvidence = edges.filter((e) => (e.evidence_count ?? (e.evidence_refs?.length ?? 0)) > 0).length;
+
+  // Coverage bar segments — sentence-level if available, else node-level.
+  const seg = coverage && coverage.total_sentences
+    ? [
+        { n: coverage.supported ?? 0, color: "#22c55e", label: "Mạnh" },
+        { n: coverage.partial ?? 0, color: "#f59e0b", label: "Một phần" },
+        { n: coverage.unsupported ?? 0, color: "#ef4444", label: "Yếu" },
+      ]
+    : [
+        { n: verifiedCount, color: "#22c55e", label: "Đã xác minh" },
+        { n: partialCount, color: "#f59e0b", label: "Một phần" },
+        { n: weakCount, color: "#ef4444", label: "Yếu" },
+        { n: unverifiedCount, color: "#94a3b8", label: "Chưa có" },
+      ];
+  const segTotal = seg.reduce((s, x) => s + x.n, 0) || 1;
+
+  // Gap warning: high-degree (hub) nodes with no evidence.
+  const gapNodes = nodes.filter((n) => (n.degree ?? 0) >= HUB_DEGREE_MIN && (n.evidence_refs?.length ?? 0) === 0);
+
+  return (
+    <div className="rounded-lg border border-primary/15 bg-gradient-to-br from-primary/5 to-transparent px-3 py-2.5">
+      {/* Header + overall score */}
+      <div className="flex items-center gap-3">
+        <div
+          className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-full"
+          style={{ background: `conic-gradient(${scoreColor} ${score * 3.6}deg, #e2e8f0 0deg)` }}
+          title="Điểm kiểm chứng tổng thể"
+        >
+          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-white">
+            <span className="text-[13px] font-extrabold" style={{ color: scoreColor }}>{score}</span>
+          </div>
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <ShieldCheck size={13} style={{ color: scoreColor }} />
+            <p className="text-[11px] font-bold uppercase tracking-wider" style={{ color: scoreColor }}>
+              Kiểm chứng · {scoreLabel}
+            </p>
+          </div>
+          <p className="mt-0.5 truncate text-xs font-semibold text-text" title={question ?? undefined}>
+            {question || "Câu trả lời hiện tại"}
+          </p>
+        </div>
+      </div>
+
+      {/* Stratified coverage bar */}
+      <div className="mt-2.5">
+        <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-slate-100">
+          {seg.map((s, i) => s.n > 0 && (
+            <div key={i} style={{ width: `${(s.n / segTotal) * 100}%`, background: s.color }} title={`${s.label}: ${s.n}`} />
+          ))}
+        </div>
+        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[9.5px] font-semibold text-muted">
+          {seg.map((s, i) => s.n > 0 && (
+            <span key={i} className="flex items-center gap-1">
+              <span className="inline-block h-2 w-2 rounded-full" style={{ background: s.color }} />
+              {s.label} {s.n}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {/* Quick stat cards */}
+      <div className="mt-2.5 grid grid-cols-4 gap-1.5">
+        {[
+          { icon: <ShieldCheck size={12} />, big: `${verifiedCount}/${nodes.length}`, label: "node verified" },
+          { icon: <Network size={12} />, big: `${edgesWithEvidence}`, label: "edge có BC" },
+          { icon: <FileText size={12} />, big: `${sourceCount}`, label: "nguồn" },
+          { icon: <Target size={12} />, big: `${score}%`, label: "tổng thể" },
+        ].map((c, i) => (
+          <div key={i} className="rounded-md border border-outline bg-white px-1.5 py-1 text-center">
+            <div className="flex items-center justify-center text-primary">{c.icon}</div>
+            <div className="text-[13px] font-extrabold leading-tight text-text">{c.big}</div>
+            <div className="text-[8.5px] leading-tight text-muted">{c.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Gap warning */}
+      {gapNodes.length > 0 && (
+        <div className="mt-2 flex items-start gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-[10.5px] text-amber-800">
+          <AlertCircle size={12} className="mt-0.5 shrink-0" />
+          <span>Phát hiện <b>{gapNodes.length}</b> thực thể quan trọng chưa có bằng chứng — cần kiểm tra thêm.</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GraphPurposeCard({ hasTrace }: { hasTrace: boolean }) {
   return (
     <div className="rounded-lg border border-outline bg-slate-50 px-3 py-2">
@@ -794,9 +931,10 @@ function GraphPurposeCard({ hasTrace }: { hasTrace: boolean }) {
 // ─── Fullscreen overlay ───────────────────────────────────────────────────────
 
 function FullscreenOverlay({
-  mode, canvas, selectedNode, selectedRelation, onSelect, onEdgeSelect, onClose, onOpenEvidence, onDraftQuestion, onFindRelated,
+  mode, verifyMode, canvas, selectedNode, selectedRelation, onSelect, onEdgeSelect, onClose, onOpenEvidence, onDraftQuestion, onFindRelated,
 }: {
   mode: "graph" | "mindmap";
+  verifyMode?: boolean;
   canvas: { nodes?: CanvasNode[]; edges?: CanvasEdge[] };
   selectedNode: SelectedNode | null;
   selectedRelation: SelectedRelation | null;
@@ -1089,7 +1227,15 @@ export default function GraphTab({
       <div className="flex h-full flex-col bg-slate-50">
         {/* Toolbar */}
         <div className="shrink-0 px-4 pt-4 pb-3 border-b border-outline bg-white flex flex-col gap-3">
-          {mode === "graph" && graphStats && (
+          {mode === "graph" && graphStats && graphFocusOnAnswer ? (
+            <VerificationDashboard
+              question={activeQueryContext?.question ?? null}
+              coverage={activeQueryContext?.response?.sentence_coverage ?? null}
+              nodes={canvas.nodes ?? []}
+              edges={canvas.edges ?? []}
+              sourceCount={graphStats.sources}
+            />
+          ) : mode === "graph" && graphStats && (
             <TraceHeader
               question={activeQueryContext?.question ?? null}
               nodeCount={graphStats.nodes}
@@ -1279,6 +1425,7 @@ export default function GraphTab({
             <div className="h-full bg-white">
               <GraphCanvas
                 mode={canvasRenderMode}
+                verifyMode={graphFocusOnAnswer && canvasRenderMode === "graph"}
                 onSelect={handleSelect}
                 onEdgeSelect={handleEdgeSelect}
                 canvasNodes={canvas.nodes!}
@@ -1330,6 +1477,7 @@ export default function GraphTab({
       {fullscreen && hasCanvas && (
         <FullscreenOverlay
           mode={canvasRenderMode}
+          verifyMode={graphFocusOnAnswer && canvasRenderMode === "graph"}
           canvas={canvas}
           selectedNode={selectedNode}
           selectedRelation={selectedRelation}
