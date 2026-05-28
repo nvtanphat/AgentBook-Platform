@@ -1512,11 +1512,19 @@ async def auto_viz(
         # the Knowledge Graph tab stays a graph, not a tree. The hierarchy tree
         # is still returned (for the Mindmap tab / outline use).
         section_texts = [(hi, " ".join(texts)) for hi, texts in sections]
+        graph_mode = getattr(body, "graph_mode", "auto")
+        if graph_mode == "auto":
+            use_query_text = not bool(relevant_heading_ids)
+        elif graph_mode == "verify":
+            use_query_text = False
+        else:  # explore
+            use_query_text = True
         c_nodes, c_edges = build_citation_network(
             sections=section_texts,
             viz_config=settings.viz_config,
             focus_block_ids=relevant_heading_ids if is_focus else None,
             focus_query_text=(body.focus_query_text or None) if is_focus else None,
+            use_query_text_signal=use_query_text,
         )
         if c_nodes:
             graph = GraphResponse(nodes=c_nodes, edges=c_edges)

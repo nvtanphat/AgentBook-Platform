@@ -988,7 +988,12 @@ export default function GraphTab({
         // Structure-adaptive: backend returns a citation graph (Điều + dẫn-chiếu
         // edges) for legal/hierarchical docs, or null for concept docs. Either
         // way the Knowledge Graph tab renders a node-edge graph (never a tree).
-        const auto = await loadAutoViz(focusPayload);
+        const auto = await loadAutoViz({
+          ...focusPayload,
+          // verify = show only Điều directly cited in answer (precise).
+          // explore = broader view with query-text matching.
+          graph_mode: graphFocusOnAnswer && focusBlockIds.length > 0 ? "verify" : "explore",
+        });
         setAutoMode(auto.viz_mode);
         if (auto.graph && auto.graph.nodes.length > 0) {
           setGraphResult(auto.graph);

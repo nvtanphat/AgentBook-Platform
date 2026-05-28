@@ -894,6 +894,10 @@ export function loadAutoViz(payload: {
   focus_pages?: string[];
   focus_query_text?: string;
   focus_answer_text?: string;
+  // "verify" = show only cited Điều (precise, for Kiểm chứng)
+  // "explore" = cited Điều + query-text match (broader)
+  // "auto"    = backend decides based on whether focus_block_ids provided
+  graph_mode?: "verify" | "explore" | "auto";
 }) {
   return apiPost<AutoVizResponse>("/graph/auto", payload);
 }

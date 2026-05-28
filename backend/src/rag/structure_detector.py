@@ -322,6 +322,7 @@ def build_citation_network(
     viz_config: dict,
     focus_block_ids: set[str] | None = None,
     focus_query_text: str | None = None,
+    use_query_text_signal: bool = True,
 ) -> tuple[list[GraphNode], list[GraphEdge]]:
     """Build a real node-edge graph for legal docs: one node per Điều, an edge
     "dẫn chiếu" whenever an article's text references another article.
@@ -382,9 +383,10 @@ def build_citation_network(
                 cited_arts.add(art)
 
     # Signal 2: query keyword match against article heading text.
-    # Keeps diacritics intact ("kết hôn" matches "kết hôn", score=2).
-    # Cap at top-12 by overlap score to avoid over-highlighting.
-    if query_kws:
+    # Only active in explore mode (use_query_text_signal=True). In verify mode,
+    # Signal 1 (citation blocks) is sufficient — the graph shows exactly the
+    # Điều the answer cited, nothing more.
+    if use_query_text_signal and query_kws:
         scored: list[tuple[int, str]] = []
         for art, heading in node_by_art.items():
             head_kws = {w.lower() for w in re.split(r"[^\wÀ-ỹĐđ]+", heading.text, flags=re.UNICODE) if len(w) >= 3}

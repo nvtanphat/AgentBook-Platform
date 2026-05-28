@@ -69,6 +69,13 @@ class MindmapRequest(BaseModel):
     root_topic: str | None = Field(default=None, max_length=1000)
     detail_level: Literal["brief", "overview", "detailed"] = "overview"
     use_llm: bool = False
+    # Controls how the citation graph focuses articles when verify mode is on.
+    #   verify  — Signal 1 only: highlight exactly the Điều whose blocks were cited
+    #             in the answer. Precise, few nodes. Intended for "Kiểm chứng".
+    #   explore — Signal 1 + query-text matching: broader, shows related articles.
+    #             Intended for general "Khám phá" view.
+    #   auto    — verify when focus_block_ids are provided, else explore.
+    graph_mode: Literal["verify", "explore", "auto"] = "auto"
     # When provided, graph endpoint filters/focuses on entities whose mention_refs
     # match these block_ids (from citations of the last answer). Used by the
     # "Kiểm chứng bằng Graph" button to show only entities backing the answer.
