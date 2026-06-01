@@ -59,6 +59,7 @@ ablation_*.txt
 # IDEs
 .vscode/
 .idea/
+.claude/
 *.swp
 *.swo
 
