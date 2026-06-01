@@ -132,7 +132,6 @@ class QueryService:
           6. Annotate the response with `used_entity_ids` + `used_relation_ids`
              so the frontend can highlight what backed the answer.
         """
-        from src.inference.inference_engine import REFUSAL_ANSWER
 
         scope = RetrievalScope(
             owner_id=request.owner_id,
@@ -429,7 +428,9 @@ class QueryService:
         started = perf_counter()
         final_response: QueryResponse | None = None
 
-        if self.settings.agentic_rag_enabled:
+        flags = request.rag_flags
+        use_agentic = flags.get("agentic_rag_enabled", self.settings.agentic_rag_enabled)
+        if use_agentic:
             queue: asyncio.Queue[object] = asyncio.Queue()
 
             async def publish_step(step) -> None:
@@ -446,7 +447,7 @@ class QueryService:
                         on_step=publish_step,
                     )
                     await queue.put(("done", response))
-                except Exception as exc:
+                except Exception:
                     logger.exception("Agentic streaming query failed", extra={"owner_id": request.owner_id})
                     await queue.put(("error", "Query pipeline failed. Please retry later."))
 

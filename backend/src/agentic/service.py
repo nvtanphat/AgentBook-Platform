@@ -27,7 +27,6 @@ import asyncio
 import inspect
 import logging
 import re
-import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
@@ -294,13 +293,25 @@ class AgenticCoordinatingEngine:
         # ── Rerank cleaned evidence + finalise context ──────────────────
         candidates = state.cleaned_evidence or state.raw_evidence
         if candidates:
-            reranked = await self._arerank(
-                query=state.resolved_query,
-                queries=state.retrieval_queries,
-                chunks=candidates,
-                limit=final_limit,
-                use_mmr=route.use_mmr,
+            # Skip second rerank when evidence came from a single retrieval pass
+            # (no sub-questions, no per-source splits). HybridTextSearchTool already
+            # reranked internally — running _arerank again doubles embedding latency
+            # (~27s) with identical results for FACTUAL/GENERAL single-hop queries.
+            single_pass = (
+                not state.sub_questions
+                and not state.use_per_source
+                and len(state.retrieval_queries) <= 1
             )
+            if single_pass:
+                reranked = candidates[:final_limit]
+            else:
+                reranked = await self._arerank(
+                    query=state.resolved_query,
+                    queries=state.retrieval_queries,
+                    chunks=candidates,
+                    limit=final_limit,
+                    use_mmr=route.use_mmr,
+                )
             reranked = self._ensure_context_coverage(
                 selected=reranked, candidates=candidates,
                 expected_material_ids=state.expected_material_ids, limit=final_limit,
@@ -406,7 +417,6 @@ class AgenticCoordinatingEngine:
         # ── Final adjudication based on guardrail verdict ───────────────
         warning: str | None = guard.warning
         if guard.verdict == ClaimVerdict.CONTRADICTED.value:
-            state.final_answer = state.final_answer + "\n\n> Cảnh báo: Phát hiện mâu thuẫn giữa câu trả lời và bằng chứng gốc."
             should_refuse = True
             refusal_reason = f"claim_verification_{guard.verdict}"
             state.final_answer = REFUSAL_ANSWER

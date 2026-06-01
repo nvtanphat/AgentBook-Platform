@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import re
 import logging
-from collections import defaultdict
 
-from src.processing.types import EvidenceBlock, EvidenceMap, ExtractedEntity, ExtractedRelation
+from src.processing.types import EvidenceMap, ExtractedEntity, ExtractedRelation
 
 logger = logging.getLogger(__name__)
 

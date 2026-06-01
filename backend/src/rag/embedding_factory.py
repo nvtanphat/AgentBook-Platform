@@ -11,28 +11,32 @@ logger = logging.getLogger(__name__)
 def build_visual_provider(settings: Settings) -> VisualEmbeddingProvider | None:
     """Return a VisualEmbeddingProvider based on config, or None if disabled.
 
-    Backend selection is driven by settings.visual_embedding_backend:
-      - "siglip"  → SigLIPProvider (google/siglip-base-patch16-224, 768d)
-      - "noop"    → None (silently disabled, used in tests / CI)
+    `visual_embedding.embedding_backend` selects the RUNTIME, not the model
+    family (the model itself comes from `visual_embedding.model`):
+      - "pytorch"           → SigLIPProvider on PyTorch (current path)
+      - "onnx"              → SigLIPProvider (ONNX INT8 path is not implemented
+                              yet; falls back to the PyTorch impl)
+      - "noop"/"none"/"disabled" → None (explicit off, used in tests / CI)
 
-    To switch from CPU PyTorch to GPU or ONNX INT8 later, change
-    visual_embedding.device / visual_embedding.embedding_backend in model_config.yaml
-    and restart. No code changes needed.
+    To switch CPU↔GPU change visual_embedding.device in model_config.yaml; no
+    code changes needed. Disabling entirely is done via `enabled: false`.
     """
     if not settings.visual_embedding_enabled:
         return None
 
-    backend = settings.visual_embedding_backend.lower()
+    backend = settings.visual_embedding_backend.lower().strip()
 
-    if backend == "siglip":
-        from src.rag.visual_embedder import SigLIPProvider
-        return SigLIPProvider(settings)
-
-    if backend == "noop":
+    # Explicit opt-out values keep visual embedding off even when enabled=true.
+    if backend in {"noop", "none", "disabled", ""}:
         return None
 
-    logger.warning(
-        "Unknown visual_embedding.embedding_backend=%s — visual embedding disabled",
-        backend,
-    )
-    return None
+    # All active runtimes currently resolve to the SigLIP PyTorch provider.
+    # ("onnx" is reserved for a future INT8 path; it uses the same impl today.)
+    if backend not in {"pytorch", "onnx", "siglip"}:
+        logger.warning(
+            "Unknown visual_embedding.embedding_backend=%s — defaulting to PyTorch SigLIP",
+            backend,
+        )
+
+    from src.rag.visual_embedder import SigLIPProvider
+    return SigLIPProvider(settings)

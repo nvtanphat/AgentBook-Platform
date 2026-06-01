@@ -1,6 +1,6 @@
 import { Outlet, NavLink, useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
-import { Activity, Database, LogOut, Settings } from "lucide-react";
+import { Database, LogOut, Settings } from "lucide-react";
 import { API_BASE_URL, checkHealth, getAdminMetrics } from "../api/client";
 import { useWorkspace } from "../state/workspace";
 import { useAuth } from "../state/auth";
@@ -47,19 +47,26 @@ export default function AppShell() {
 
   return (
     <div className="flex h-screen flex-col overflow-hidden" style={{ background: 'linear-gradient(135deg, var(--c-app-grad-from) 0%, var(--c-app-grad-to) 100%)' }}>
-      {/* ── Premium Header ── */}
-      <header className="app-header flex h-14 shrink-0 items-center justify-between px-5">
+      {/* ── Clean & Academic Header ── */}
+      <header className="app-header flex h-14 shrink-0 items-center justify-between px-5 z-50">
         <div className="flex items-center gap-3">
-          {/* Premium Vector Logo */}
-          <div className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-[11px] bg-gradient-to-br from-[#006591] via-[#0ea5e9] to-[#14b8a6] shadow-[0_4px_12px_rgba(14,165,233,0.3)] border border-white/20">
-            <svg className="w-[20px] h-[20px] text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M5 21V5a2 2 0 0 1 2-2h1l8 14h1a2 2 0 0 0 2-2V3" />
+          {/* Stunning Ink Slate Logo Box */}
+          <div 
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#0f172a] dark:bg-slate-800 border border-slate-700/50 shadow-sm transition-all duration-200 hover:scale-105 cursor-pointer" 
+            onClick={() => navigate("/workspace")}
+          >
+            <svg className="w-[18px] h-[18px] text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 2L2 7l10 5 10-5-10-5z" />
+              <path d="M2 17l10 5 10-5" />
+              <path d="M2 12l10 5 10-5" />
             </svg>
-            <div className="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-white animate-pulse" />
           </div>
-          <div>
-            <h1 className="font-heading text-[15px] font-bold leading-tight text-text tracking-tight">Noelys</h1>
-            <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-muted/70">Evidence workspace</p>
+          <div className="flex flex-col">
+            <div className="flex items-center gap-1.5">
+              <span className="font-heading text-[15px] font-extrabold tracking-[-0.01em] text-text leading-none">Noelys</span>
+              <span className="inline-flex items-center rounded-full bg-primary/10 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wider text-primary">RAG</span>
+            </div>
+            <span className="text-[9px] font-medium tracking-[0.06em] text-muted/70 mt-0.5">Evidence Workspace</span>
           </div>
         </div>
 
@@ -77,7 +84,7 @@ export default function AppShell() {
                 {health === "online" && <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />}
                 <span className={`relative inline-flex h-2 w-2 rounded-full ${health === "online" ? "bg-emerald-500" : health === "checking" ? "bg-amber-500" : "bg-red-500"}`} />
               </div>
-              <span className={health === "online" ? "text-emerald-700" : health === "checking" ? "text-amber-700" : "text-red-600"}>
+              <span className="text-muted">
                 {health === "online" ? "Online" : health === "checking" ? "Checking" : "Offline"}
               </span>
             </div>

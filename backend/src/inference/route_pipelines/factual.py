@@ -14,10 +14,7 @@ from typing import TYPE_CHECKING
 from src.inference.route_pipelines.base import BaseRoutePipeline
 
 if TYPE_CHECKING:
-    from src.guardrails.claim_verifier import ClaimVerifier
-    from src.guardrails.refusal_policy import RefusalPolicy
-    from src.inference.response_parser import ResponseParser
-    from src.rag.types import RetrievedChunk
+    pass
 
 logger = logging.getLogger(__name__)
 

@@ -1,6 +1,4 @@
-import dagre from "@dagrejs/dagre";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import ReactFlow, {
   Background,
   Controls,
@@ -8,6 +6,7 @@ import ReactFlow, {
   getRectOfNodes,
   getTransformForBounds,
   Handle,
+  MarkerType,
   MiniMap,
   Node,
   NodeProps,
@@ -16,6 +15,7 @@ import ReactFlow, {
   ReactFlowProvider,
   useEdgesState,
   useNodesState,
+  useReactFlow,
 } from "reactflow";
 import "reactflow/dist/style.css";
 import { toPng } from "html-to-image";
@@ -133,25 +133,6 @@ const VERIFY_COLORS: Record<VerifyStatus, { ring: string; badge: string; icon: s
   unverified: { ring: "#94a3b8", badge: "#64748b", icon: "?", label: "Chưa có bằng chứng" },
 };
 
-function verifyStatusOf(
-  confidence: number | null | undefined,
-  evidenceCount: number,
-  focused: boolean,
-): VerifyStatus {
-  if (focused) {
-    // Directly cited by the answer — treat as backed unless confidence is clearly low.
-    const c = confidence ?? VERIFY_STRONG_CONF; // citation-graph nodes have null conf → verified
-    if (c >= VERIFY_PARTIAL_CONF) return "verified";
-    return "partial";
-  }
-  if (evidenceCount > 0) {
-    const c = confidence ?? VERIFY_PARTIAL_CONF; // has evidence but no numeric conf → partial
-    if (c >= VERIFY_STRONG_CONF) return "verified";
-    if (c >= VERIFY_PARTIAL_CONF) return "partial";
-    return "weak";
-  }
-  return "unverified";
-}
 
 function confidenceTierColor(confidence: number | null | undefined): string {
   const c = confidence ?? 0;
@@ -266,6 +247,7 @@ function CircleNode({ data, selected }: NodeProps<CircleNodeData>) {
     : null;
   return (
     <div
+      className={isSearchMatch ? "node-search-pulse" : undefined}
       style={{
         width: size,
         height: size,
@@ -630,47 +612,6 @@ function seededJitter(id: string) {
   };
 }
 
-function applyDagreLayout(nodes: Node[], edges: Edge[]): Node[] {
-  const g = new dagre.graphlib.Graph();
-  g.setDefaultEdgeLabel(() => ({}));
-  // Layered LR layout with generous spacing — circles need more room than rectangles
-  g.setGraph({ rankdir: "LR", ranksep: 140, nodesep: 80, edgesep: 24, marginx: 60, marginy: 60 });
-  nodes.forEach((node) => {
-    const labelLen = (node.data as { label?: string } | undefined)?.label?.length || 10;
-    const entityType = (node.data as { entityType?: string } | undefined)?.entityType;
-    const isCircle = !["root", "topic", "branch", "cluster"].includes(entityType || "");
-    const isRoot = entityType === "root";
-    const isTopic = entityType === "topic";
-    const isBranch = entityType === "branch";
-    const isCluster = entityType === "cluster";
-    // Circle nodes are 86-126px diameter — reserve square box
-    const circleSize = 72 + Math.min(((node.data as { degree?: number })?.degree ?? 1), 10) * 4;
-    const width = isCircle
-      ? circleSize
-      : isRoot
-        ? Math.min(360, labelLen * 8 + 110)
-        : isTopic
-          ? Math.min(310, labelLen * 7 + 92)
-          : isBranch || isCluster
-            ? Math.min(270, labelLen * 6 + 78)
-            : Math.min(230, labelLen * 6 + 54);
-    const height = isCircle ? circleSize : isRoot ? 62 : isTopic ? 52 : isBranch || isCluster ? 42 : 34;
-    g.setNode(node.id, { width, height });
-  });
-  edges.forEach((edge) => {
-    try {
-      g.setEdge(edge.source, edge.target);
-    } catch {
-      // Ignore layout edge errors for malformed or hidden edges.
-    }
-  });
-  dagre.layout(g);
-  return nodes.map((node) => {
-    const p = g.node(node.id);
-    return p ? { ...node, position: { x: p.x - p.width / 2, y: p.y - p.height / 2 } } : node;
-  });
-}
-
 function applyMindmapTreeLayout(nodes: Node[], edges: Edge[]): Node[] {
   const children = new Map<string, string[]>();
   edges.forEach((edge) => {
@@ -680,9 +621,11 @@ function applyMindmapTreeLayout(nodes: Node[], edges: Edge[]): Node[] {
   const root = nodes.find((node) => (node.data as MindmapNodeData).entityType === "root") ?? nodes[0];
   if (!root) return nodes;
 
-  const leafHeight = 46;
-  const branchGap = 18;
-  const levelX = [40, 340, 610, 850, 1080];
+  // Generous spacing so pill labels never overlap. Wider level gaps give edges
+  // room to curve cleanly; taller leaf rows keep sibling text legible.
+  const leafHeight = 58;
+  const branchGap = 28;
+  const levelX = [40, 380, 700, 1000, 1280];
   const subtreeHeight = new Map<string, number>();
 
   const measure = (nodeId: string): number => {
@@ -734,6 +677,7 @@ export type GraphCanvasProps = {
   searchQuery?: string;
   // G4 — GraphRAG answer provenance highlight (slug-form ids the LLM actually used)
   answerEntityIds?: string[];
+  verifyMode?: boolean;
 };
 
 function FlowInner({
@@ -752,7 +696,21 @@ function FlowInner({
   const [prunedNodes, setPrunedNodes] = useState<Set<string>>(() => new Set());
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const lastMindmapSignature = useRef<string>("");
+  const { fitView } = useReactFlow();
+
+  // Adjacency (both directions) for focus-mode dimming — cheap to recompute,
+  // and deliberately kept OUT of the layout pipeline so hovering never
+  // re-runs the force simulation.
+  const adjacency = useMemo<Map<string, Set<string>>>(() => {
+    const adj = new Map<string, Set<string>>();
+    for (const e of canvasEdges) {
+      (adj.get(e.source) ?? adj.set(e.source, new Set()).get(e.source)!).add(e.target);
+      (adj.get(e.target) ?? adj.set(e.target, new Set()).get(e.target)!).add(e.source);
+    }
+    return adj;
+  }, [canvasEdges]);
 
   const matchingNodeIds = useMemo<Set<string> | null>(() => {
     const q = searchQuery?.trim().toLowerCase();
@@ -934,6 +892,7 @@ function FlowInner({
           const isDark = typeof document !== "undefined" && document.documentElement.classList.contains("dark");
           const defaultStroke = isDark ? "#46557a" : "#94a3b8";
           const highlightStroke = isDark ? "#22d3ee" : "#0891b2";
+          const strokeColor = selectedRelated || edge.focused ? highlightStroke : mode === "graph" ? defaultStroke : branchColor;
 
           return {
             id: edge.id ?? `${edge.source}__${edge.target}__${index}`,
@@ -943,9 +902,14 @@ function FlowInner({
             data: { canvasEdge: edge },
             label: selectedRelated ? semanticLabel : undefined,
             animated: selectedRelated,
+            // Directional arrow on knowledge-graph relations (source → target).
+            // Mindmap stays arrow-free: its left→right hierarchy is already clear.
+            markerEnd: mode === "graph"
+              ? { type: MarkerType.ArrowClosed, width: 16, height: 16, color: strokeColor }
+              : undefined,
             style: {
               opacity: dimmed ? 0.08 : selectedRelated ? 1 : mode === "graph" ? 0.4 : 0.7,
-              stroke: selectedRelated || edge.focused ? highlightStroke : mode === "graph" ? defaultStroke : branchColor,
+              stroke: strokeColor,
               strokeWidth: selectedRelated ? 2.5 : edge.focused ? 2 : mode === "graph" ? 1.4 : 1.75,
             },
             labelStyle: { fill: highlightStroke, fontSize: 10, fontWeight: 700 },
@@ -971,13 +935,62 @@ function FlowInner({
   const [nodes, setNodes, onNodesChange] = useNodesState(layoutedNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(rfEdges);
 
+  // Combined sync + focus decoration. Positions always come from `layoutedNodes`
+  // (hoveredNodeId is NOT a layout dependency), so hovering only re-paints
+  // dim/highlight — it never re-runs the force simulation or shifts nodes.
   useEffect(() => {
-    setNodes(layoutedNodes);
-  }, [layoutedNodes, setNodes]);
+    if (mode !== "graph" || !hoveredNodeId) {
+      setNodes(layoutedNodes);
+      setEdges(rfEdges);
+      return;
+    }
+    const neighbors = adjacency.get(hoveredNodeId) ?? new Set<string>();
+    const isDark = typeof document !== "undefined" && document.documentElement.classList.contains("dark");
+    const focusStroke = isDark ? "#22d3ee" : "#0891b2";
 
+    setNodes(
+      layoutedNodes.map((n) => {
+        const active = n.id === hoveredNodeId || neighbors.has(n.id);
+        return {
+          ...n,
+          data: {
+            ...n.data,
+            dimmed: !active,
+            focused: (n.data as { focused?: boolean }).focused || n.id === hoveredNodeId,
+          },
+        };
+      }),
+    );
+    setEdges(
+      rfEdges.map((e) => {
+        const related = e.source === hoveredNodeId || e.target === hoveredNodeId;
+        return {
+          ...e,
+          animated: related,
+          style: {
+            ...e.style,
+            opacity: related ? 1 : 0.06,
+            stroke: related ? focusStroke : (e.style?.stroke as string),
+            strokeWidth: related ? 2.5 : (e.style?.strokeWidth as number),
+          },
+        };
+      }),
+    );
+  }, [hoveredNodeId, layoutedNodes, rfEdges, adjacency, mode, setNodes, setEdges]);
+
+  // Re-center the canvas whenever the underlying data set changes (new graph,
+  // collapse/expand, mode switch) — but not on hover/selection re-paints.
+  const dataSignature = useMemo(
+    () => `${mode}|${layoutedNodes.map((n) => n.id).join(",")}`,
+    [mode, layoutedNodes],
+  );
   useEffect(() => {
-    setEdges(rfEdges);
-  }, [rfEdges, setEdges]);
+    const t = setTimeout(
+      () => fitView({ padding: mode === "mindmap" ? 0.24 : 0.14, duration: 400 }),
+      90,
+    );
+    return () => clearTimeout(t);
+  }, [dataSignature, fitView, mode]);
 
   const handleNodeClick = useCallback(
     (_: unknown, node: Node) => {
@@ -986,6 +999,15 @@ function FlowInner({
     },
     [onSelect]
   );
+
+  // Focus mode — hovering a node dims everything except it and its neighbours.
+  const handleNodeMouseEnter = useCallback(
+    (_: unknown, node: Node) => {
+      if (mode === "graph") setHoveredNodeId(node.id);
+    },
+    [mode]
+  );
+  const handleNodeMouseLeave = useCallback(() => setHoveredNodeId(null), []);
 
   const handleEdgeClick = useCallback(
     (_: unknown, edge: Edge) => {
@@ -1140,6 +1162,8 @@ function FlowInner({
       onNodesChange={onNodesChange}
       onEdgesChange={onEdgesChange}
       onNodeClick={handleNodeClick}
+      onNodeMouseEnter={handleNodeMouseEnter}
+      onNodeMouseLeave={handleNodeMouseLeave}
       onEdgeClick={handleEdgeClick}
       onNodeContextMenu={handleNodeContextMenu}
       onPaneClick={() => setSelectedNodeId(null)}

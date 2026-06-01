@@ -44,14 +44,19 @@ export default function LoginPage() {
       <div className="w-full max-w-md">
         {/* Logo */}
         <div className="mb-6 flex items-center justify-center gap-3">
-          <div className="relative flex h-12 w-12 items-center justify-center rounded-[14px] bg-gradient-to-br from-[#006591] via-[#0ea5e9] to-[#14b8a6] shadow-[0_8px_24px_rgba(14,165,233,0.35)] border border-white/20">
-            <svg className="h-6 w-6 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M5 21V5a2 2 0 0 1 2-2h1l8 14h1a2 2 0 0 0 2-2V3" />
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[14px] bg-[#0f172a] dark:bg-slate-800 border border-slate-700/50 shadow-sm">
+            <svg className="h-6 w-6 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 2L2 7l10 5 10-5-10-5z" />
+              <path d="M2 17l10 5 10-5" />
+              <path d="M2 12l10 5 10-5" />
             </svg>
           </div>
           <div>
-            <h1 className="font-heading text-2xl font-bold text-text">Noelys</h1>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted">Evidence workspace</p>
+            <div className="flex items-center gap-2">
+              <h1 className="font-heading text-2xl font-extrabold tracking-tight text-text leading-none">Noelys</h1>
+              <span className="inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-primary">RAG</span>
+            </div>
+            <p className="mt-1 text-xs font-medium tracking-[0.05em] text-muted">Evidence Learning Workspace</p>
           </div>
         </div>
 

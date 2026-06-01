@@ -6,7 +6,6 @@ from beanie import PydanticObjectId
 
 from src.core.config import get_settings
 from src.models.chat_memory import ChatMemory, ChatTurn
-from src.models.chat_memory import ChatSummaryMemory
 from src.models.common import utc_now
 from src.models.query_log import QueryLog
 from src.rag.types import RetrievalScope

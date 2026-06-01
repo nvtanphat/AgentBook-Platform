@@ -46,18 +46,18 @@ function getFileIconInfo(filename: string, fileType = ""): FileIconInfo {
   const name = filename.toLowerCase();
   const mime = fileType.toLowerCase();
   if (name.endsWith(".png") || name.endsWith(".jpg") || name.endsWith(".jpeg") || mime.includes("image"))
-    return { icon: <Image size={14} />, colorClass: "text-purple-500" };
+    return { icon: <Image size={14} />, colorClass: "text-slate-400" };
   if (name.endsWith(".csv") || name.endsWith(".xlsx") || mime.includes("spreadsheet") || mime.includes("csv"))
-    return { icon: <Table2 size={14} />, colorClass: "text-emerald-600" };
+    return { icon: <Table2 size={14} />, colorClass: "text-slate-400" };
   if (name.endsWith(".pdf") || mime.includes("pdf"))
-    return { icon: <FileText size={14} />, colorClass: "text-red-500" };
+    return { icon: <FileText size={14} />, colorClass: "text-slate-400" };
   if (name.endsWith(".docx") || name.endsWith(".doc") || mime.includes("word"))
-    return { icon: <FileText size={14} />, colorClass: "text-blue-500" };
+    return { icon: <FileText size={14} />, colorClass: "text-slate-400" };
   if (name.endsWith(".pptx") || name.endsWith(".ppt") || mime.includes("presentation"))
-    return { icon: <FileText size={14} />, colorClass: "text-amber-500" };
+    return { icon: <FileText size={14} />, colorClass: "text-slate-400" };
   if (/\.(mp3|wav|m4a|ogg|flac|webm|aac)$/.test(name) || mime.includes("audio"))
-    return { icon: <FileAudio size={14} />, colorClass: "text-pink-500" };
-  return { icon: <FileText size={14} />, colorClass: "text-primary" };
+    return { icon: <FileAudio size={14} />, colorClass: "text-slate-400" };
+  return { icon: <FileText size={14} />, colorClass: "text-slate-400" };
 }
 
 // ─── Pipeline stage → progress % ─────────────────────────────────────────────
@@ -119,7 +119,6 @@ function CircularProgress({ status, stage }: { status: string; stage?: string | 
   const circ   = 2 * Math.PI * r;
 
   const pct  = useSmoothedProgress(status, stage ?? null);
-  const dash = (pct / 100) * circ;
 
   const isTerminal = status === "indexed" || status === "failed";
   const realPct    = isTerminal ? stagePct(status, stage ?? null) : pct;
@@ -773,7 +772,7 @@ export default function SourcesPanel({ onCloseMobile }: { onCloseMobile?: () => 
                       if (next.has(f.name)) next.delete(f.name); else next.add(f.name);
                       return next;
                     })}
-                    className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold border transition ${isHW ? "bg-purple-50 text-purple-700 border-purple-300" : "bg-slate-50 text-slate-500 border-slate-200 hover:border-primary/40"}`}
+                    className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold border transition ${isHW ? "bg-slate-100 text-slate-600 border-slate-300" : "bg-slate-50 text-slate-500 border-slate-200 hover:border-slate-400"}`}
                   >
                     {isHW ? "✍ Viết tay" : "🖨 In ấn"}
                   </button>

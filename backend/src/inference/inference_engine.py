@@ -6,7 +6,6 @@ import math
 import logging
 import re
 from collections import defaultdict
-from dataclasses import dataclass, field
 from typing import AsyncGenerator
 
 from src.core.base_llm import BaseLLM
@@ -792,6 +791,12 @@ class InferenceEngine:
             err = json.dumps({"message": PUBLIC_GENERATION_ERROR})
             yield f"event: error\ndata: {err}\n\n"
             return
+
+        # Token streaming is done; grounding verification (claim-check, SLEC,
+        # citation injection) runs next and can take a while on CPU. Signal the
+        # client so it can swap the typing cursor for a "verifying" indicator
+        # instead of leaving a frozen blinking caret.
+        yield f"event: verifying\ndata: {json.dumps({'phase': 'verifying'})}\n\n"
 
         # ── Post-process and send done ────────────────────────────────────────
         answer = accumulated.strip() or REFUSAL_ANSWER

@@ -11,7 +11,7 @@ from pydantic import ValidationError
 from qdrant_client import models as qdrant_models
 
 from src.core.config import Settings
-from src.core.security import UploadValidationError, ensure_child_path, stream_upload_to_temp
+from src.core.security import UploadValidationError, stream_upload_to_temp
 from src.dependencies import get_app_settings, get_material_service, verify_owner_access
 from src.models.chunk import Chunk
 from src.models.material import Material, get_material_pages

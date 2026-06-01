@@ -4,7 +4,7 @@ import logging
 import asyncio
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from threading import RLock
 
 from beanie import PydanticObjectId

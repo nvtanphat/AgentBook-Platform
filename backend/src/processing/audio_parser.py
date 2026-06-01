@@ -9,7 +9,6 @@ can deep-link back to the audio position.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 import threading

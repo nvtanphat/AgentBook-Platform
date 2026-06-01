@@ -21,15 +21,13 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from beanie import PydanticObjectId
-
 from src.agentic.agents.base import BaseAgent
 from src.agentic.planner import AgenticSubQuestion
 
 if TYPE_CHECKING:
     from src.agentic.state import AgentState
     from src.agentic.tools import GraphRelationSearchTool, HybridTextSearchTool
-    from src.rag.types import RetrievalScope, RetrievedChunk
+    from src.rag.types import RetrievedChunk
 
 logger = logging.getLogger(__name__)
 
@@ -130,11 +128,18 @@ class RetrieverDirectorAgent(BaseAgent):
         graph_tasks: list = []
         per_source_tasks: list = []
 
+        # Track all query texts already scheduled so sub-questions that duplicate
+        # a main query don't trigger a redundant embedding + retrieval pass.
+        scheduled_texts: set[str] = {q.lower().strip() for q in queries}
+
         if self.text_tool:
             for q in queries:
                 text_tasks.append(self.text_tool.run(query=q, scope=state.scope, limit=limit))
             for r in routed:
                 if r.tool == "retrieve_text":
+                    if r.text.lower().strip() in scheduled_texts:
+                        continue  # already covered by a main query
+                    scheduled_texts.add(r.text.lower().strip())
                     text_tasks.append(self.text_tool.run(query=r.text, scope=state.scope, limit=max(1, min(self.per_source_limit, limit))))
             if state.use_per_source and state.expected_material_ids:
                 for mid in state.expected_material_ids:
@@ -188,9 +193,3 @@ class RetrieverDirectorAgent(BaseAgent):
         )
         return state
 
-    @staticmethod
-    def _safe_object_id(value: str) -> PydanticObjectId | None:
-        try:
-            return PydanticObjectId(value)
-        except Exception:
-            return None

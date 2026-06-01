@@ -115,7 +115,9 @@ class AgenticPlanner:
         if not isinstance(data, dict):
             return None
 
-        use_per_source = bool(data.get("use_per_source", material_count > 1))
+        # Default to False — LLM should explicitly opt in to per-source retrieval.
+        # Falling back to material_count > 1 caused per-source on every factual query.
+        use_per_source = bool(data.get("use_per_source", False))
         requires_coverage = bool(data.get("requires_coverage", use_per_source))
         use_graph = bool(data.get("use_graph", route.use_graph))
         use_multi_query = bool(data.get("use_multi_query", route.use_multi_query))
@@ -157,7 +159,13 @@ class AgenticPlanner:
 
     def build(self, *, query: str = "", route: RouteDecision, material_count: int) -> AgenticPlan:
         steps: list[str] = ["retrieve_multi_query" if route.use_multi_query else "retrieve_text"]
-        use_per_source = material_count > 1 and route.route_type != RouteType.GRAPH_RELATION
+        # Only use per-source retrieval for routes that genuinely need cross-doc
+        # coverage (COMPARISON, SUMMARIZATION). FACTUAL / GENERAL queries already
+        # get good results from hybrid text search; per-source adds noise + latency.
+        use_per_source = (
+            material_count > 1
+            and route.route_type in {RouteType.COMPARISON, RouteType.SUMMARIZATION}
+        )
         requires_coverage = use_per_source
         sub_questions = self._sub_questions(query=query, route=route, material_count=material_count)
 
@@ -193,49 +201,52 @@ class AgenticPlanner:
     def _sub_questions(self, *, query: str, route: RouteDecision, material_count: int) -> list[AgenticSubQuestion]:
         text = " ".join(query.split())
         if not text:
-            text = "the user question"
+            return []
 
+        # Sub-questions use the original query text directly — no English prefix
+        # templates. Prefixes like "What evidence directly defines or explains:"
+        # pollute the embedding when the query is in Vietnamese, degrading retrieval.
         if route.route_type == RouteType.COMPARISON:
             return self._cap(
                 [
-                    AgenticSubQuestion(text=f"What does each selected source say about: {text}", tool="retrieve_per_source"),
-                    AgenticSubQuestion(text=f"What similarities are supported by evidence for: {text}"),
-                    AgenticSubQuestion(text=f"What differences are supported by evidence for: {text}"),
-                    AgenticSubQuestion(text=f"What limitations or caveats are stated for: {text}", critical=False),
+                    AgenticSubQuestion(text=text, tool="retrieve_per_source"),
+                    AgenticSubQuestion(text=f"điểm giống nhau: {text}"),
+                    AgenticSubQuestion(text=f"điểm khác nhau: {text}"),
                 ]
             )
         if route.route_type == RouteType.GRAPH_RELATION:
             return self._cap(
-                [
-                    AgenticSubQuestion(text=f"What direct textual evidence explains the relationship in: {text}"),
-                ]
+                [AgenticSubQuestion(text=text)]
             )
         if route.route_type == RouteType.CLAIM_CHECK:
             return self._cap(
                 [
-                    AgenticSubQuestion(text=f"What evidence supports this claim: {text}"),
-                    AgenticSubQuestion(text=f"What evidence contradicts this claim: {text}"),
-                    AgenticSubQuestion(text=f"What source context is needed to verify this claim: {text}"),
+                    AgenticSubQuestion(text=f"bằng chứng ủng hộ: {text}"),
+                    AgenticSubQuestion(text=f"bằng chứng phản bác: {text}"),
                 ]
             )
         if route.route_type == RouteType.SUMMARIZATION:
             return self._cap(
                 [
-                    AgenticSubQuestion(text=f"What are the main points relevant to: {text}"),
-                    AgenticSubQuestion(text=f"What definitions, examples, or key details support the summary for: {text}"),
-                    AgenticSubQuestion(text=f"What source-specific details should not be missed for: {text}", tool="retrieve_per_source", critical=material_count > 1),
+                    AgenticSubQuestion(text=f"ý chính về: {text}"),
+                    AgenticSubQuestion(text=f"định nghĩa và ví dụ cho: {text}"),
+                    AgenticSubQuestion(
+                        text=text, tool="retrieve_per_source",
+                        critical=material_count > 1,
+                    ),
                 ]
             )
         if route.route_type == RouteType.GENERAL and material_count > 1:
             return self._cap(
                 [
-                    AgenticSubQuestion(text=f"What does each selected source say about: {text}", tool="retrieve_per_source"),
-                    AgenticSubQuestion(text=f"What evidence directly answers: {text}"),
-                    AgenticSubQuestion(text=f"What context is needed to avoid an unsupported answer for: {text}", critical=False),
+                    AgenticSubQuestion(text=text),
+                    AgenticSubQuestion(text=f"bối cảnh và căn cứ cho: {text}", critical=False),
                 ]
             )
         if route.route_type == RouteType.FACTUAL:
-            return [AgenticSubQuestion(text=f"What evidence directly defines or explains: {text}")]
+            # FACTUAL = direct lookup; the main retrieval pass covers it.
+            # Adding a duplicate sub-question just causes a redundant 33s embedding.
+            return []
         return []
 
     @staticmethod

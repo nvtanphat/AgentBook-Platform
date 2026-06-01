@@ -81,10 +81,15 @@ class CriticAgent(BaseAgent):
 
     def should_fire(self, *, confidence: float, route_type: str | None = None) -> bool:
         """Critic only fires below activation threshold AND not on chitchat /
-        off-topic / claim_check routes (those have their own verification)."""
+        off-topic / claim_check routes (those have their own verification).
+
+        FACTUAL and GENERAL routes are excluded: direct lookups don't benefit
+        from critic refinement — it only adds 2 extra embedding batches (~54s)
+        without improving answer quality for single-hop legal queries.
+        """
         if confidence >= CRITIC_ACTIVATION_CONFIDENCE:
             return False
-        if route_type in ("claim_check", "chitchat", "off_topic"):
+        if route_type in ("claim_check", "chitchat", "off_topic", "factual", "general"):
             return False
         return True
 

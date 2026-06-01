@@ -262,7 +262,7 @@ class ParseIndexPipeline:
                 stage=PipelineStatus.INDEXED.value,
                 finished=True,
             )
-        except MemoryError as exc:
+        except MemoryError:
             logger.critical(
                 "Pipeline OOM - process may be unstable; reduce batch sizes or free RAM",
                 extra={"material_id": material_id, "job_id": job_id, "stage": job.stage},

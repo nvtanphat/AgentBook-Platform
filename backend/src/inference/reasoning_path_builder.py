@@ -17,7 +17,6 @@ import logging
 from typing import TYPE_CHECKING
 
 from beanie import PydanticObjectId
-from beanie.operators import In
 
 if TYPE_CHECKING:
     from src.rag.types import RetrievedChunk

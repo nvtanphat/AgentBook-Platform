@@ -3,10 +3,9 @@ from __future__ import annotations
 import logging
 import logging.config
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 import yaml
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded

@@ -92,11 +92,24 @@ class PlannerAgent(BaseAgent):
             state.requires_coverage = plan.requires_coverage
             return state
 
-        # Replan from critic warnings — expand sub-questions to chase the gaps
+        # Replan from critic warnings — only use domain-content gaps, NOT
+        # internal system messages. System warnings like "All evidence rated
+        # below the CRAG correct threshold" are diagnostics, not queries;
+        # feeding them into the retriever produces completely off-topic results.
+        _SYSTEM_WARNING_PATTERNS = (
+            "crag correct threshold",
+            "replanning may help",
+            "fewer than 25%",
+            "consider broader queries",
+            "no evidence retrieved",
+        )
         if state.critic_warnings:
             for gap in state.critic_warnings[-3:]:
                 text = gap.strip()
                 if not text:
+                    continue
+                # Skip internal diagnostic messages — not valid retrieval queries.
+                if any(pattern in text.lower() for pattern in _SYSTEM_WARNING_PATTERNS):
                     continue
                 if any(text.lower() in sq.text.lower() for sq in state.sub_questions):
                     continue

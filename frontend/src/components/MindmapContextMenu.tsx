@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react';
+import { useCallback } from 'react';
 import { MessageSquare, FileText, Link2, Trash2, Eye } from 'lucide-react';
 
 interface MindmapContextMenuProps {

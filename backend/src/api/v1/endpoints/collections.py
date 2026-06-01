@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 
-from beanie.operators import In
 from beanie import PydanticObjectId
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
@@ -215,10 +214,10 @@ async def delete_collection(
     verify_owner_access(request, owner_id)
     try:
         counts = await service.delete_collection(collection_id=collection_id, owner_id=owner_id)
-    except LookupError as exc:
+    except LookupError:
         logger.exception("Collection deletion failed", extra={"owner_id": owner_id, "collection_id": collection_id})
         return APIResponse(success=False, message="Collection deletion failed. Please retry later.", data=None, error="Collection deletion failed.")
-    except ValueError as exc:
+    except ValueError:
         logger.exception("Invalid collection deletion request", extra={"owner_id": owner_id, "collection_id": collection_id})
         return APIResponse(success=False, message="Invalid collection deletion request.", data=None, error="Invalid collection deletion request.")
     return APIResponse(success=True, message="Collection deleted successfully", data=counts, error=None)

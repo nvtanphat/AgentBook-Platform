@@ -125,4 +125,12 @@ class AgentState(BaseModel):
             # No CRAG run yet — fall back to coverage check.
             return bool(self.requires_coverage and self.coverage and self.coverage.covered_count < self.coverage.requested_count)
         correct_count = sum(1 for v in self.crag_verdicts if v.label == CRAGLabel.CORRECT)
+        ambiguous_count = sum(1 for v in self.crag_verdicts if v.label == CRAGLabel.AMBIGUOUS)
+        # If we have some useful evidence (CORRECT or AMBIGUOUS) and the route is
+        # FACTUAL or GENERAL, don't replan — replanning with low-quality CRAG scores
+        # sends the agent into off-topic retrieval loops.
+        from src.rag.query_router import RouteType
+        if self.route and self.route.route_type in {RouteType.FACTUAL, RouteType.GENERAL}:
+            if correct_count + ambiguous_count > 0:
+                return False
         return correct_count == 0 or (len(self.crag_verdicts) > 0 and correct_count / max(1, len(self.crag_verdicts)) < 0.25)

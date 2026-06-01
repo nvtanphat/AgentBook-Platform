@@ -62,10 +62,10 @@ async def ask_stream(
         try:
             async for line in query_service.ask_stream(body):
                 yield line
-        except ValueError as exc:
+        except ValueError:
             logger.warning("Invalid streaming query request", extra={"owner_id": body.owner_id, "collection_id": body.collection_id})
             yield f"event: error\ndata: {json.dumps({'message': 'Invalid query request.'})}\n\n"
-        except Exception as exc:
+        except Exception:
             logger.exception("Streaming query pipeline failed", extra={"owner_id": body.owner_id, "collection_id": body.collection_id})
             yield f"event: error\ndata: {json.dumps({'message': 'Query pipeline failed. Please retry later.'})}\n\n"
 

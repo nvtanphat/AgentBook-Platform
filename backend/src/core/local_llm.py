@@ -59,7 +59,7 @@ class OllamaLLM(BaseLLM):
                 )
                 if attempt == max_retries - 1:
                     raise
-            except httpx.TimeoutException as exc:
+            except httpx.TimeoutException:
                 logger.error("Local LLM timeout", extra={"attempt": attempt + 1, "max_retries": max_retries})
                 if attempt == max_retries - 1:
                     raise
@@ -114,7 +114,7 @@ class OllamaLLM(BaseLLM):
         except httpx.HTTPStatusError as exc:
             logger.error("Local LLM stream HTTP error", extra={"status_code": exc.response.status_code})
             raise
-        except httpx.TimeoutException as exc:
+        except httpx.TimeoutException:
             logger.error("Local LLM stream timeout")
             raise
         except Exception as exc:

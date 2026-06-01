@@ -1,5 +1,5 @@
 import React, { useCallback, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, Circle } from "lucide-react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { Handle, NodeProps, Position } from "reactflow";
 import { createPortal } from "react-dom";
 
@@ -31,7 +31,6 @@ export function CollapsibleMindmapNode({ id, data, selected }: NodeProps<Collaps
   const isRoot = data.entityType === "root";
   const isTopic = data.entityType === "topic";
   const isBranch = data.entityType === "branch";
-  const isLeaf = !isRoot && !isTopic && !isBranch;
   const childCount = Math.max(0, data.degree ?? 0);
   const accent = data.branchColor || "#3b82f6";
   const hasPreview = Boolean((data.summary && data.summary.trim()) || (data.sourceLabel && data.sourceLabel.trim()));

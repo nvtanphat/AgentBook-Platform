@@ -60,7 +60,7 @@ export default function StudioPanel({ activeTab, onTabChange, evidenceDocId, evi
               className={`px-3 py-1 text-[10px] font-semibold transition rounded-md ${
                 visualizeMode === "graph" ? "text-white shadow-sm" : "text-muted hover:text-text"
               }`}
-              style={visualizeMode === "graph" ? { background: 'linear-gradient(135deg, #006591 0%, #0ea5e9 100%)' } : undefined}
+              style={visualizeMode === "graph" ? { background: 'var(--grad-brand)' } : undefined}
             >
               Knowledge Graph
             </button>
@@ -70,7 +70,7 @@ export default function StudioPanel({ activeTab, onTabChange, evidenceDocId, evi
               className={`px-3 py-1 text-[10px] font-semibold transition rounded-md ${
                 visualizeMode === "mindmap" ? "text-white shadow-sm" : "text-muted hover:text-text"
               }`}
-              style={visualizeMode === "mindmap" ? { background: 'linear-gradient(135deg, #006591 0%, #0ea5e9 100%)' } : undefined}
+              style={visualizeMode === "mindmap" ? { background: 'var(--grad-brand)' } : undefined}
             >
               Mindmap
             </button>

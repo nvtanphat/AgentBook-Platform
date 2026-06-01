@@ -20,7 +20,6 @@ if TYPE_CHECKING:
     from src.agentic.state import AgentState
     from src.agentic.tools import TextCleanerTool
     from src.rag.crag_evaluator import CRAGEvaluator
-    from src.rag.types import RetrievedChunk
 
 logger = logging.getLogger(__name__)
 

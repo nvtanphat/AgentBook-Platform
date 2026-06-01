@@ -63,7 +63,7 @@ class SummaryService:
         )
         try:
             retrieved = await self._retrieve_summary_chunks(query=query, request=request, scope=scope)
-        except Exception as exc:
+        except Exception:
             logger.exception("Retrieval failed in SummaryService", extra={"owner_id": request.owner_id})
             return SummaryResponse(
                 summary=_REFUSAL_TEXT,
@@ -135,7 +135,7 @@ class SummaryService:
         )
         try:
             summary = await self.llm.generate(prompt=prompt)
-        except Exception as exc:
+        except Exception:
             logger.exception("LLM failed in SummaryService", extra={"owner_id": request.owner_id})
             return SummaryResponse(
                 summary=_REFUSAL_TEXT,

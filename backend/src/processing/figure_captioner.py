@@ -12,10 +12,8 @@ import base64
 import hashlib
 import logging
 import re
-import tempfile
 import threading
 from pathlib import Path
-from typing import Protocol
 
 from src.processing.types import BBox
 
@@ -319,7 +317,6 @@ class FigureCaptioner:
         """Crop a region from a page image using Docling bbox (point coordinates)."""
         try:
             import cv2
-            import numpy as np
         except ImportError:
             logger.debug("cv2 not available — cannot crop figure region")
             return None

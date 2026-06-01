@@ -156,11 +156,14 @@ class ResponseParser:
                     audio_file=meta.get("audio_file"),
                 ))
 
+            # Use the specific evidence block's page so block_id and page are consistent.
+            # Fallback to pages[0] only when no primary_ev is available.
+            citation_page = primary_ev.page if primary_ev else page
             citations.append(
                 CitationSchema(
                     doc_id=primary_ev.material_id if primary_ev else chunk.material_id,
                     doc_name=primary_ev.document_name if primary_ev else chunk.document_name,
-                    page=page,
+                    page=citation_page,
                     pages=pages,
                     block_id=primary_ev.block_id if primary_ev else None,
                     block_type=primary_ev.block_type if primary_ev else None,

@@ -1,5 +1,5 @@
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, FileText, Image, ImagePlus, Loader2, Network, Send, Table2, Trash2, Library, X, Workflow } from "lucide-react";
+import { AlertCircle, Brain, CheckCircle2, ChevronDown, ChevronUp, FileText, Image, ImagePlus, Loader2, Network, Send, Table2, Trash2, Library, X, Workflow, Zap } from "lucide-react";
 import { API_V1_BASE_URL, Citation, QueryResponse, SentenceCoverageReport, askQuestionStream, askQuestionWithImage } from "../../api/client";
 import { useWorkspace } from "../../state/workspace";
 import { StudioTab } from "../../pages/WorkspacePage";
@@ -76,19 +76,9 @@ function agentStepRole(name: string): string {
   return "AGENT";
 }
 
-// Color theme per agent role — clean visual differentiation, no emoji noise
-function agentRoleTheme(role: string): { dot: string; chip: string } {
-  const themes: Record<string, { dot: string; chip: string }> = {
-    PLANNER:      { dot: "bg-indigo-400",  chip: "border-indigo-200 bg-indigo-50 text-indigo-700" },
-    DIRECTOR:     { dot: "bg-sky-400",     chip: "border-sky-200 bg-sky-50 text-sky-700" },
-    "CRAG CRITIC":{ dot: "bg-emerald-400", chip: "border-emerald-200 bg-emerald-50 text-emerald-700" },
-    RERANKER:     { dot: "bg-violet-400",  chip: "border-violet-200 bg-violet-50 text-violet-700" },
-    SYNTHESIZER:  { dot: "bg-amber-400",   chip: "border-amber-200 bg-amber-50 text-amber-700" },
-    GUARDRAILS:   { dot: "bg-rose-400",    chip: "border-rose-200 bg-rose-50 text-rose-700" },
-    CRITIC:       { dot: "bg-slate-400",   chip: "border-slate-200 bg-slate-50 text-slate-700" },
-    AGENT:        { dot: "bg-slate-300",   chip: "border-slate-200 bg-slate-50 text-muted" },
-  };
-  return themes[role] ?? themes.AGENT;
+// Color theme per agent role — all neutral for minimal aesthetic
+function agentRoleTheme(_role: string): { dot: string; chip: string } {
+  return { dot: "bg-slate-400", chip: "border-slate-200 bg-slate-50 text-slate-600" };
 }
 
 function agentTraceStepLabel(name: string): string {
@@ -122,18 +112,16 @@ function casualReply(message: string, hasScope: boolean): string | null {
 // sentences had evidence support, with click-to-expand per-sentence breakdown.
 
 function statusColor(status: "supported" | "partial" | "unsupported") {
-  if (status === "supported") return { dot: "#10b981", text: "text-emerald-700", bg: "bg-emerald-50", border: "border-emerald-200", label: "Có bằng chứng" };
-  if (status === "partial") return { dot: "#f59e0b", text: "text-amber-700", bg: "bg-amber-50", border: "border-amber-200", label: "Bằng chứng yếu" };
-  return { dot: "#ef4444", text: "text-red-700", bg: "bg-red-50", border: "border-red-200", label: "Không có bằng chứng" };
+  if (status === "supported") return { dot: "#10b981", text: "text-slate-600", bg: "bg-slate-50", border: "border-slate-200", label: "Có bằng chứng" };
+  if (status === "partial") return { dot: "#f59e0b", text: "text-slate-600", bg: "bg-slate-50", border: "border-slate-200", label: "Bằng chứng yếu" };
+  return { dot: "#ef4444", text: "text-slate-600", bg: "bg-slate-50", border: "border-slate-200", label: "Không có bằng chứng" };
 }
 
 function EvidenceCoverageBadge({ report }: { report: SentenceCoverageReport }) {
   const [open, setOpen] = useState(false);
   if (!report.enabled || report.total_sentences === 0) return null;
   const pct = Math.round(report.coverage_ratio * 100);
-  const cls = pct >= 80 ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-    : pct >= 50 ? "bg-amber-50 text-amber-700 border-amber-200"
-    : "bg-red-50 text-red-700 border-red-200";
+  const cls = "bg-slate-50 text-slate-600 border-slate-200";
   const dot = pct >= 80 ? "#10b981" : pct >= 50 ? "#f59e0b" : "#ef4444";
   const droppedHint = report.dropped_count > 0 ? ` · loại ${report.dropped_count} câu không có bằng chứng` : "";
 
@@ -175,14 +163,14 @@ function EvidenceCoverageBadge({ report }: { report: SentenceCoverageReport }) {
 
 function ConfidenceBadge({ value }: { value: number }) {
   const pct = Math.round(value * 100);
-  const cls = pct >= 70 ? "bg-emerald-50 text-emerald-700 border-emerald-200" : pct >= 40 ? "bg-amber-50 text-amber-700 border-amber-200" : "bg-red-50 text-red-700 border-red-200";
+  const dot = pct >= 70 ? '#10b981' : pct >= 40 ? '#f59e0b' : '#ef4444';
   const label = pct >= 70 ? "Tin cậy cao" : pct >= 40 ? "Tin cậy trung bình" : "Tin cậy thấp";
   return (
     <span
       title={`${label} (${pct}%) — Điểm tin cậy dựa trên bằng chứng tìm được.\n≥70%: tốt · 40–70%: trung bình · <40%: cần kiểm tra lại`}
-      className={`confidence-badge inline-flex cursor-help items-center gap-1 rounded-full border px-2.5 py-0.5 text-[10px] font-bold ${cls}`}
+      className="confidence-badge inline-flex cursor-help items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-[10px] font-bold text-slate-600"
     >
-      <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: pct >= 70 ? '#10b981' : pct >= 40 ? '#f59e0b' : '#ef4444' }} />
+      <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: dot }} />
       {label} · {pct}%
     </span>
   );
@@ -241,7 +229,7 @@ function AgentTraceBody({ trace }: { trace: NonNullable<QueryResponse["agent_tra
               );
             })}
             {trace.repair_attempted && (
-              <span className="rounded border border-blue-200 bg-blue-50 px-2 py-0.5 text-blue-700 font-semibold uppercase tracking-wide text-[9px]">
+              <span className="rounded border border-slate-200 bg-slate-50 px-2 py-0.5 text-slate-600 font-semibold uppercase tracking-wide text-[9px]">
                 self-repair
               </span>
             )}
@@ -254,10 +242,10 @@ function AgentTraceBody({ trace }: { trace: NonNullable<QueryResponse["agent_tra
               const theme = agentRoleTheme(role);
               const isLastStep = index === trace.steps.length - 1;
               const statusColor =
-                step.status === "completed" ? "border-emerald-200" :
-                step.status === "failed" ? "border-red-200" :
+                step.status === "completed" ? "border-slate-200" :
+                step.status === "failed" ? "border-slate-200" :
                 step.status === "skipped" ? "border-slate-200 opacity-60" :
-                "border-amber-200";
+                "border-slate-200";
               return (
                 <div key={`${step.name}-${index}`} className="relative pl-6">
                   {/* Timeline rail */}
@@ -284,13 +272,13 @@ function AgentTraceBody({ trace }: { trace: NonNullable<QueryResponse["agent_tra
                           </span>
                         )}
                         {step.status === "completed" ? (
-                          <CheckCircle2 size={11} className="text-emerald-500" />
+                          <CheckCircle2 size={11} className="text-slate-400" />
                         ) : step.status === "failed" ? (
-                          <AlertCircle size={11} className="text-red-500" />
+                          <AlertCircle size={11} className="text-slate-400" />
                         ) : step.status === "skipped" ? (
                           <ChevronDown size={11} className="text-muted" />
                         ) : (
-                          <Loader2 size={11} className="text-amber-500 animate-spin" />
+                          <Loader2 size={11} className="text-slate-400 animate-spin" />
                         )}
                       </span>
                     </div>
@@ -312,14 +300,14 @@ function AgentTraceBody({ trace }: { trace: NonNullable<QueryResponse["agent_tra
                         )}
                         {/* CRAG triage compact */}
                         {typeof step.metadata?.correct === "number" && (
-                          <span className="text-emerald-700 font-semibold">
+                          <span className="text-slate-600 font-semibold">
                             {String(step.metadata.correct)} correct
-                            {Number(step.metadata.ambiguous ?? 0) > 0 && <span className="text-amber-700">, {String(step.metadata.ambiguous)} amb</span>}
-                            {Number(step.metadata.incorrect ?? 0) > 0 && <span className="text-red-700">, {String(step.metadata.incorrect)} wrong</span>}
+                            {Number(step.metadata.ambiguous ?? 0) > 0 && <span className="text-slate-500">, {String(step.metadata.ambiguous)} amb</span>}
+                            {Number(step.metadata.incorrect ?? 0) > 0 && <span className="text-slate-500">, {String(step.metadata.incorrect)} wrong</span>}
                           </span>
                         )}
                         {step.warning && (
-                          <span className="text-amber-700">· {step.warning}</span>
+                          <span className="text-slate-500">· {step.warning}</span>
                         )}
                       </div>
                     )}
@@ -334,25 +322,21 @@ function AgentTraceBody({ trace }: { trace: NonNullable<QueryResponse["agent_tra
             <div className="mt-3 rounded border border-outline/40 bg-white px-3 py-2 text-[10px]">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-bold uppercase tracking-wider text-muted">Guardrails</span>
-                <span className={`rounded px-2 py-0.5 font-bold uppercase tracking-wide ${
-                  trace.verification.verdict === "supported" ? "bg-emerald-50 text-emerald-700 border border-emerald-200" :
-                  trace.verification.verdict === "contradicted" ? "bg-red-50 text-red-700 border border-red-200" :
-                  "bg-amber-50 text-amber-700 border border-amber-200"
-                }`}>
+                <span className={`rounded px-2 py-0.5 font-bold uppercase tracking-wide bg-slate-50 text-slate-600 border border-slate-200`}>
                   {trace.verification.verdict}
                 </span>
                 <span className="font-semibold tabular-nums text-muted">
                   {Math.round(trace.verification.confidence * 100)}%
                 </span>
                 {trace.verification.repair_attempted && (
-                  <span className="text-blue-700 font-medium">· đã tự sửa</span>
+                  <span className="text-slate-600 font-medium">· đã tự sửa</span>
                 )}
               </div>
               {trace.verification.warning && (
-                <div className="mt-1 text-amber-700">{trace.verification.warning}</div>
+                <div className="mt-1 text-slate-500">{trace.verification.warning}</div>
               )}
               {Boolean(trace.verification.unsupported_sentence_count || trace.verification.invalid_citation_count) && (
-                <div className="mt-1 text-amber-700">
+                <div className="mt-1 text-slate-500">
                   {trace.verification.unsupported_sentence_count ?? 0} câu thiếu citation, {trace.verification.invalid_citation_count ?? 0} citation sai.
                 </div>
               )}
@@ -368,7 +352,6 @@ function AnswerMeta({ response, onTraceGraph }: { response: QueryResponse; onTra
   const coverage = response.coverage;
   const trace = response.agent_trace;
   const verification = trace?.verification;
-  const completeCoverage = coverage ? coverage.covered_count >= coverage.requested_count : true;
   const verified = verification?.verdict === "supported";
   const hasReasoning = Boolean(response.reasoning_path && response.reasoning_path.length > 0);
   const hasCitationWarn = Boolean(verification?.invalid_citation_count || verification?.unsupported_sentence_count);
@@ -381,18 +364,12 @@ function AnswerMeta({ response, onTraceGraph }: { response: QueryResponse; onTra
       <div className="flex flex-wrap items-center gap-1.5">
         <ConfidenceBadge value={response.confidence} />
         {coverage && coverage.requested_count > 0 && (
-          <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold ${
-            completeCoverage ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"
-          }`}>
-            {completeCoverage ? <CheckCircle2 size={10} /> : <AlertTriangle size={10} />}
+          <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold border-slate-200 bg-slate-50 text-slate-600`}>
             Độ phủ {coverage.covered_count}/{coverage.requested_count}
           </span>
         )}
         {verification && (
-          <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold ${
-            verified ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"
-          }`}>
-            {verified ? <CheckCircle2 size={10} /> : <AlertTriangle size={10} />}
+          <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold border-slate-200 bg-slate-50 text-slate-600`}>
             {verified ? "Đã kiểm chứng" : "Cần kiểm tra"}
           </span>
         )}
@@ -420,18 +397,17 @@ function AnswerMeta({ response, onTraceGraph }: { response: QueryResponse; onTra
           {hasExtras && (
             <div className="flex flex-wrap items-center gap-1.5">
               {trace?.repair_attempted && (
-                <span className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-700">
+                <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-bold text-slate-600">
                   Đã bổ sung truy xuất
                 </span>
               )}
               {verification?.repair_attempted && (
-                <span className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-700">
+                <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-bold text-slate-600">
                   Đã sửa câu trả lời
                 </span>
               )}
               {hasCitationWarn && (
-                <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700">
-                  <AlertTriangle size={10} />
+                <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-bold text-slate-600">
                   Cần kiểm tra citation
                 </span>
               )}
@@ -470,12 +446,12 @@ function TraceGraphAction({ onTraceGraph }: { onTraceGraph?: () => void }) {
 // ─── Citation footer ──────────────────────────────────────────────────────────
 
 function citationFileIcon(name: string) {
-  if (/\.(png|jpe?g)$/i.test(name)) return <Image size={10} className="text-purple-400 shrink-0" />;
-  if (/\.pdf$/i.test(name)) return <FileText size={10} className="text-red-400 shrink-0" />;
-  if (/\.docx?$/i.test(name)) return <FileText size={10} className="text-blue-400 shrink-0" />;
-  if (/\.pptx?$/i.test(name)) return <FileText size={10} className="text-amber-400 shrink-0" />;
-  if (/\.(csv|xlsx)$/i.test(name)) return <Table2 size={10} className="text-emerald-500 shrink-0" />;
-  return <FileText size={10} className="text-muted shrink-0" />;
+  if (/\.(png|jpe?g)$/i.test(name)) return <Image size={10} className="text-slate-400 shrink-0" />;
+  if (/\.pdf$/i.test(name)) return <FileText size={10} className="text-slate-400 shrink-0" />;
+  if (/\.docx?$/i.test(name)) return <FileText size={10} className="text-slate-400 shrink-0" />;
+  if (/\.pptx?$/i.test(name)) return <FileText size={10} className="text-slate-400 shrink-0" />;
+  if (/\.(csv|xlsx)$/i.test(name)) return <Table2 size={10} className="text-slate-400 shrink-0" />;
+  return <FileText size={10} className="text-slate-400 shrink-0" />;
 }
 
 function isImageCitation(c: Citation): boolean {
@@ -589,8 +565,6 @@ function CitationFooter({ citations, ownerId, onSelect }: { content: string; cit
 
 // ─── Suggestion chips ─────────────────────────────────────────────────────────
 
-type Suggestion = { label: string; fill?: string; action?: () => void };
-
 type SmartPrompt = {
   label: string;
   variants: Array<(target: string, primary: string) => string>;
@@ -619,7 +593,7 @@ const SMART_PROMPTS: SmartPrompt[] = [
     label: "Giải thích",
     variants: [
       (target) => `Giải thích các khái niệm chính trong ${target} theo cách dễ hiểu.`,
-      (target, primary) => `Chọn 5 khái niệm khó nhất trong "${primary}" và giải thích bằng ví dụ đơn giản.`,
+      (_target, primary) => `Chọn 5 khái niệm khó nhất trong "${primary}" và giải thích bằng ví dụ đơn giản.`,
       (target) => `Giải thích ${target} cho người mới bắt đầu.`,
       (target) => `Tìm các thuật ngữ quan trọng trong ${target} và giải thích ngắn gọn từng thuật ngữ.`,
     ],
@@ -649,7 +623,7 @@ function formatPromptTarget(names: string[], collectionName: string) {
 
 function NoSourcesCallout({ onOpenSources }: { onOpenSources: () => void }) {
   return (
-    <div className="mx-auto mt-8 max-w-md rounded-lg border border-amber-200 bg-amber-50 px-4 py-5 text-center shadow-sm">
+    <div className="mx-auto mt-8 max-w-md rounded-lg border border-slate-200 bg-slate-50 px-4 py-5 text-center shadow-sm">
       <p className="text-sm font-semibold text-text">Thêm tài liệu để bắt đầu hỏi đáp có căn cứ</p>
       <p className="mt-1 text-xs leading-5 text-muted">
         Noelys cần nguồn như PDF, DOCX, ảnh hoặc bảng dữ liệu để trả lời kèm trích dẫn.
@@ -708,6 +682,9 @@ export default function ChatPanel({ onOpenSources, onOpenEvidence, onTraceGraph,
   const [question, setQuestion] = useState("");
   const [loading, setLoading] = useState(false);
   const [streamingId, setStreamingId] = useState<string | null>(null);
+  // Message currently in the post-token grounding-verification phase (citations,
+  // claim-check, SLEC). Lets us swap the typing caret for an honest indicator.
+  const [verifyingId, setVerifyingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [agentStatus, setAgentStatus] = useState<string | null>(null);
   const [promptVersion, setPromptVersion] = useState(0);
@@ -718,6 +695,10 @@ export default function ChatPanel({ onOpenSources, onOpenEvidence, onTraceGraph,
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const confirmClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const pendingTokensRef = useRef<{ id: string; text: string } | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const [deepReasoning, setDeepReasoning] = useState(false);
 
   const hasScope = Boolean(workspace.collectionId ? sourceScopeMode === "all" || scopedMaterialIds.length : scopedMaterialIds.length);
   const activeSourceNames = useMemo(() => {
@@ -736,8 +717,9 @@ export default function ChatPanel({ onOpenSources, onOpenEvidence, onTraceGraph,
   }, [activeSourceNames, promptVersion, workspace.collectionName]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, loading]);
+    // Instant scroll during streaming to keep up with tokens; smooth otherwise.
+    bottomRef.current?.scrollIntoView({ behavior: streamingId ? "auto" : "smooth" });
+  }, [messages, loading, streamingId]);
 
   useEffect(() => {
     suppressNextPersistRef.current = true;
@@ -917,6 +899,27 @@ export default function ChatPanel({ onOpenSources, onOpenEvidence, onTraceGraph,
 
     const assistantId = crypto.randomUUID();
 
+    // Cancel any in-flight stream before starting a new one.
+    abortRef.current?.abort();
+    abortRef.current = new AbortController();
+
+    // Flush helper: drain pending token batch into React state.
+    const flushTokens = () => {
+      rafRef.current = null;
+      const pending = pendingTokensRef.current;
+      if (!pending) return;
+      pendingTokensRef.current = null;
+      setMessages((prev) => {
+        const exists = prev.some((m) => m.id === pending.id);
+        if (exists) {
+          return prev.map((m) =>
+            m.id === pending.id ? { ...m, content: m.content + pending.text } : m,
+          );
+        }
+        return [...prev, { id: pending.id, role: "assistant", content: pending.text }];
+      });
+    };
+
     await askQuestionStream(
       {
         owner_id: workspace.ownerId,
@@ -926,23 +929,35 @@ export default function ChatPanel({ onOpenSources, onOpenEvidence, onTraceGraph,
         query: trimmed,
         top_k: workspace.topK,
         answer_language: workspace.language,
+        rag_flags: { agentic_rag_enabled: deepReasoning },
       },
       {
         onToken(token) {
           setLoading(false);
           setStreamingId(assistantId);
-          setMessages((prev) => {
-            const exists = prev.some((m) => m.id === assistantId);
-            if (exists) {
-              return prev.map((m) =>
-                m.id === assistantId ? { ...m, content: m.content + token } : m,
-              );
-            }
-            return [...prev, { id: assistantId, role: "assistant", content: token }];
-          });
+          // Batch tokens between animation frames — avoid a setState per token.
+          if (pendingTokensRef.current) {
+            pendingTokensRef.current.text += token;
+          } else {
+            pendingTokensRef.current = { id: assistantId, text: token };
+          }
+          if (!rafRef.current) {
+            rafRef.current = requestAnimationFrame(flushTokens);
+          }
+        },
+        onVerifying() {
+          // Tokens finished; grounding verification is running. Flush remaining
+          // text and switch the caret to a "verifying" indicator.
+          if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+          flushTokens();
+          setVerifyingId(assistantId);
         },
         onDone(response) {
+          // Flush any remaining buffered tokens before applying final state.
+          if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+          flushTokens();
           setStreamingId(null);
+          setVerifyingId(null);
           setLoading(false);
           setAgentStatus(null);
           const content = response.was_refused
@@ -964,7 +979,10 @@ export default function ChatPanel({ onOpenSources, onOpenEvidence, onTraceGraph,
           setActiveQueryContext({ question: trimmed, response, createdAt: new Date().toISOString() });
         },
         onError(message) {
+          if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+          pendingTokensRef.current = null;
           setStreamingId(null);
+          setVerifyingId(null);
           setLoading(false);
           setAgentStatus(null);
           setMessages((prev) => prev.filter((m) => m.id !== assistantId));
@@ -975,6 +993,7 @@ export default function ChatPanel({ onOpenSources, onOpenEvidence, onTraceGraph,
           setAgentStatus(agentStepLabel(step.name));
         },
       },
+      abortRef.current.signal,
     );
   }
 
@@ -1001,7 +1020,7 @@ export default function ChatPanel({ onOpenSources, onOpenEvidence, onTraceGraph,
           {workspace.collectionName ? (
             <div className="flex items-center gap-2">
               <span className="font-heading font-bold text-[14px] text-text truncate max-w-[200px]">{workspace.collectionName}</span>
-              <span className={`text-[9px] uppercase font-bold px-2 py-0.5 rounded-full border ${hasScope ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-amber-50 text-amber-700 border-amber-200"}`}>
+              <span className={`text-[9px] uppercase font-bold px-2 py-0.5 rounded-full border ${hasScope ? "bg-slate-50 text-slate-600 border-slate-200" : "bg-slate-50 text-slate-500 border-slate-200"}`}>
                 {hasScope
                   ? sourceScopeMode === "selected"
                     ? `${scopedMaterialIds.length} nguồn`
@@ -1061,10 +1080,11 @@ export default function ChatPanel({ onOpenSources, onOpenEvidence, onTraceGraph,
         {!hasScope && messages.length <= 1 && <NoSourcesCallout onOpenSources={onOpenSources} />}
         {messages.map((message) => {
           const isStreaming = message.id === streamingId;
+          const isVerifying = message.id === verifyingId;
           return (
             <article key={message.id} className={`flex chat-message-animate ${message.role === "user" ? "justify-end" : "justify-start"}`}>
               <div className={`max-w-[88%] md:max-w-[78%] px-5 py-4 ${message.role === "user" ? "rounded-2xl rounded-br-md text-white shadow-md" : "rounded-2xl rounded-bl-md bg-white border border-outline/30 shadow-sm"}`}
-                style={message.role === "user" ? { background: 'linear-gradient(135deg, #006591 0%, #0284c7 100%)' } : undefined}
+                style={message.role === "user" ? { background: 'var(--grad-brand)' } : undefined}
               >
                 {message.response && !message.response.was_refused ? (
                   <MessageContent
@@ -1075,10 +1095,14 @@ export default function ChatPanel({ onOpenSources, onOpenEvidence, onTraceGraph,
                 ) : (
                   <p className="whitespace-pre-wrap text-sm leading-relaxed">
                     {message.content}
-                    {isStreaming && (
-                      <span className="ml-0.5 inline-block w-0.5 h-4 bg-current align-middle animate-pulse" />
-                    )}
+                    {isStreaming && !isVerifying && <span className="typing-cursor" />}
                   </p>
+                )}
+                {isVerifying && (
+                  <div className="mt-2 flex items-center gap-1.5 text-[11px] font-medium text-muted">
+                    <Loader2 size={11} className="animate-spin text-primary" />
+                    Đang kiểm chứng bằng chứng…
+                  </div>
                 )}
 
                 {/* Compact meta strip + collapsible details */}
@@ -1103,7 +1127,15 @@ export default function ChatPanel({ onOpenSources, onOpenEvidence, onTraceGraph,
           <div className="flex justify-start">
             <div className="bg-white border border-outline shadow-sm rounded-2xl px-5 py-4 flex items-center gap-3 text-sm text-muted">
               <Loader2 className="animate-spin text-primary" size={18} />
-              {agentStatus ?? "Đang tìm kiếm và tổng hợp..."}
+              <span>{agentStatus ?? "Đang tìm kiếm và tổng hợp..."}</span>
+              <button
+                type="button"
+                onClick={() => abortRef.current?.abort()}
+                className="ml-1 rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-semibold text-slate-500 transition hover:border-red-200 hover:bg-red-50 hover:text-red-500"
+                title="Dừng"
+              >
+                Dừng
+              </button>
             </div>
           </div>
         )}
@@ -1176,6 +1208,39 @@ export default function ChatPanel({ onOpenSources, onOpenEvidence, onTraceGraph,
                 </button>
               </div>
             )}
+            {/* Reasoning mode toggle */}
+            <div className="flex items-center gap-2 border-t border-outline/20 px-3 py-1.5">
+              <button
+                type="button"
+                onClick={() => setDeepReasoning(false)}
+                className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
+                  !deepReasoning
+                    ? "bg-slate-100 text-slate-700"
+                    : "text-slate-400 hover:text-slate-600"
+                }`}
+                title="Tìm kiếm 1 lượt, trả lời nhanh"
+              >
+                <Zap size={11} className={!deepReasoning ? "text-amber-500" : "text-slate-400"} />
+                Tiêu chuẩn
+              </button>
+              <button
+                type="button"
+                onClick={() => setDeepReasoning(true)}
+                className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
+                  deepReasoning
+                    ? "bg-violet-100 text-violet-700"
+                    : "text-slate-400 hover:text-slate-600"
+                }`}
+                title="Phân tích nhiều chiều, đặt câu hỏi phụ, chậm hơn ~60-90s"
+              >
+                <Brain size={11} className={deepReasoning ? "text-violet-500" : "text-slate-400"} />
+                Suy luận sâu
+              </button>
+              {deepReasoning && (
+                <span className="ml-1 text-[10px] text-violet-500/70">~60-90s</span>
+              )}
+            </div>
+
             <div className="flex items-end gap-1 pl-1 pr-1.5 py-1">
               <button
                 type="button"
@@ -1210,7 +1275,7 @@ export default function ChatPanel({ onOpenSources, onOpenEvidence, onTraceGraph,
               <button
                 disabled={loading || !!streamingId || (!question.trim() && !attachedImage)}
                 className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-white transition disabled:cursor-not-allowed disabled:opacity-30"
-                style={{ background: (!question.trim() && !attachedImage) || loading || !!streamingId ? '#94a3b8' : 'linear-gradient(135deg, #006591 0%, #0ea5e9 100%)' }}
+                style={{ background: (!question.trim() && !attachedImage) || loading || !!streamingId ? 'var(--c-surface-high)' : 'var(--grad-brand)' }}
                 title="Gửi"
               >
                 {loading || streamingId ? <Loader2 className="animate-spin" size={15} /> : <Send size={15} strokeWidth={2} className="-ml-px" />}

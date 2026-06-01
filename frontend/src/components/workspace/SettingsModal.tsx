@@ -48,7 +48,7 @@ function Toggle({ checked, onChange, disabled }: { checked: boolean; onChange: (
 // ─── Main modal ───────────────────────────────────────────────────────────────
 
 export default function SettingsModal() {
-  const { workspace, updateWorkspace, materials } = useWorkspace();
+  const { workspace, updateWorkspace } = useWorkspace();
   const { mode: themeMode, setMode: setThemeMode } = useTheme();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();

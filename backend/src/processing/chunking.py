@@ -581,9 +581,6 @@ class AudioChunker:
             elapsed = seg_end - buffer_start
             if buffer and elapsed >= target_seconds and (seg_end - buffer_start) >= min_seconds:
                 chunk = self._layout._make_chunk(evidence_map, buffer)
-                # Attach audio time range to chunk metadata for citation linking
-                first_start = float(buffer[0].metadata.get("start_seconds", 0.0)) if buffer[0].metadata else 0.0
-                last_end = float(buffer[-1].metadata.get("end_seconds", 0.0)) if buffer[-1].metadata else 0.0
                 chunk = chunk.model_copy(update={
                     "modality": "audio",
                 })

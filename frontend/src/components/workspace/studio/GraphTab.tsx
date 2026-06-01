@@ -394,10 +394,12 @@ function NodeInfoCard({
   node,
   onClose,
   onAskAboutNode,
+  onOpenEvidence,
 }: {
   node: SelectedNode;
   onClose: () => void;
   onAskAboutNode?: (entityId: string, label: string) => void;
+  onOpenEvidence?: (target: { docId: string; page: number; blockId?: string | null }) => void;
 }) {
   const color = typeColor(node.type);
   const pct   = node.confidence != null ? Math.round(node.confidence * 100) : null;
@@ -481,6 +483,23 @@ function NodeInfoCard({
               <span className="text-[10px] text-muted">+{node.connections.length - 8}</span>
             )}
           </div>
+        </div>
+      )}
+
+      {/* Read full article / evidence */}
+      {onOpenEvidence && node.evidenceRefs.length > 0 && (
+        <div className="border-t border-outline/40 px-4 py-2 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => openEvidenceRef(node.evidenceRefs, onOpenEvidence)}
+            className="flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/5 px-3 py-1.5 text-[11px] font-semibold text-primary hover:bg-primary/10 transition"
+          >
+            <BookOpen size={12} />
+            Đọc toàn văn điều luật
+          </button>
+          <span className="text-[10px] text-muted">
+            Mở trang nguồn trong tài liệu gốc
+          </span>
         </div>
       )}
 
@@ -974,6 +993,7 @@ function FullscreenOverlay({
       <div className="flex-1 overflow-hidden relative">
         <GraphCanvas
           mode={mode}
+          verifyMode={verifyMode}
           canvasNodes={canvas.nodes ?? []}
           canvasEdges={canvas.edges ?? []}
           onSelect={onSelect}
@@ -988,7 +1008,7 @@ function FullscreenOverlay({
         <RelationInfoCard relation={selectedRelation} onClose={() => {}} onOpenEvidence={onOpenEvidence} />
       )}
       {!selectedRelation && selectedNode && (
-        <NodeInfoCard node={selectedNode} onClose={() => {}} />
+        <NodeInfoCard node={selectedNode} onClose={() => {}} onOpenEvidence={onOpenEvidence} />
       )}
     </div>,
     document.body
@@ -1449,6 +1469,7 @@ export default function GraphTab({
           <NodeInfoCard
             node={selectedNode}
             onClose={() => setSelectedNode(null)}
+            onOpenEvidence={onOpenEvidence}
             onAskAboutNode={
               workspace.collectionId
                 ? (id, label) => setAskAnchor({ id, label })

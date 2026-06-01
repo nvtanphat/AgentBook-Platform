@@ -1559,6 +1559,72 @@ async def mindmap(
     settings: Settings = Depends(get_app_settings),
 ) -> APIResponse[MindmapResponse]:
     verify_owner_access(request, body.owner_id)
+    root_topic = body.root_topic or "Noelys Knowledge Map"
+
+    # ── Path 1: hierarchy tree from document structure ────────────────────────
+    # For legal / manual documents (high hierarchy/reference signal) the document
+    # headings ARE the mindmap — Chương → Điều → Khoản.  Load pages the same way
+    # /graph/auto does, run detect_structure, and use build_hierarchy_tree when
+    # the hierarchy signal is strong enough.  This produces accurate Vietnamese
+    # labels straight from the source text instead of relying on entity extraction.
+    page_query = _scope_query(body)
+    if body.material_ids:
+        page_query["material_id"] = {"$in": [PydanticObjectId(m) for m in body.material_ids]}
+    pages = await MaterialPageDocument.find(page_query).to_list()
+
+    heading_items: list[HeadingItem] = []
+    block_texts: list[str] = []
+    text_block_count = 0
+    ordered_pages = sorted(pages, key=lambda p: (str(p.material_id), p.page_number))
+    for page in ordered_pages:
+        for block in sorted(page.blocks, key=lambda b: b.reading_order):
+            content = (block.content or "").strip()
+            if not content:
+                continue
+            block_texts.append(content)
+            text_block_count += 1
+            if block.block_type == "heading":
+                heading_items.append(
+                    HeadingItem(
+                        text=content,
+                        material_id=str(page.material_id),
+                        page=page.page_number,
+                        block_id=block.block_id,
+                    )
+                )
+
+    if heading_items:
+        signals = detect_structure(
+            headings=[h.text for h in heading_items],
+            total_text_blocks=text_block_count,
+            block_texts=block_texts,
+            entities=[],
+            relations=[],
+            viz_config=settings.viz_config,
+        )
+        # Use hierarchy tree when the document has clear heading structure
+        if signals.hierarchy >= 0.35 or signals.reference >= 0.5:
+            # Filter out garbage headings: require at least one real word (3+ alpha chars)
+            # This drops OCR noise like "42 2", "AaC", "4 >3" from poor-quality PDFs.
+            clean_headings = [
+                h for h in heading_items
+                if re.search(r"[A-Za-zÀ-ỹ]{3,}", h.text)
+                and len(h.text.strip()) >= 4
+            ]
+            tree = build_hierarchy_tree(
+                root_topic=root_topic,
+                headings=clean_headings,
+                viz_config=settings.viz_config,
+            )
+            if tree:
+                return APIResponse(
+                    success=True,
+                    message="Mindmap generated from document structure",
+                    data=MindmapResponse(root_topic=root_topic, nodes=tree),
+                    error=None,
+                )
+
+    # ── Path 2: entity + chunk concept extraction (original flow) ─────────────
     query = _scope_query(body)
     if body.material_ids:
         query["mention_refs.material_id"] = {"$in": [PydanticObjectId(material_id) for material_id in body.material_ids]}
@@ -1581,7 +1647,6 @@ async def mindmap(
         entities.append(entity)
         if len(entities) >= settings.graph_mindmap_entity_cap:
             break
-    root_topic = body.root_topic or "Noelys Knowledge Map"
     chunks = await Chunk.find(_chunk_scope_query(body)).sort("-indexed_at").limit(80).to_list()
     result = None
     if body.use_llm:

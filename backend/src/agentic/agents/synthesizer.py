@@ -26,22 +26,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_SYNTH_PERSONA = """\
-You are a careful answer composer. Your job:
-  1. Read the EVIDENCE passages carefully.
-  2. Answer the QUESTION using ONLY information from the evidence.
-  3. Cite every factual sentence with [N] markers matching evidence indices.
-  4. Never invent details. If evidence is insufficient, say so plainly.
-  5. Match the answer language to the question language.
-
-QUESTION: {query}
-
-EVIDENCE:
-{evidence}
-
-Compose your answer in {answer_language}. Begin now:\
-"""
-
 
 class SynthesizerAgent(BaseAgent):
     name = "synthesizer"

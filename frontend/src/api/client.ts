@@ -166,6 +166,7 @@ export type QueryRequest = {
   query: string;
   top_k?: number | null;
   answer_language?: string | null;
+  rag_flags?: { agentic_rag_enabled?: boolean; reranker_enabled?: boolean };
 };
 
 export type ReasoningStep = {
@@ -770,13 +771,24 @@ export async function askQuestionStream(
     onDone: (response: QueryResponse) => void;
     onError: (message: string) => void;
     onAgentStep?: (step: AgentTraceStep) => void;
+    onVerifying?: () => void;
   },
+  signal?: AbortSignal,
 ): Promise<void> {
-  const response = await fetch(`${API_V1_BASE_URL}/query/ask-stream`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify(payload),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_V1_BASE_URL}/query/ask-stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify(payload),
+      signal,
+    });
+  } catch (err) {
+    // AbortError = user cancelled intentionally, not an error
+    if (err instanceof Error && err.name === "AbortError") return;
+    callbacks.onError("Không thể kết nối đến máy chủ.");
+    return;
+  }
   if (!response.ok || !response.body) {
     callbacks.onError(`HTTP ${response.status}`);
     return;
@@ -795,6 +807,8 @@ export async function askQuestionStream(
         callbacks.onToken(parsed.token);
       } else if (eventType === "agent_step") {
         callbacks.onAgentStep?.(JSON.parse(dataStr) as AgentTraceStep);
+      } else if (eventType === "verifying") {
+        callbacks.onVerifying?.();
       } else if (eventType === "done") {
         callbacks.onDone(JSON.parse(dataStr) as QueryResponse);
       } else if (eventType === "error") {
@@ -808,26 +822,31 @@ export async function askQuestionStream(
     dataStr = "";
   };
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-    for (const line of lines) {
-      if (line.startsWith("event: ")) {
-        eventType = line.slice(7).trim();
-      } else if (line.startsWith("data: ")) {
-        dataStr = line.slice(6).trim();
-      } else if (line === "") {
-        dispatchEvent();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (line.startsWith("event: ")) {
+          eventType = line.slice(7).trim();
+        } else if (line.startsWith("data: ")) {
+          dataStr = line.slice(6).trim();
+        } else if (line === "") {
+          dispatchEvent();
+        }
       }
     }
-  }
-  // flush remaining
-  if (buffer) {
-    if (buffer.startsWith("data: ")) dataStr = buffer.slice(6).trim();
-    dispatchEvent();
+    // flush remaining
+    if (buffer) {
+      if (buffer.startsWith("data: ")) dataStr = buffer.slice(6).trim();
+      dispatchEvent();
+    }
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") return;
+    callbacks.onError("Lỗi kết nối trong khi nhận dữ liệu.");
   }
 }
 

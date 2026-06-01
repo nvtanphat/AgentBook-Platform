@@ -1,4 +1,3 @@
-import React from 'react';
 import { Lightbulb, TrendingUp, Sparkles } from 'lucide-react';
 
 interface ReasoningStep {
@@ -15,20 +14,20 @@ interface ReasoningTraceProps {
 }
 
 const STEP_ICONS = {
-  retrieve: <TrendingUp size={14} className="text-blue-600" />,
-  traverse: <Sparkles size={14} className="text-purple-600" />,
-  synthesize: <Lightbulb size={14} className="text-amber-600" />,
+  retrieve: <TrendingUp size={14} className="text-slate-500" />,
+  traverse: <Sparkles size={14} className="text-slate-500" />,
+  synthesize: <Lightbulb size={14} className="text-slate-500" />,
 };
 
 const STEP_COLORS = {
-  retrieve: 'bg-blue-50 border-blue-200 hover:bg-blue-100',
-  traverse: 'bg-purple-50 border-purple-200 hover:bg-purple-100',
-  synthesize: 'bg-amber-50 border-amber-200 hover:bg-amber-100',
+  retrieve: 'bg-slate-50 border-slate-200 hover:bg-slate-100',
+  traverse: 'bg-slate-50 border-slate-200 hover:bg-slate-100',
+  synthesize: 'bg-slate-50 border-slate-200 hover:bg-slate-100',
 };
 
 function ConfidenceBadge({ value }: { value: number }) {
   const pct = Math.round(value * 100);
-  const color = pct >= 70 ? 'text-emerald-600' : pct >= 40 ? 'text-yellow-600' : 'text-red-600';
+  const color = 'text-slate-600';
 
   return (
     <span className={`text-[10px] font-bold tabular-nums ${color}`}>
