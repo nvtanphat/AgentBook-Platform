@@ -153,7 +153,14 @@ class Settings(BaseSettings):
     multi_query_enabled: bool = False
     smart_reranker_enabled: bool = False
     smart_reranker_threshold: float = 0.7
-    hyde_enabled: bool = False
+    # HyDE: for VI queries, generate a hypothetical English passage and use it as
+    # an extra retrieval signal (retrieval-only) to bridge VI→EN. Adds one LLM
+    # call per VI query (cached); set false to disable if latency-sensitive.
+    hyde_enabled: bool = True
+    # When true, a VI query that the static translation dict can't handle is
+    # translated to English by the LLM so cross-lingual retrieval (VI query over
+    # EN sources) works for arbitrary documents, not just known ML vocabulary.
+    cross_lingual_llm_translation_enabled: bool = True
     llm_router_enabled: bool = False
     crag_evaluator_enabled: bool = False
     crag_correct_threshold: float = 0.55

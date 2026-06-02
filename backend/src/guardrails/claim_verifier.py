@@ -531,17 +531,3 @@ class ClaimVerifier:
         if id2label:
             return [str(id2label[i]).lower() for i in sorted(id2label)]
         return ["contradiction", "entailment", "neutral"]
-
-    # ── Backward-compat stubs (kept so existing call sites need no change) ─────
-
-    @staticmethod
-    def _dedupe_citations(citations: list[EvidenceBlock]) -> list[EvidenceBlock]:
-        deduped: list[EvidenceBlock] = []
-        seen: set[tuple[str, int | None, str | None]] = set()
-        for citation in citations:
-            key = (citation.material_id, citation.page, citation.block_id)
-            if key in seen:
-                continue
-            seen.add(key)
-            deduped.append(citation)
-        return deduped

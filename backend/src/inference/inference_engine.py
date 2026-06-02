@@ -24,7 +24,7 @@ from src.rag.crag_evaluator import CRAGEvaluator
 from src.rag.embedding_factory import build_visual_provider
 from src.rag.embedding_provider import VisualEmbeddingProvider
 from src.rag.graph_retriever import GraphRetriever
-from src.rag.query_processor import QueryProcessor
+from src.rag.query_processor import ProcessedQuery, QueryProcessor
 from src.rag.query_router import QueryRouter, RouteDecision, RouteType
 from src.rag.retriever import HybridRetriever, dedupe_retrieved_chunks
 from src.rag.reranker import CrossEncoderReranker
@@ -67,7 +67,9 @@ class InferenceEngine:
         self.llm = llm or build_llm(settings)
         self.response_parser = response_parser or ResponseParser()
         self.confidence_scorer = confidence_scorer or ConfidenceScorer(settings)
-        self.query_processor = query_processor or QueryProcessor()
+        self.query_processor = query_processor or QueryProcessor(
+            llm=self.llm if settings.cross_lingual_llm_translation_enabled else None,
+        )
         self.query_router = query_router or QueryRouter()
         self.claim_verifier = claim_verifier or ClaimVerifier()
         # SLEC gate reuses the cross-encoder reranker as an evidence-support scorer.
@@ -104,6 +106,23 @@ class InferenceEngine:
             self._semantic_cache = SemanticQueryCache(redis_url=settings.redis_url)
         except Exception:
             self._semantic_cache = None
+
+    @staticmethod
+    def _build_retrieval_queries(processed: ProcessedQuery, use_multi_query: bool) -> list[str]:
+        """Queries handed to the retriever.
+
+        Multi-query expansion (when enabled) uses the full rewritten set. When it
+        is off we still keep the cross-lingual translation alongside the original
+        query: a VI question over English sources must retrieve with the EN
+        translation too, otherwise the relevant chunks never surface and the
+        engine falsely refuses.
+        """
+        if use_multi_query:
+            return processed.retrieval_queries
+        queries = [processed.original_query]
+        if processed.translated_query and processed.translated_query not in queries:
+            queries.append(processed.translated_query)
+        return queries
 
     async def answer(
         self,
@@ -161,7 +180,10 @@ class InferenceEngine:
             hyde_enabled=self.settings.hyde_enabled,
         )
         use_multi_query = route_decision.use_multi_query and self.settings.multi_query_enabled
-        retrieval_queries = processed.retrieval_queries if use_multi_query else [processed.original_query]
+        retrieval_queries = self._build_retrieval_queries(processed, use_multi_query)
+        # HyDE passages widen the candidate pool (retrieval only); reranking keeps
+        # using the real queries below so precision is unaffected.
+        retrieval_inputs = retrieval_queries + processed.hyde_passages
 
         # ── Phase B · Adaptive Retrieval Budget ────────────────────────────
         # Try dense-only first when route is eligible. If the dense bundle is
@@ -219,7 +241,7 @@ class InferenceEngine:
             if not fast_path_taken:
                 retrieval_tasks = [
                     self.retriever.retrieve(query=retrieval_query, scope=scope, limit=retrieval_limit)
-                    for retrieval_query in retrieval_queries
+                    for retrieval_query in retrieval_inputs
                 ]
                 graph_task = (
                     asyncio.wait_for(
@@ -309,7 +331,7 @@ class InferenceEngine:
         substantive = self._filter_substantive_chunks(reranked)
         context_chunks = self._pack_context_chunks(substantive)
         confidence = self.confidence_scorer.score(reranked)
-        _ev_decision = self.refusal_policy.check_evidence(reranked, query)
+        _ev_decision = self.refusal_policy.check_evidence(reranked, query, aux_query=processed.translated_query or "")
         should_refuse = _ev_decision.should_refuse
         refusal_reason = _ev_decision.reason
 
@@ -641,7 +663,10 @@ class InferenceEngine:
             hyde_enabled=self.settings.hyde_enabled,
         )
         use_multi_query = route_decision.use_multi_query and self.settings.multi_query_enabled
-        retrieval_queries = processed.retrieval_queries if use_multi_query else [processed.original_query]
+        retrieval_queries = self._build_retrieval_queries(processed, use_multi_query)
+        # HyDE passages widen the candidate pool (retrieval only); reranking keeps
+        # using the real queries below so precision is unaffected.
+        retrieval_inputs = retrieval_queries + processed.hyde_passages
 
         # ── Phase B · Adaptive Retrieval Budget (stream parity) ────────────
         fast_path_taken_stream = False
@@ -681,7 +706,7 @@ class InferenceEngine:
             if not fast_path_taken_stream:
                 retrieval_tasks = [
                     self.retriever.retrieve(query=rq, scope=scope, limit=retrieval_limit)
-                    for rq in retrieval_queries
+                    for rq in retrieval_inputs
                 ]
                 graph_task = (
                     asyncio.wait_for(
@@ -740,7 +765,7 @@ class InferenceEngine:
         substantive = self._filter_substantive_chunks(reranked)
         context_chunks = self._pack_context_chunks(substantive)
         confidence = self.confidence_scorer.score(reranked)
-        _ev_decision = self.refusal_policy.check_evidence(reranked, query)
+        _ev_decision = self.refusal_policy.check_evidence(reranked, query, aux_query=processed.translated_query or "")
         should_refuse = _ev_decision.should_refuse
         refusal_reason = _ev_decision.reason
         if pipeline_stream.hooks.relax_refusal and reranked:

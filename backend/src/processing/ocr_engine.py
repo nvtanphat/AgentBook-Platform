@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
-import unicodedata
 from pathlib import Path
 from uuid import uuid5, NAMESPACE_URL
 
@@ -12,7 +11,6 @@ from src.processing.types import BBox, BlockType, DependencyUnavailableError, Pa
 logger = logging.getLogger(__name__)
 
 
-_VIETNAMESE_SPECIALS = {chr(codepoint) for codepoint in (0x0111, 0x0110, 0x01A1, 0x01A0, 0x01B0, 0x01AF)}
 _SUSPECT_LATIN_DIACRITICS = {chr(codepoint) for codepoint in (0x0113, 0x016B, 0x01CE, 0x00E5, 0x012B, 0x014D)}
 
 # Latin Extended lookalikes that OCR engines commonly confuse with Vietnamese chars.
@@ -46,12 +44,6 @@ _VI_TOKEN_FIXES: dict[str, str] = {
     "vǎn": "văn",
     "bǎng": "băng",
 }
-
-
-def _has_vietnamese_mark(char: str) -> bool:
-    return char in _VIETNAMESE_SPECIALS or any(
-        unicodedata.category(part) == "Mn" for part in unicodedata.normalize("NFD", char)
-    )
 
 
 def _workspace_cache_dir(name: str) -> Path:

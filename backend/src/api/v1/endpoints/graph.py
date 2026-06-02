@@ -5,7 +5,7 @@ import json
 import math
 import re
 import unicodedata
-from collections import Counter, defaultdict
+from collections import defaultdict
 
 from beanie import PydanticObjectId
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -612,55 +612,6 @@ async def _block_nodes_from_relations(relations) -> list[GraphNode]:
 
 def _entity_weight(entity: Entity) -> float:
     return entity.confidence * 3 + min(len(entity.mention_refs), 8) * 0.55
-
-
-def _entity_ref_keys(entity: Entity, *, include_block: bool = False) -> set[tuple[str, int | None, str | None]]:
-    return {
-        (str(ref.material_id), ref.page, ref.block_id if include_block else None)
-        for ref in entity.mention_refs
-    }
-
-
-def _relatedness(a: Entity, b: Entity) -> float:
-    a_pages = _entity_ref_keys(a)
-    b_pages = _entity_ref_keys(b)
-    a_blocks = _entity_ref_keys(a, include_block=True)
-    b_blocks = _entity_ref_keys(b, include_block=True)
-    shared_pages = len(a_pages & b_pages)
-    shared_blocks = len(a_blocks & b_blocks)
-    shared_materials = len({key[0] for key in a_pages} & {key[0] for key in b_pages})
-    return shared_blocks * 3.0 + shared_pages * 1.7 + shared_materials * 0.45
-
-
-def _pick_topic_seeds(entities: list[Entity], *, max_topics: int = 8) -> list[Entity]:
-    degree: Counter[str] = Counter()
-    for i, source in enumerate(entities):
-        for target in entities[i + 1 :]:
-            score = _relatedness(source, target)
-            if score <= 0:
-                continue
-            degree[str(source.id)] += score
-            degree[str(target.id)] += score
-
-    ranked = sorted(
-        entities,
-        key=lambda item: (degree[str(item.id)] + _entity_weight(item), len(item.mention_refs), item.confidence),
-        reverse=True,
-    )
-    seeds: list[Entity] = []
-    seed_tokens: list[set[str]] = []
-    for entity in ranked:
-        label = _clean_entity_label(entity.canonical_name) or entity.canonical_name
-        if not _is_mindmap_label(label):
-            continue
-        tokens = {token for token in re.split(r"[^a-z0-9]+", label.lower()) if len(token) > 2}
-        if any(tokens and len(tokens & existing) / max(len(tokens), 1) > 0.65 for existing in seed_tokens):
-            continue
-        seeds.append(entity)
-        seed_tokens.append(tokens)
-        if len(seeds) >= max_topics:
-            break
-    return seeds
 
 
 def _semantic_bucket(label: str, entity_type: str) -> str:

@@ -1,11 +1,33 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
+if TYPE_CHECKING:
+    from src.core.base_llm import BaseLLM
+
 logger = logging.getLogger(__name__)
+
+_TRANSLATION_PROMPT = (
+    "Translate the following Vietnamese search query into concise, natural English "
+    "suitable for document retrieval. Keep technical terms as-is. Output ONLY the "
+    "English translation on a single line — no quotes, no notes.\n\n"
+    "Vietnamese: {query}\nEnglish:"
+)
+
+# HyDE: a short hypothetical English passage that *looks like* source-document
+# text. Embedding it bridges the VI→EN gap better than a translated query alone,
+# because it matches the documents' style and terminology, not just keywords.
+_HYDE_PROMPT = (
+    "Write a short, factual English passage (2-3 sentences) that could plausibly "
+    "appear in an academic document and would directly answer the question below. "
+    "Use precise domain terminology. Do not hedge or say you are unsure. Output "
+    "only the passage.\n\nQuestion: {query}\nPassage:"
+)
 
 
 class ProcessedQuery(BaseModel):
@@ -14,6 +36,8 @@ class ProcessedQuery(BaseModel):
     translated_query: str | None = None
     answer_language: str
     retrieval_queries: list[str] = Field(default_factory=list)
+    # HyDE hypothetical passages — retrieval-only signals, never sent to rerank.
+    hyde_passages: list[str] = Field(default_factory=list)
 
 
 class QueryProcessor:
@@ -149,6 +173,13 @@ class QueryProcessor:
         re.IGNORECASE,
     )
 
+    def __init__(self, llm: "BaseLLM | None" = None) -> None:
+        # When an LLM is supplied, VI→EN query translation falls back to the
+        # model whenever the static TRANSLATIONS dict can't produce a usable
+        # English query. This is what makes cross-lingual retrieval work for
+        # arbitrary English documents, not just the known ML vocabulary.
+        self._llm = llm
+
     def _strip_anaphora(self, query: str) -> str:
         """Remove leading Vietnamese pronoun so retrieval targets the predicate."""
         return self._ANAPHORA_PRONOUN_RE.sub("", query).strip()
@@ -217,7 +248,118 @@ class QueryProcessor:
                 answer_language=answer_language or ("vi" if query_language == "vi" else "en"),
                 retrieval_queries=retrieval_queries,
             )
-        return self.process(query, answer_language=answer_language)
+        processed = self.process(query, answer_language=answer_language)
+        # Cross-lingual fallback: the static dict only covers known ML terms, so
+        # a VI question over general English sources usually yields no EN query
+        # and BGE-M3 alone underperforms → false refusal. When an LLM is wired,
+        # translate the VI query for real and add it as a retrieval query.
+        if (
+            self._llm is not None
+            and processed.query_language == "vi"
+            and not processed.translated_query
+        ):
+            english = await self._translate_to_english_llm(processed.original_query)
+            if english:
+                processed.translated_query = english
+                topic_en = self._strip_instruction(english)
+                for candidate in (topic_en, english):
+                    if candidate and candidate not in processed.retrieval_queries:
+                        processed.retrieval_queries.append(candidate)
+        # HyDE (cross-lingual recall boost): generate a hypothetical English
+        # passage answering the question and add it as a retrieval-only signal.
+        # Only fires for VI queries — that is the case where lexical/embedding
+        # mismatch against English sources causes false refusal.
+        if hyde_enabled and self._llm is not None and processed.query_language == "vi":
+            seed = processed.translated_query or processed.original_query
+            passage = await self._generate_hyde_en(seed)
+            if passage:
+                processed.hyde_passages.append(passage)
+        return processed
+
+    async def _generate_hyde_en(self, query: str) -> str | None:
+        """LLM-generated hypothetical English passage for HyDE retrieval (cached)."""
+        if self._llm is None:
+            return None
+        cached = await self._cached_translation(query, target="hyde_en")
+        if cached is not None:
+            return cached or None
+        try:
+            raw = await self._llm.generate(prompt=_HYDE_PROMPT.format(query=query))
+        except Exception:
+            logger.debug("HyDE generation failed", exc_info=True)
+            return None
+        passage = " ".join((raw or "").split()).strip()
+        if len(passage) < 20:  # empty / refusal-style output is useless for retrieval
+            passage = ""
+        await self._store_translation(query, passage, target="hyde_en")
+        return passage or None
+
+    async def _translate_to_english_llm(self, query: str) -> str | None:
+        """LLM-backed VI→EN translation with a persistent cache.
+
+        Returns the English query, or None if translation failed / the LLM
+        echoed Vietnamese back. Never raises — a failure just degrades to the
+        dict-only behaviour.
+        """
+        if self._llm is None:
+            return None
+        cached = await self._cached_translation(query)
+        if cached is not None:
+            return cached or None  # "" = known-untranslatable, cached to skip retry
+        try:
+            raw = await self._llm.generate(prompt=_TRANSLATION_PROMPT.format(query=query))
+        except Exception:
+            logger.debug("LLM query translation failed", exc_info=True)
+            return None
+        english = self._clean_llm_translation(raw)
+        await self._store_translation(query, english or "")
+        return english
+
+    def _clean_llm_translation(self, raw: str) -> str | None:
+        if not raw or not raw.strip():
+            return None
+        text = raw.strip().splitlines()[0]
+        text = re.sub(r"^(english|translation)\s*:\s*", "", text, flags=re.IGNORECASE)
+        text = text.strip().strip('"').strip("'").strip()
+        if len(text) < 2:
+            return None
+        # Reject if the model echoed Vietnamese back (failed translation).
+        if any(ch in self.VI_CHARS for ch in text.lower()):
+            return None
+        return text
+
+    @staticmethod
+    def _query_hash(text: str) -> str:
+        return hashlib.sha256(text.strip().lower().encode("utf-8")).hexdigest()
+
+    async def _cached_translation(self, query: str, target: str = "en") -> str | None:
+        try:
+            from src.models.translation_cache import TranslationCache
+
+            doc = await TranslationCache.find_one(
+                TranslationCache.source_text_hash == self._query_hash(query),
+                TranslationCache.source_language == "vi",
+                TranslationCache.target_language == target,
+            )
+            return doc.translated_text if doc else None
+        except Exception:
+            return None
+
+    async def _store_translation(self, query: str, text: str, target: str = "en") -> None:
+        try:
+            from src.models.translation_cache import TranslationCache
+
+            if await self._cached_translation(query, target=target) is not None:
+                return
+            await TranslationCache(
+                source_text_hash=self._query_hash(query),
+                source_language="vi",
+                target_language=target,
+                translated_text=text,
+                model_used=getattr(self._llm, "model_name", None) or getattr(self._llm, "model", "llm"),
+            ).insert()
+        except Exception:
+            logger.debug("translation cache write skipped", exc_info=True)
 
     def detect_language(self, query: str) -> str:
         lowered = query.lower()

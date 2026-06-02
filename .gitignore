@@ -66,3 +66,7 @@ ablation_*.txt
 # OS
 .DS_Store
 Thumbs.db
+
+# VietOCR local test files
+vietocr_*.txt
+

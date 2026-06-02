@@ -606,7 +606,65 @@ class ParseIndexPipeline:
             except Exception:
                 pass
 
+        # PDF fallback: digital PDFs have no pre-rendered page image and Docling
+        # is intentionally not asked to retain picture pixels (OOM risk). Render
+        # the figure's page on demand with PyMuPDF — memory-light, one page at a
+        # time — so the VLM/SigLIP still get a real image to work with.
+        if parsed.file_type == "pdf":
+            result = ParseIndexPipeline._render_pdf_page_for_caption(
+                block, source_path, captioner, figure_cache_dir
+            )
+            if result is not None:
+                return result
+
         return "", None
+
+    @staticmethod
+    def _render_pdf_page_for_caption(
+        block, source_path: Path, captioner: FigureCaptioner, figure_cache_dir: Path | None
+    ) -> tuple[str, str | None] | None:
+        """Render the figure's PDF page with PyMuPDF and caption it.
+
+        Returns (caption, image_path) or None when rendering is unavailable.
+        Full-page render (≈144 DPI) keeps the figure intact without fragile
+        bbox→PDF coordinate mapping; it is plenty for VLM captioning + SigLIP.
+        """
+        try:
+            import fitz  # PyMuPDF
+        except ImportError:
+            return None
+        import hashlib
+        import tempfile
+
+        try:
+            with fitz.open(str(source_path)) as pdf:
+                page_index = max(1, getattr(block, "page_number", 1) or 1) - 1
+                if not (0 <= page_index < pdf.page_count):
+                    return None
+                png = pdf[page_index].get_pixmap(matrix=fitz.Matrix(2, 2)).tobytes("png")
+        except Exception as exc:
+            logger.debug("PyMuPDF figure render failed", extra={"error": str(exc), "block": getattr(block, "block_id", None)})
+            return None
+        if not png or len(png) < 512:
+            return None
+
+        if figure_cache_dir is not None:
+            figure_cache_dir.mkdir(parents=True, exist_ok=True)
+            name = hashlib.sha1(f"{source_path}:{getattr(block, 'block_id', '')}".encode()).hexdigest()[:12]
+            save_path = figure_cache_dir / f"figpdf-{name}.png"
+            save_path.write_bytes(png)
+            return captioner.caption_image_path(save_path), str(save_path)
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as handle:
+            handle.write(png)
+            tmp_path = Path(handle.name)
+        try:
+            return captioner.caption_image_path(tmp_path), None
+        finally:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
 
     def _parse_image_vlm_first(self, path: Path, *, declared_language: str) -> ParsedDocument:
         """For standalone image files: try VLM captioning first, OCR fallback.

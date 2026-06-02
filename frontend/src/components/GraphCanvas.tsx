@@ -1,9 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactFlow, {
   Background,
+  BaseEdge,
   Controls,
   Edge,
+  EdgeProps,
   getRectOfNodes,
+  getStraightPath,
   getTransformForBounds,
   Handle,
   MarkerType,
@@ -16,6 +19,7 @@ import ReactFlow, {
   useEdgesState,
   useNodesState,
   useReactFlow,
+  useStore,
 } from "reactflow";
 import "reactflow/dist/style.css";
 import { toPng } from "html-to-image";
@@ -515,6 +519,80 @@ const NODE_TYPES = {
   collapsible: CollapsibleMindmapNode,
 };
 
+// ── Floating edge (knowledge graph) ─────────────────────────────────────────
+// Circle nodes keep their handles at the centre so the force layout can attach
+// edges from any angle. A plain bezier therefore runs centre→centre, which
+// buries the arrowhead under the target node's fill (so it looks like there is
+// no arrow at all). This edge instead clips both endpoints to the circle
+// boundary, so the wire runs rim→rim and the direction arrow sits flush against
+// the target node — clearly readable.
+function nodeGeometry(node: { positionAbsolute?: { x: number; y: number }; position?: { x: number; y: number }; width?: number | null; height?: number | null }) {
+  const x = node.positionAbsolute?.x ?? node.position?.x ?? 0;
+  const y = node.positionAbsolute?.y ?? node.position?.y ?? 0;
+  const w = node.width ?? 80;
+  const h = node.height ?? 80;
+  return { cx: x + w / 2, cy: y + h / 2, r: Math.max(w, h) / 2 };
+}
+
+function FloatingEdge({
+  id,
+  source,
+  target,
+  markerEnd,
+  style,
+  label,
+  labelStyle,
+  labelBgStyle,
+  labelBgPadding,
+  labelBgBorderRadius,
+}: EdgeProps) {
+  const sourceNode = useStore(useCallback((s) => s.nodeInternals.get(source), [source]));
+  const targetNode = useStore(useCallback((s) => s.nodeInternals.get(target), [target]));
+  if (!sourceNode || !targetNode) return null;
+
+  const s = nodeGeometry(sourceNode);
+  const t = nodeGeometry(targetNode);
+  const dx = t.cx - s.cx;
+  const dy = t.cy - s.cy;
+  const dist = Math.hypot(dx, dy) || 1;
+  const ux = dx / dist;
+  const uy = dy / dist;
+  // Start on the source rim; stop a few px short of the target rim so the
+  // closed arrowhead lands against the node instead of overlapping its border.
+  const sx = s.cx + ux * s.r;
+  const sy = s.cy + uy * s.r;
+  const tx = t.cx - ux * (t.r + 4);
+  const ty = t.cy - uy * (t.r + 4);
+
+  const [edgePath, labelX, labelY] = getStraightPath({
+    sourceX: sx,
+    sourceY: sy,
+    targetX: tx,
+    targetY: ty,
+  });
+
+  return (
+    <BaseEdge
+      id={id}
+      path={edgePath}
+      markerEnd={markerEnd}
+      style={style}
+      label={label}
+      labelX={labelX}
+      labelY={labelY}
+      labelShowBg
+      labelStyle={labelStyle}
+      labelBgStyle={labelBgStyle}
+      labelBgPadding={labelBgPadding}
+      labelBgBorderRadius={labelBgBorderRadius}
+    />
+  );
+}
+
+const EDGE_TYPES = {
+  floating: FloatingEdge,
+};
+
 function computeForceLayout(
   nodes: Node[],
   edges: Edge[],
@@ -898,19 +976,22 @@ function FlowInner({
             id: edge.id ?? `${edge.source}__${edge.target}__${index}`,
             source: edge.source,
             target: edge.target,
-            type: mode === "mindmap" ? "smoothstep" : "bezier",
+            // Graph: rim-to-rim floating edge so the arrowhead is visible.
+            // Mindmap stays smoothstep — its left→right hierarchy reads cleanly.
+            type: mode === "mindmap" ? "smoothstep" : "floating",
             data: { canvasEdge: edge },
             label: selectedRelated ? semanticLabel : undefined,
             animated: selectedRelated,
             // Directional arrow on knowledge-graph relations (source → target).
             // Mindmap stays arrow-free: its left→right hierarchy is already clear.
             markerEnd: mode === "graph"
-              ? { type: MarkerType.ArrowClosed, width: 16, height: 16, color: strokeColor }
+              ? { type: MarkerType.ArrowClosed, width: 20, height: 20, color: strokeColor }
               : undefined,
             style: {
-              opacity: dimmed ? 0.08 : selectedRelated ? 1 : mode === "graph" ? 0.4 : 0.7,
+              opacity: dimmed ? 0.1 : selectedRelated ? 1 : mode === "graph" ? 0.6 : 0.7,
               stroke: strokeColor,
-              strokeWidth: selectedRelated ? 2.5 : edge.focused ? 2 : mode === "graph" ? 1.4 : 1.75,
+              strokeWidth: selectedRelated ? 2.6 : edge.focused ? 2.2 : mode === "graph" ? 1.7 : 1.75,
+              strokeLinecap: "round",
             },
             labelStyle: { fill: highlightStroke, fontSize: 10, fontWeight: 700 },
             labelBgStyle: { fill: isDark ? "#131c2e" : "#ffffff", fillOpacity: 0.95 },
@@ -1159,6 +1240,7 @@ function FlowInner({
       nodes={nodes}
       edges={edges}
       nodeTypes={NODE_TYPES}
+      edgeTypes={EDGE_TYPES}
       onNodesChange={onNodesChange}
       onEdgesChange={onEdgesChange}
       onNodeClick={handleNodeClick}

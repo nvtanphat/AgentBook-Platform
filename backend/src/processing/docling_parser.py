@@ -111,22 +111,6 @@ class DoclingParser:
         _patch_docling_transformers_compat()
         from docling.document_converter import DocumentConverter  # noqa: F401
 
-    def _pdf_text_native_document(self, file_path: Path, *, language: str) -> ParsedDocument:
-        pages_by_number: dict[int, list[ParsedBlock]] = {}
-        self._add_pdf_text_fallback_pages(pages_by_number, file_path=file_path, language=language)
-        self._add_easyocr_pages(pages_by_number, file_path=file_path, language=language)
-        pages = [
-            ParsedPage(page_number=page_number, blocks=sorted(page_blocks, key=lambda block: block.reading_order))
-            for page_number, page_blocks in sorted(pages_by_number.items())
-        ] or [ParsedPage(page_number=1, blocks=[])]
-        return ParsedDocument(
-            source_path=str(file_path),
-            file_type="pdf",
-            language=language,
-            pages=pages,
-            extra={"parser": "pypdf_text", "pdf_strategy": "text_first_ocr_missing_pages"},
-        )
-
     @staticmethod
     def _converter(extension: str):
         from docling.document_converter import DocumentConverter
@@ -145,6 +129,10 @@ class DoclingParser:
             table_batch_size=1,
             queue_max_size=2,   # reduced to limit memory pressure from large PDFs
             images_scale=1.0,   # default; can lower to 0.5 to further reduce RAM
+            # NOTE: do NOT set generate_picture_images=True here — retaining all
+            # picture pixels across the document triggers std::bad_alloc on
+            # image-heavy PDFs. Figure images are instead extracted lazily,
+            # page-by-page, with PyMuPDF in the captioning step (memory-light).
         )
         return DocumentConverter(format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pdf_options)})
 

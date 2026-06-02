@@ -84,7 +84,7 @@ class RefusalPolicy:
 
     # ── Rule a + b: evidence quality ─────────────────────────────────────────
 
-    def check_evidence(self, chunks: list, query: str = "") -> RefusalDecision:
+    def check_evidence(self, chunks: list, query: str = "", aux_query: str = "") -> RefusalDecision:
         """Rules a (NO_EVIDENCE) and b (LOW_CONFIDENCE).
 
         Parameters
@@ -93,6 +93,11 @@ class RefusalPolicy:
             RetrievedChunk objects after reranking.
         query:
             Original query string used for topic-coverage validation.
+        aux_query:
+            Optional companion query (e.g. the English translation of a Vietnamese
+            question). Its tokens are added to topic-coverage so a VI query over
+            English sources is not falsely refused just because VI words never
+            appear verbatim in English chunk text.
         """
         if not chunks:
             return RefusalDecision(
@@ -143,7 +148,10 @@ class RefusalPolicy:
             )
 
         # Adequate score — but validate topic coverage before declaring success.
-        if query and not self._topic_coverage(query, chunks):
+        # Combine the query with its translation so cross-lingual (VI→EN) topic
+        # matching works against English chunk text.
+        coverage_query = f"{query} {aux_query}".strip()
+        if query and not self._topic_coverage(coverage_query, chunks):
             logger.info(
                 "RefusalPolicy: LOW_CONFIDENCE topic coverage failed for query: %.60s", query
             )

@@ -1,7 +1,7 @@
 ﻿import { useState, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { AlertCircle, BookOpen, FileText, Link2, Loader2, Maximize2, MessageCircleQuestion, Network, RefreshCw, Send, ShieldCheck, Sparkles, Target, X } from "lucide-react";
-import { GraphResponse, MindmapResponse, QueryResponse, askWithGraphAnchor, loadAutoViz, loadGraph, loadMindmap } from "../../../api/client";
+import { EvidenceBlock, GraphResponse, MindmapResponse, QueryResponse, askWithGraphAnchor, loadAutoViz, loadEvidencePage, loadGraph, loadMindmap } from "../../../api/client";
 import GraphCanvas, { CanvasEdge, CanvasNode } from "../../GraphCanvas";
 import MarkdownRenderer from "../../MarkdownRenderer";
 import { useWorkspace } from "../../../state/workspace";
@@ -390,13 +390,125 @@ const LEGEND_TYPES = ["model", "algorithm", "metric", "dataset", "framework", "c
 
 // ─── Node info card ───────────────────────────────────────────────────────────
 
+// Quick-read: lazy-load the source block text for the clicked node so the user
+// can read the grounding passage inline, without leaving the graph for the
+// evidence panel. Reuses the existing /evidence/{doc}/{page} endpoint and
+// preserves the evidence trace (doc · page · block_id stay attached).
+function NodeQuickRead({
+  node,
+  ownerId,
+  collectionId,
+  onOpenEvidence,
+}: {
+  node: SelectedNode;
+  ownerId: string;
+  collectionId?: string | null;
+  onOpenEvidence?: (target: { docId: string; page: number; blockId?: string | null }) => void;
+}) {
+  const [text, setText] = useState<string | null>(null);
+  const [src, setSrc] = useState<{ docId: string; page: number; blockId: string | null; docName: string | null } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const ref = node.evidenceRefs.find((r) => {
+      const id = r.doc_id ?? r.material_id;
+      const page = Number(r.page);
+      return typeof id === "string" && id.length > 0 && Number.isFinite(page) && page > 0;
+    });
+    if (!ref) {
+      setText(null);
+      setSrc(null);
+      setFailed(false);
+      setLoading(false);
+      return;
+    }
+    const docId = String(ref.doc_id ?? ref.material_id);
+    const page = Number(ref.page);
+    const blockId = typeof ref.block_id === "string" && ref.block_id ? ref.block_id : null;
+    setLoading(true);
+    setFailed(false);
+    setText(null);
+    loadEvidencePage(docId, page, ownerId, collectionId)
+      .then((res) => {
+        if (cancelled) return;
+        const blocks: EvidenceBlock[] = res.blocks ?? [];
+        // Prefer the exact cited block; else the block that mentions the node
+        // label; else the first couple of text blocks on the page.
+        let chosen = blockId ? blocks.filter((b) => b.block_id === blockId) : [];
+        if (!chosen.length) {
+          const needle = node.label.toLowerCase();
+          const match = blocks.find((b) => (b.snippet_original ?? "").toLowerCase().includes(needle));
+          chosen = match ? [match] : blocks.slice(0, 2);
+        }
+        const joined = chosen.map((b) => b.snippet_original).filter(Boolean).join("\n\n").trim();
+        setText(joined || null);
+        setSrc({ docId, page, blockId, docName: res.doc_name ?? null });
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [node.id, ownerId, collectionId]);
+
+  if (!node.evidenceRefs.length) return null;
+
+  return (
+    <div className="px-4 pb-3">
+      <div className="mb-1 flex items-center justify-between">
+        <p className="text-[9px] font-semibold uppercase tracking-wider text-muted flex items-center gap-1">
+          <BookOpen size={9} /> Nội dung nguồn
+        </p>
+        {src && (
+          <span className="text-[9px] text-muted truncate max-w-[150px]" title={`${src.docName ?? ""} · trang ${src.page}`}>
+            {src.docName ? `${src.docName} · ` : ""}tr.{src.page}
+          </span>
+        )}
+      </div>
+      {loading ? (
+        <div className="flex items-center gap-2 rounded-lg border border-outline/40 bg-slate-50 px-3 py-3 text-[11px] text-muted">
+          <Loader2 size={12} className="animate-spin" /> Đang tải đoạn văn nguồn…
+        </div>
+      ) : text ? (
+        <blockquote className="max-h-[160px] overflow-y-auto whitespace-pre-wrap rounded-lg border-l-2 border-primary/40 bg-slate-50 px-3 py-2 text-[11px] leading-relaxed text-text/85">
+          {text}
+        </blockquote>
+      ) : (
+        <p className="rounded-lg border border-outline/40 bg-slate-50 px-3 py-2 text-[11px] text-muted">
+          {failed ? "Không tải được đoạn văn nguồn." : "Node này chưa gắn đoạn văn text."}
+        </p>
+      )}
+      {onOpenEvidence && src && (
+        <button
+          type="button"
+          onClick={() => onOpenEvidence({ docId: src.docId, page: src.page, blockId: src.blockId })}
+          className="mt-1.5 text-[10px] font-semibold text-primary hover:underline"
+        >
+          Mở toàn văn trong tài liệu →
+        </button>
+      )}
+    </div>
+  );
+}
+
 function NodeInfoCard({
   node,
+  ownerId,
+  collectionId,
   onClose,
   onAskAboutNode,
   onOpenEvidence,
 }: {
   node: SelectedNode;
+  ownerId: string;
+  collectionId?: string | null;
   onClose: () => void;
   onAskAboutNode?: (entityId: string, label: string) => void;
   onOpenEvidence?: (target: { docId: string; page: number; blockId?: string | null }) => void;
@@ -448,6 +560,9 @@ function NodeInfoCard({
         </button>
       </div>
 
+      {/* Quick-read source passage (inline, no panel switch) */}
+      <NodeQuickRead node={node} ownerId={ownerId} collectionId={collectionId} onOpenEvidence={onOpenEvidence} />
+
       {/* Source documents */}
       {node.source_docs.length > 0 && (
         <div className="px-4 pb-2">
@@ -483,23 +598,6 @@ function NodeInfoCard({
               <span className="text-[10px] text-muted">+{node.connections.length - 8}</span>
             )}
           </div>
-        </div>
-      )}
-
-      {/* Read full article / evidence */}
-      {onOpenEvidence && node.evidenceRefs.length > 0 && (
-        <div className="border-t border-outline/40 px-4 py-2 flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => openEvidenceRef(node.evidenceRefs, onOpenEvidence)}
-            className="flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/5 px-3 py-1.5 text-[11px] font-semibold text-primary hover:bg-primary/10 transition"
-          >
-            <BookOpen size={12} />
-            Đọc toàn văn điều luật
-          </button>
-          <span className="text-[10px] text-muted">
-            Mở trang nguồn trong tài liệu gốc
-          </span>
         </div>
       )}
 
@@ -950,13 +1048,15 @@ function GraphPurposeCard({ hasTrace }: { hasTrace: boolean }) {
 // ─── Fullscreen overlay ───────────────────────────────────────────────────────
 
 function FullscreenOverlay({
-  mode, verifyMode, canvas, selectedNode, selectedRelation, onSelect, onEdgeSelect, onClose, onOpenEvidence, onDraftQuestion, onFindRelated,
+  mode, verifyMode, canvas, selectedNode, selectedRelation, ownerId, collectionId, onSelect, onEdgeSelect, onClose, onOpenEvidence, onDraftQuestion, onFindRelated,
 }: {
   mode: "graph" | "mindmap";
   verifyMode?: boolean;
   canvas: { nodes?: CanvasNode[]; edges?: CanvasEdge[] };
   selectedNode: SelectedNode | null;
   selectedRelation: SelectedRelation | null;
+  ownerId: string;
+  collectionId?: string | null;
   onSelect: (id: string, label: string) => void;
   onEdgeSelect?: (edge: CanvasEdge) => void;
   onClose: () => void;
@@ -1008,7 +1108,7 @@ function FullscreenOverlay({
         <RelationInfoCard relation={selectedRelation} onClose={() => {}} onOpenEvidence={onOpenEvidence} />
       )}
       {!selectedRelation && selectedNode && (
-        <NodeInfoCard node={selectedNode} onClose={() => {}} onOpenEvidence={onOpenEvidence} />
+        <NodeInfoCard node={selectedNode} ownerId={ownerId} collectionId={collectionId} onClose={() => {}} onOpenEvidence={onOpenEvidence} />
       )}
     </div>,
     document.body
@@ -1468,6 +1568,8 @@ export default function GraphTab({
         {!selectedRelation && selectedNode && (
           <NodeInfoCard
             node={selectedNode}
+            ownerId={workspace.ownerId}
+            collectionId={workspace.collectionId}
             onClose={() => setSelectedNode(null)}
             onOpenEvidence={onOpenEvidence}
             onAskAboutNode={
@@ -1502,6 +1604,8 @@ export default function GraphTab({
           canvas={canvas}
           selectedNode={selectedNode}
           selectedRelation={selectedRelation}
+          ownerId={workspace.ownerId}
+          collectionId={workspace.collectionId}
           onSelect={handleSelect}
           onEdgeSelect={handleEdgeSelect}
           onClose={() => setFullscreen(false)}
