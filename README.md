@@ -1,6 +1,6 @@
 <div align="center">
   <h1>🚀 AgentBook</h1>
-  <p><strong>Evidence-grounded learning assistant for university study materials — agentic RAG with verified citations across PDFs, slides, tables, scans, handwriting, and audio.</strong></p>
+  <p><strong>Evidence-grounded multi-domain assistant for complex documents — agentic RAG with verified citations across PDFs, slides, tables, scans, handwriting, and audio.</strong></p>
 
   [![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
   [![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
@@ -13,7 +13,7 @@
   [![License](https://img.shields.io/badge/License-Apache_2.0-green.svg?style=flat-square)](https://opensource.org/licenses/Apache-2.0)
 </div>
 
-AgentBook turns heterogeneous course materials into a queryable, citation-backed knowledge surface. Every sentence in an answer is traceable to a chunk on a specific page, block, or audio segment of the source document. The system is built for the bilingual Vietnamese–English educational setting: students can ask in Vietnamese over English textbooks (or vice versa) and receive grounded answers without losing the original-language evidence.
+AgentBook turns heterogeneous documents into a queryable, citation-backed knowledge surface. Every sentence in an answer is traceable to a chunk on a specific page, block, or audio segment of the source document. The system is built for bilingual Vietnamese–English cross-domain settings: users can ask in Vietnamese over English documents (or vice versa) and receive grounded answers without losing the original-language evidence.
 
 
 ---
