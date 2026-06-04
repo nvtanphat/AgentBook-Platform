@@ -20,12 +20,12 @@ AgentBook turns heterogeneous documents into a queryable, citation-backed knowle
 
 ## Highlights
 
-- **Universal ingestion** — PDF, DOCX, PPTX, XLSX, CSV, PNG/JPG (printed + handwritten), and audio (MP3/WAV/M4A/FLAC/OGG/WebM) flow through a single block-level evidence schema. Bounding boxes for text/figures, page numbers, table row/column anchors, and audio start/end timestamps are preserved end-to-end so every citation can be rendered visually.
+- **Multi-format ingestion** — PDF, DOCX, PPTX, XLSX, CSV, PNG/JPG (printed + handwritten), and audio (MP3/WAV/M4A/FLAC/OGG/WebM) flow through a single block-level evidence schema. Bounding boxes for text/figures, page numbers, table row/column anchors, and audio start/end timestamps are preserved end-to-end so every citation can be rendered visually.
 - **Hybrid retrieval** — BGE-M3 produces dense + sparse vectors in one pass; both are queried against Qdrant and fused with Reciprocal Rank Fusion (RRF). A BGE cross-encoder reranks the top-30 candidates. Multi-query rewriting kicks in for hard-recall questions, and graph traversal kicks in when the query mentions relations (`liên quan`, `tác động`, `phụ thuộc`, `causes`, `depends on`, …).
 - **Agentic reasoning** — A bounded state-machine pipeline (Planner → Director → CRAG Critic → Reranker → Synthesizer → Guardrails → Sentence-Level Coverage Gate) replaces free-form ReAct. Each stage has a single responsibility, a typed contract, and a measurable verdict written back to the shared `AgentState` blackboard, which is what the UI renders as the *Agent Trace* panel.
-- **Cross-lingual robustness** — Native VI↔EN routing: original-language query keeps recall, a translated variant catches paraphrases, RRF fuses both. The claim verifier auto-skips when answer-language ≠ chunk-language (token-overlap NLI is meaningless across languages), so EN queries over a VN corpus return grounded EN answers instead of spurious refusals.
+- **Cross-lingual support** — Native VI↔EN routing: original-language query keeps recall, a translated variant catches paraphrases, RRF fuses both. The claim verifier auto-skips when answer-language ≠ chunk-language (token-overlap NLI is meaningless across languages), so EN queries over a VN corpus return grounded EN answers instead of spurious refusals.
 - **Calibrated refusal** — Off-topic and chitchat are refused in 2–10 s via an intent-classifier shortcut. On-topic questions with weak grounding surface a *partial* badge through the SLEC gate instead of being silently fabricated; only the floor case (weighted SLEC < `refuse_below`) becomes a hard refusal.
-- **Pixel-accurate evidence UI** — Citations carry `doc_id`, `page`, `block_id`, `bbox`, `snippet_original` and (optionally) `snippet_translated`. Clicking `[1]` scrolls the PDF / slide viewer to the exact region, plays an audio segment, or highlights a table row.
+- **Evidence UI** — Citations carry `doc_id`, `page`, `block_id`, `bbox`, `snippet_original` and (optionally) `snippet_translated`. Clicking `[1]` scrolls the PDF / slide viewer to the exact region, plays an audio segment, or highlights a table row.
 - **Anti-hallucination post-processing** — Acronym expansions invented by the LLM are stripped when not verbatim in evidence (catches both `RAG (Relevant Answer Generation)` and `RAG là viết tắt của …` patterns). Sentences whose detected language drifts away from the requested answer language are dropped before citation injection.
 - **Knowledge graph + mindmap** — Entities (concept / model / dataset / metric / framework) and typed relations (`references`, `mentioned_in_block`, `co_located_with`, `section_contains`) are extracted at ingestion. A concept graph and an LLM-summarised topical mindmap are derived from this layer per collection.
 
@@ -230,7 +230,7 @@ curl -X POST http://localhost:8000/api/v1/query/ask \
 | Per-file upload cap | 100 MB (`upload.max_file_size_mb`) |
 | Per-query input cap | 4 000 characters |
 
-Switching `AGENTBOOK_LLM_DEFAULT_PROVIDER=openai` and pointing at GPT-4o-mini / Claude cuts the synthesis stage from tens of seconds to ~1–3 s and lifts answer quality measurably (the rest of the pipeline is unchanged).
+Switching `AGENTBOOK_LLM_DEFAULT_PROVIDER=openai` and pointing at GPT-4o-mini / Claude reduces the synthesis stage from tens of seconds to ~1–3 s (the rest of the pipeline is unchanged).
 
 ---
 
