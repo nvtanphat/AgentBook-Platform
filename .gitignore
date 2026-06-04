@@ -64,6 +64,7 @@ ablation_responses/
 *.swp
 *.swo
 *.docx
+scripts/
 
 
 # OS
