@@ -434,13 +434,20 @@ function NodeQuickRead({
       .then((res) => {
         if (cancelled) return;
         const blocks: EvidenceBlock[] = res.blocks ?? [];
-        // Prefer the exact cited block; else the block that mentions the node
-        // label; else the first couple of text blocks on the page.
+        // Show the exact cited block. This is the precise grounding passage the
+        // node points to and is correct for any document type (no language- or
+        // format-specific reconstruction). Reading the surrounding section is one
+        // click away via "Mở toàn văn". Fallbacks stay generic:
+        //   1. exact block_id match
+        //   2. the block whose text contains the node label
+        //   3. the first block on the page
         let chosen = blockId ? blocks.filter((b) => b.block_id === blockId) : [];
         if (!chosen.length) {
-          const needle = node.label.toLowerCase();
-          const match = blocks.find((b) => (b.snippet_original ?? "").toLowerCase().includes(needle));
-          chosen = match ? [match] : blocks.slice(0, 2);
+          const needle = node.label.trim().toLowerCase();
+          const match = needle
+            ? blocks.find((b) => (b.snippet_original ?? "").toLowerCase().includes(needle))
+            : undefined;
+          chosen = match ? [match] : blocks.slice(0, 1);
         }
         const joined = chosen.map((b) => b.snippet_original).filter(Boolean).join("\n\n").trim();
         setText(joined || null);

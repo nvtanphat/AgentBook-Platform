@@ -16,6 +16,7 @@ from src.dependencies import get_app_settings, verify_owner_access
 from src.models.chunk import Chunk
 from src.models.knowledge_graph import Entity, Relation
 from src.models.material import Material, MaterialPageDocument
+from src.processing.reading_order import order_blocks_by_reading
 from src.rag.graph_builder import build_digraph, compute_communities, compute_degrees, compute_pagerank
 from src.rag.structure_detector import (
     HeadingItem,
@@ -557,6 +558,13 @@ def _evidence_refs(refs) -> list[dict[str, str | int]]:
         {"material_id": str(ref.material_id), "page": ref.page or 0, "block_id": ref.block_id or ""}
         for ref in refs[:3]
     ]
+
+
+def _blocks_in_reading_order(blocks: list) -> list:
+    """Page blocks top-to-bottom. Defensive: re-indexed materials already store a
+    corrected reading_order (so this is a no-op), but legacy materials parsed
+    before the fix still need it. Shares one implementation with the parser."""
+    return order_blocks_by_reading(blocks)
 
 
 def _fallback_node(node_id: str) -> GraphNode:
@@ -1419,7 +1427,7 @@ async def auto_viz(
     last_heading_by_material: dict[str, str] = {}
     for page in ordered_pages:
         mat = str(page.material_id)
-        for block in sorted(page.blocks, key=lambda b: b.reading_order):
+        for block in _blocks_in_reading_order(page.blocks):
             content = (block.content or "").strip()
             if not content:
                 continue
@@ -1528,7 +1536,7 @@ async def mindmap(
     text_block_count = 0
     ordered_pages = sorted(pages, key=lambda p: (str(p.material_id), p.page_number))
     for page in ordered_pages:
-        for block in sorted(page.blocks, key=lambda b: b.reading_order):
+        for block in _blocks_in_reading_order(page.blocks):
             content = (block.content or "").strip()
             if not content:
                 continue

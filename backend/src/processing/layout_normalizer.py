@@ -5,6 +5,7 @@ from uuid import NAMESPACE_URL, uuid5
 
 from src.models.material import BoundingBox, MaterialBlock, MaterialPage
 from src.processing.language_detector import detect_block_language, detect_document_language
+from src.processing.reading_order import order_blocks_by_reading
 from src.processing.types import BBox, BlockType, ParsedBlock, ParsedDocument, ParsedPage
 
 _BULLET_PREFIX = re.compile(r"^[\u25a1\u2022\u25cf\u25aa\u25ab\u2013\u2014\-\*\u25c6\u25c7\u25cb]\s")
@@ -24,7 +25,12 @@ class LayoutNormalizer:
                 block for block in page.blocks
                 if block.content.strip() or block.block_type == BlockType.FIGURE.value
             ]
-            blocks.sort(key=self._reading_order_key)
+            # Geometry-aware order: a naive `bbox.y1` ascending sort reverses every
+            # PDF (Docling uses a bottom-left origin where the top edge has the
+            # larger y) and scrambles multi-column pages. order_blocks_by_reading
+            # keeps the parser's reading_order (which handles columns) unless the
+            # page is grossly reversed, in which case it falls back to geometry.
+            blocks = order_blocks_by_reading(blocks)
             blocks = self._merge_ocr_lines(blocks)
             blocks = self._merge_text_fragments(blocks)
             normalized_blocks = [
@@ -181,16 +187,6 @@ class LayoutNormalizer:
         if prev_text.endswith(":"):
             return True
         return len(prev_text) <= 28 and not prev_text.endswith((".", "?", "!", ";"))
-
-    @staticmethod
-    def _reading_order_key(block: ParsedBlock) -> tuple[int, float, float, int]:
-        bbox = block.bbox
-        return (
-            block.page_number,
-            bbox.y1 if bbox else float(block.reading_order),
-            bbox.x1 if bbox else 0.0,
-            block.reading_order,
-        )
 
     @staticmethod
     def _to_material_bbox(bbox: BBox | None) -> BoundingBox | None:
