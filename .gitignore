@@ -44,6 +44,7 @@ evaluation/results/*
 e2e_*.txt
 eval_*.txt
 ablation_*.txt
+ablation_responses/
 
 # Local debug dumps at repo root (graph/chat/mindmap probe responses)
 /check_*.json
@@ -62,6 +63,8 @@ ablation_*.txt
 .claude/
 *.swp
 *.swo
+*.docx
+
 
 # OS
 .DS_Store
