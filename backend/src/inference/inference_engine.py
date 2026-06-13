@@ -36,7 +36,12 @@ logger = logging.getLogger(__name__)
 PUBLIC_RETRIEVAL_ERROR = "The retrieval pipeline failed. Please retry or inspect server logs."
 PUBLIC_GENERATION_ERROR = "The answer generation pipeline failed. Please retry or inspect server logs."
 
-REFUSAL_ANSWER = "Tôi không tìm thấy đủ bằng chứng trong tài liệu được cung cấp để trả lời câu hỏi này."
+def _get_refusal_answer(lang: str = "vi") -> str:
+    from src.core.config import get_settings
+    cfg = get_settings()
+    return cfg.messages_refusal_answer.get(lang, cfg.messages_refusal_answer.get("vi", ""))
+
+REFUSAL_ANSWER = _get_refusal_answer("vi")
 
 
 class InferenceEngine:
@@ -106,6 +111,41 @@ class InferenceEngine:
             self._semantic_cache = SemanticQueryCache(redis_url=settings.redis_url)
         except Exception:
             self._semantic_cache = None
+
+    @staticmethod
+    def _prune_to_cited(answer: str, citations: list, coverage_report=None):
+        """Keep only citations the answer actually references, renumbered 1..k.
+
+        Reranked context often includes off-topic low-rank chunks the LLM never
+        cites; surfacing them as "citations" is misleading. We keep exactly the
+        referenced ones, rewrite the answer's [N] markers, and remap SLEC sentence
+        citation_refs so every consumer stays consistent. Returns
+        (answer, citations, coverage_report) unchanged when nothing to prune.
+        """
+        if not citations:
+            return answer, citations, coverage_report
+        used = sorted({
+            n
+            for m in re.finditer(r"\[(\d+(?:\s*,\s*\d+)*)\]", answer or "")
+            for n in (int(x) for x in re.findall(r"\d+", m.group(1)))
+            if 1 <= n <= len(citations)
+        })
+        if not used or len(used) == len(citations):
+            return answer, citations, coverage_report
+        remap = {old: new for new, old in enumerate(used, start=1)}
+        new_citations = [citations[old - 1] for old in used]
+
+        def _repl(m):
+            kept = [str(remap[n]) for n in (int(x) for x in re.findall(r"\d+", m.group(1))) if n in remap]
+            return "[" + ", ".join(kept) + "]" if kept else ""
+
+        new_answer = re.sub(r"\[(\d+(?:\s*,\s*\d+)*)\]", _repl, answer or "")
+        if coverage_report is not None and getattr(coverage_report, "sentences", None):
+            for s in coverage_report.sentences:
+                refs = getattr(s, "citation_refs", None)
+                if refs:
+                    s.citation_refs = [remap[r] for r in refs if r in remap]
+        return new_answer, new_citations, coverage_report
 
     @staticmethod
     def _build_retrieval_queries(processed: ProcessedQuery, use_multi_query: bool) -> list[str]:
@@ -236,7 +276,7 @@ class InferenceEngine:
                     },
                 )
 
-        _GRAPH_TIMEOUT = 25.0  # seconds — graph MongoDB regex queries can be slow; fail fast
+        _GRAPH_TIMEOUT = self.settings.inference_graph_timeout_seconds
         try:
             if not fast_path_taken:
                 retrieval_tasks = [
@@ -273,7 +313,7 @@ class InferenceEngine:
                         graph_paths = []
                     else:
                         graph_paths = graph_result
-                    graph_chunks = self._chunks_from_graph_paths(graph_paths, scope=scope, priority=route_decision.graph_priority)
+                    graph_chunks = self._chunks_from_graph_paths(graph_paths, scope=scope, priority=route_decision.graph_priority, priority_boost=self.settings.inference_graph_priority_score_boost)
         except Exception as exc:
             logger.error(
                 "Retrieval pipeline failed",
@@ -399,7 +439,8 @@ class InferenceEngine:
                 refusal_reason=PUBLIC_GENERATION_ERROR,
             )
 
-        _refusal_prefix = "Tôi không tìm thấy đủ bằng chứng"
+        _lang = processed.answer_language or self.settings.inference_default_answer_language
+        _refusal_prefix = self.settings.messages_refusal_prefix.get(_lang, self.settings.messages_refusal_prefix.get("vi", ""))
         # Phase C — pipeline.hooks.skip_llm_retry_on_refusal drives this set.
         _used_fallback_synthesis = False
         if not answer.strip():
@@ -410,15 +451,17 @@ class InferenceEngine:
             # For override routes: skip retry (saves 80-100s), synthesize directly from chunks.
             # For other routes (FACTUAL, SUMMARIZATION): retry once with a fresh minimal extraction prompt.
             if not pipeline.hooks.skip_llm_retry_on_refusal:
+                _snip_chars = self.settings.inference_retry_evidence_snippet_chars
+                _ev_limit = self.settings.inference_retry_evidence_limit
                 evidence_snippets = "\n".join(
-                    f"[{i+1}] {(ch.content or '').strip()[:300]}"
-                    for i, ch in enumerate(context_chunks[:5])
+                    f"[{i+1}] {(ch.content or '').strip()[:_snip_chars]}"
+                    for i, ch in enumerate(context_chunks[:_ev_limit])
                 )
                 retry_prompt = (
                     f"Read the evidence below and answer the question in 2-3 sentences.\n"
                     f"Cite sources using [1], [2], etc. Start with a direct factual statement.\n\n"
                     f"EVIDENCE:\n{evidence_snippets}\n\n"
-                    f"QUESTION: {query[:300]}\n\nANSWER:"
+                    f"QUESTION: {query[:_snip_chars]}\n\nANSWER:"
                 )
                 try:
                     answer = await self.llm.generate(prompt=retry_prompt)
@@ -426,11 +469,12 @@ class InferenceEngine:
                     pass
             # If still refusing (or override route): synthesize from top chunks
             if not answer.strip() or answer.strip().startswith(_refusal_prefix):
+                _fb_chars = self.settings.inference_fallback_snippet_chars
                 fallback_parts = []
                 for idx, ch in enumerate(context_chunks[:3], start=1):
                     snippet = (ch.content or "").strip()
                     if snippet:
-                        fallback_parts.append(f"{snippet[:200]}[{idx}].")
+                        fallback_parts.append(f"{snippet[:_fb_chars]}[{idx}].")
                 if fallback_parts:
                     answer = " ".join(fallback_parts)
                     refusal_reason = None
@@ -485,7 +529,8 @@ class InferenceEngine:
                     should_refuse = True
                     refusal_reason = _reason
             if not should_refuse and refusal_reason == "partial_confidence":
-                answer = answer + "\n\n> ⚠️ Câu trả lời dựa trên bằng chứng có độ tin cậy hạn chế. Vui lòng kiểm tra lại nguồn gốc."
+                _lang = processed.answer_language or self.settings.inference_default_answer_language
+                answer = answer + self.settings.messages_partial_confidence_warning.get(_lang, self.settings.messages_partial_confidence_warning.get("vi", ""))
 
         # ── Sentence-level Evidence Coverage (SLEC) gate ───────────────────
         # Adaptive Evidence-Guided RAG centerpiece. After answer generation, every
@@ -531,7 +576,7 @@ class InferenceEngine:
                     query=query,
                     scope=scope,
                     visual_provider=self.visual_provider,
-                    limit=4,
+                    limit=self.settings.inference_visual_inline_limit,
                 )
             except Exception as exc:
                 logger.info(
@@ -543,7 +588,7 @@ class InferenceEngine:
             grounded_material_ids = {c.material_id for c in context_chunks}
             visual_inline_hits = [
                 h for h in visual_inline_hits if h.material_id in grounded_material_ids
-            ][:2]
+            ][:self.settings.inference_visual_inline_max]
             if visual_inline_hits:
                 answer = self._inject_inline_images(
                     answer=answer,
@@ -558,6 +603,13 @@ class InferenceEngine:
             graph_chunks=graph_chunks,
             reranked_chunks=reranked,
             use_graph=route_decision.use_graph,
+        )
+
+        # Keep only citations the answer actually cites (drops off-topic low-rank
+        # context), renumbering markers + SLEC refs in lockstep. Done before the
+        # visual-hit append so figure citations are preserved.
+        answer, citations, sentence_coverage_report = self._prune_to_cited(
+            answer, citations, sentence_coverage_report
         )
 
         # Visual hits become citations too so the frontend VisualCitationStrip
@@ -726,7 +778,11 @@ class InferenceEngine:
                 if graph_task is not None:
                     graph_result = results[-1]
                     if not isinstance(graph_result, Exception):
-                        graph_chunks = self._chunks_from_graph_paths(graph_result, scope=scope, priority=route_decision.graph_priority)
+                        graph_chunks = self._chunks_from_graph_paths(
+                            graph_result, scope=scope,
+                            priority=route_decision.graph_priority,
+                            priority_boost=self.settings.inference_graph_priority_score_boost,
+                        )
         except Exception as exc:
             logger.error(
                 "Retrieval pipeline failed",
@@ -1002,11 +1058,11 @@ class InferenceEngine:
             except Exception as exc:
                 logger.warning("Chitchat LLM call failed", extra={"error": str(exc)})
             if not answer:
-                answer = "Xin chào! Tôi có thể giúp gì cho bạn?"
+                answer = self.settings.inference_default_chitchat_answer
         return QueryResponse(
             answer=answer,
-            answer_language="vi",
-            query_language="vi",
+            answer_language=self.settings.inference_default_answer_language,
+            query_language=self.settings.inference_default_answer_language,
             translated_query=None,
             source_languages=[],
             citations=[],
@@ -1114,8 +1170,8 @@ Output:\
         """Self-RAG: hedge unsupported claims before returning the final answer."""
         evidence_text = self.response_parser.format_evidence_for_prompt(chunks)
         prompt = self._SELF_REFLECT_PROMPT.format(
-            evidence=evidence_text[:3000],
-            answer=answer[:2000],
+            evidence=evidence_text[:self.settings.inference_self_rag_evidence_char_limit],
+            answer=answer[:self.settings.inference_self_rag_answer_char_limit],
         )
         try:
             raw = await self.llm.generate(prompt=prompt)
@@ -1131,9 +1187,10 @@ Output:\
             modified = answer
             for sentence in unsupported:
                 if sentence and sentence in modified:
+                    _prefix = self.settings.messages_self_rag_unsupported_prefix.get("vi", "⚠️ Chưa có đủ bằng chứng")
                     modified = modified.replace(
                         sentence,
-                        f"[⚠️ Chưa có đủ bằng chứng: {sentence}]",
+                        f"[{_prefix}: {sentence}]",
                         1,
                     )
             logger.info("Self-RAG hedged %d unsupported claims", len(unsupported))
@@ -1141,23 +1198,6 @@ Output:\
         except Exception as exc:
             logger.warning("Self-RAG reflection failed", extra={"error": str(exc)})
             return answer
-
-    _LANGUAGE_NAMES: dict[str, str] = {
-        "vi": "tiếng Việt",
-        "en": "English",
-        "zh": "Chinese",
-        "fr": "French",
-        "de": "German",
-        "ja": "Japanese",
-        "ko": "Korean",
-    }
-
-    _ROUTE_PROMPT: dict[RouteType, str] = {
-        RouteType.SUMMARIZATION: "summarization.txt",
-        RouteType.COMPARISON: "comparison.txt",
-        RouteType.CLAIM_CHECK: "claim_check.txt",
-        RouteType.GRAPH_RELATION: "graph_relation.txt",
-    }
 
     def _build_prompt(
         self,
@@ -1170,14 +1210,17 @@ Output:\
         plan_type: str | None = None,
     ) -> str:
         if plan_type == "multi_source_general":
-            prompt_file = "multi_source.txt"
+            prompt_file = self.settings.inference_multi_source_prompt_file
         else:
-            prompt_file = self._ROUTE_PROMPT.get(route_type, "qa_grounded.txt")
+            prompt_file = self.settings.inference_route_prompt_map.get(
+                route_type.value, self.settings.inference_default_prompt_file
+            )
         template_path = project_root() / "backend" / "src" / "prompts" / prompt_file
         template = template_path.read_text(encoding="utf-8")
-        lang_name = self._LANGUAGE_NAMES.get(answer_language, answer_language)
+        lang_name = self.settings.inference_language_names.get(answer_language, answer_language)
         memory_ctx = memory_context.strip()
-        formatted_memory = f"\nLỊCH SỬ LIÊN QUAN:\n{memory_ctx}\n\n---\n" if memory_ctx else ""
+        _header = self.settings.inference_memory_context_header
+        formatted_memory = f"\n{_header}:\n{memory_ctx}\n\n---\n" if memory_ctx else ""
         values = defaultdict(
             str,
             evidence=self.response_parser.format_evidence_for_prompt(chunks),
@@ -1223,19 +1266,18 @@ Output:\
     def _scaled_limit(base: int, decision: RouteDecision) -> int:
         return max(1, math.ceil(base * decision.top_k_multiplier))
 
-    @staticmethod
-    def _filter_substantive_chunks(chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
+    def _filter_substantive_chunks(self, chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
         """Remove TOC entries, table metadata, resource tips, and content-free chunks."""
-        import re
-        _TOC_NUM_RE = re.compile(r"^\d+\.\s+\d+\.\s")           # "06. 6. Hồi quy..."
-        _TABLE_ROW_RE = re.compile(r"^Hàng \d+", re.IGNORECASE)  # "Hàng 20 của bảng..."
+        _TOC_NUM_RE = re.compile(r"^\d+\.\s+\d+\.\s")
+        _TABLE_ROW_RE = re.compile(r"^Hàng \d+", re.IGNORECASE)
         _TOC_CHAPTER_RE = re.compile(r"^trang\s+\d+", re.IGNORECASE)
-        _MARKDOWN_TABLE_RE = re.compile(r"^\|")                   # markdown table rows
-        _RESOURCE_TIP_RE = re.compile(                            # learning tips/resource lists
-            r"^(Ghi nhớ|Note:|Starter Pack|Tập trung|Người mới|nên bắt đầu|"
-            r"scikit-learn User Guide|Dive into Deep|Xem thêm tại|Link:|URL:)",
+        _MARKDOWN_TABLE_RE = re.compile(r"^\|")
+        prefixes = self.settings.inference_substantive_chunk_filter_prefixes
+        _RESOURCE_TIP_RE = re.compile(
+            r"^(" + "|".join(re.escape(p) for p in prefixes) + r")",
             re.IGNORECASE,
         )
+        min_chars = self.settings.inference_min_chunk_chars
 
         filtered = []
         for chunk in chunks:
@@ -1250,7 +1292,7 @@ Output:\
                 continue
             if _RESOURCE_TIP_RE.match(text):
                 continue
-            if len(text) < 40:
+            if len(text) < min_chars:
                 continue
             filtered.append(chunk)
         return filtered if filtered else chunks  # fallback: keep all if nothing passes
@@ -1262,8 +1304,8 @@ Output:\
             return chunks
         return [chunks[0], *chunks[2:], chunks[1]]
 
-    @staticmethod
     def _ensure_material_coverage(
+        self,
         *,
         reranked: list[RetrievedChunk],
         candidates: list[RetrievedChunk],
@@ -1277,7 +1319,7 @@ Output:\
         Only kicks in when the candidate pool covered ≥3 distinct docs.
         """
         candidate_docs = {c.material_id for c in candidates if c.material_id}
-        if len(candidate_docs) < 3:
+        if len(candidate_docs) < self.settings.inference_multi_doc_min_sources:
             return reranked  # not a multi-doc situation
 
         covered = {c.material_id for c in reranked}
@@ -1286,7 +1328,7 @@ Output:\
             return reranked
 
         # For synthesis routes, allocate more headroom for cross-doc evidence
-        is_synthesis = route in (RouteType.SUMMARIZATION, RouteType.COMPARISON, RouteType.GRAPH_RELATION)
+        is_synthesis = route.value in self.settings.inference_synthesis_route_types
         # Cap added chunks at min(missing_docs_count, half of final_limit) to keep prompt tight
         max_add = min(len(missing_docs), max(2, final_limit // (1 if is_synthesis else 2)))
 
@@ -1313,7 +1355,7 @@ Output:\
         return reranked
 
     @staticmethod
-    def _chunks_from_graph_paths(graph_paths, *, scope: RetrievalScope, priority: bool = False) -> list[RetrievedChunk]:
+    def _chunks_from_graph_paths(graph_paths, *, scope: RetrievalScope, priority: bool = False, priority_boost: float = 0.25) -> list[RetrievedChunk]:
         chunks: list[RetrievedChunk] = []
         for index, path in enumerate(graph_paths):
             if not path.evidence_refs:
@@ -1354,7 +1396,7 @@ Output:\
                         "relation_types": relations,
                     },
                     graph_score=path.confidence,
-                    fused_score=min(1.0, path.confidence + 0.25) if priority else path.confidence,
+                    fused_score=min(1.0, path.confidence + priority_boost) if priority else path.confidence,
                 )
             )
         return chunks

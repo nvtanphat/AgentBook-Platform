@@ -19,7 +19,7 @@ from src.agentic.state import CRAGEvidenceVerdict, CRAGLabel
 if TYPE_CHECKING:
     from src.agentic.state import AgentState
     from src.agentic.tools import TextCleanerTool
-    from src.rag.crag_evaluator import CRAGEvaluator
+    from src.rag.crag_evaluator import CRAGEvaluator, LLMCRAGEvaluator
 
 logger = logging.getLogger(__name__)
 
@@ -34,12 +34,14 @@ class CRAGCriticAgent(BaseAgent):
         cleaner: "TextCleanerTool | None" = None,
         correct_threshold: float = 0.55,
         incorrect_threshold: float = 0.25,
+        llm_evaluator: "LLMCRAGEvaluator | None" = None,
     ) -> None:
         super().__init__()
         self.evaluator = evaluator
         self.cleaner = cleaner
         self.correct_threshold = correct_threshold
         self.incorrect_threshold = incorrect_threshold
+        self.llm_evaluator = llm_evaluator
 
     async def act(self, state: "AgentState") -> "AgentState":
         chunks = state.raw_evidence or []
@@ -77,6 +79,23 @@ class CRAGCriticAgent(BaseAgent):
                     filtered = result.data
             except Exception as exc:
                 logger.info("TextCleanerTool failed", extra={"error": str(exc)})
+
+        # LLM re-evaluation of AMBIGUOUS chunks: promotes CORRECT or drops INCORRECT.
+        # Only runs when llm_evaluator is configured (crag.llm_enabled in config).
+        if self.llm_evaluator and filtered:
+            # Use chunk_id lookup — `filtered` is a subset of `chunks` so positional
+            # indices from `verdicts` do NOT align with indices in `filtered`.
+            ambiguous_ids = {v.chunk_id for v in verdicts if v.label == CRAGLabel.AMBIGUOUS}
+            ambiguous_indices = [i for i, c in enumerate(filtered) if c.chunk_id in ambiguous_ids]
+            if ambiguous_indices:
+                try:
+                    filtered = await self.llm_evaluator.re_evaluate_ambiguous(
+                        query=state.resolved_query or state.query,
+                        chunks=filtered,
+                        ambiguous_indices=ambiguous_indices,
+                    )
+                except Exception as exc:
+                    logger.warning("LLM CRAG re-evaluation failed", extra={"error": str(exc)})
 
         state.cleaned_evidence = filtered
 

@@ -44,29 +44,63 @@ class GuardrailsAgent(BaseAgent):
             state.claims_verified = False
             return state
 
-        # Skip token-overlap claim verification when answer language differs
-        # from the dominant chunk language. The verifier intersects answer
-        # tokens with evidence tokens — meaningless across languages because
-        # only acronyms and numbers survive (every claim degrades to
-        # NOT_ENOUGH_EVIDENCE). Use chunk.language as the source of truth
-        # for evidence language, not query_language (which describes input).
+        # Cross-lingual handling: token-overlap claim verification is unreliable
+        # when answer language ≠ dominant chunk language (only acronyms/numbers
+        # survive tokenisation across languages). Instead of skipping entirely:
+        #   - If NLI is enabled on the verifier: fall through to full NLI path
+        #     (cross-encoder handles cross-lingual pairs better than token overlap)
+        #   - If NLI is disabled: run grounding-report-only check (citation
+        #     validity and unsupported paragraph counts are language-agnostic)
+        # This closes the verification gap for VI query → EN docs → VI answer.
         processed = state.processed_query
         answer_lang = (
             getattr(processed, "answer_language", None)
             or state.answer_language
             or ""
         ).lower()
+        cross_lingual = False
         if answer_lang:
             chunk_langs = [(c.language or "").lower() for c in chunks if c.language]
             if chunk_langs:
                 from collections import Counter
                 dominant_lang, count = Counter(chunk_langs).most_common(1)[0]
                 if dominant_lang and dominant_lang != answer_lang and count >= len(chunk_langs) / 2:
-                    state.guardrail_report = GuardrailReport(
-                        verdict="not_run", warning="cross_lingual_skip",
-                    )
-                    state.claims_verified = False
-                    return state
+                    cross_lingual = True
+
+        if cross_lingual:
+            nli_enabled = getattr(getattr(self.verifier_tool, "verifier", None), "nli_enabled", False)
+            if not nli_enabled:
+                # Grounding check only — citation marker validity and unsupported
+                # paragraph detection are both language-agnostic structural checks.
+                unsupported, invalid = self._grounding_report(
+                    answer=answer, citation_count=len(state.citations)
+                )
+                state.guardrail_report = GuardrailReport(
+                    verdict="cross_lingual_partial",
+                    warning="cross_lingual_grounding_only" if (unsupported or invalid) else None,
+                    unsupported_sentence_count=unsupported,
+                    invalid_citation_count=invalid,
+                )
+                state.claims_verified = not unsupported and not invalid
+                logger.info(
+                    "GuardrailsAgent: cross-lingual partial check (NLI disabled)",
+                    extra={
+                        "owner_id": state.scope.owner_id,
+                        "collection_id": state.scope.collection_id,
+                        "answer_lang": answer_lang,
+                        "unsupported": unsupported,
+                        "invalid_citations": invalid,
+                    },
+                )
+                return state
+            # NLI enabled: fall through to full verification.
+            logger.info(
+                "GuardrailsAgent: cross-lingual — using NLI path",
+                extra={
+                    "owner_id": state.scope.owner_id,
+                    "answer_lang": answer_lang,
+                },
+            )
 
         evidence_blocks = [block for chunk in chunks for block in chunk.evidence]
         try:

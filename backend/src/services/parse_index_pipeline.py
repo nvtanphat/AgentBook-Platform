@@ -667,17 +667,51 @@ class ParseIndexPipeline:
                 pass
 
     def _parse_image_vlm_first(self, path: Path, *, declared_language: str) -> ParsedDocument:
-        """For standalone image files: try VLM captioning first, OCR fallback.
+        """For standalone image files: OCR-first for text-dense scans, VLM for visuals.
 
-        Infographics, charts, and complex layouts are better described by a
-        vision model than by OCR, which scrambles multi-column reading order.
-        Falls back to _parse_printed_image transparently when no VLM is available.
+        Strategy:
+          1. Run OCR first. If it yields >= OCR_TEXT_WORD_THRESHOLD words, the image
+             is a printed text scan — use OCR directly (more faithful than VLM).
+          2. Otherwise (diagram, infographic, chart) try VLM captioning.
+          3. Fall back to OCR if VLM is unavailable or produces short/gibberish output.
+
+        This prevents VLMs from hallucinating content on text-scan images where OCR
+        is ground truth.
         """
+        _OCR_TEXT_WORD_THRESHOLD = 20  # images with >= this many OCR words are text scans
+
         language = declared_language if declared_language in {"vi", "en"} else "vi"
+
+        # Step 1: run OCR unconditionally — cheap and faithful for text scans.
+        # OCRQualityError (low-quality image) → treat as sparse, fall through to VLM.
+        ocr_parsed = None
+        try:
+            ocr_parsed = self._parse_printed_image(path, declared_language=declared_language)
+        except OCRQualityError as exc:
+            logger.info(
+                "OCR quality gate failed for standalone image — trying VLM fallback",
+                extra={"image": path.name, "reason": str(exc)[:120]},
+            )
+        ocr_word_count = sum(
+            len((b.content or "").split())
+            for page in (ocr_parsed.pages if ocr_parsed else [])
+            for b in page.blocks
+        )
+        if ocr_parsed is not None and ocr_word_count >= _OCR_TEXT_WORD_THRESHOLD:
+            logger.info(
+                "Standalone image is text-dense — using OCR directly (skipping VLM)",
+                extra={"image": path.name, "ocr_words": ocr_word_count},
+            )
+            ocr_parsed.extra.setdefault("parse_method", "ocr")
+            ocr_parsed.extra["vlm_attempted"] = False
+            ocr_parsed.extra["vlm_skipped_reason"] = "ocr_text_dense"
+            return ocr_parsed
+
+        # Step 2: sparse OCR → likely a visual/infographic → try VLM.
         captioner = FigureCaptioner(
             ollama_base_url=self.settings.ollama_base_url,
             language=language,
-            ocr_fallback=False,  # we handle OCR ourselves below
+            ocr_fallback=False,
             timeout=self.settings.ollama_caption_timeout_seconds,
             image_max_side_px=self.settings.figure_image_max_side_px,
         )
@@ -686,7 +720,6 @@ class ParseIndexPipeline:
         if vlm_model:
             from src.processing.figure_captioner import _looks_like_gibberish
             caption = captioner.caption_image_path(path)
-            # Reject gibberish output (VLM hallucination on stylized text)
             if caption and _looks_like_gibberish(caption):
                 logger.warning(
                     "VLM produced gibberish — falling back to OCR",
@@ -723,13 +756,26 @@ class ParseIndexPipeline:
                     extra={"parser": "vlm", "parse_method": "vlm", "vlm_model": vlm_model},
                 )
             fallback_reason = "vlm_caption_too_short_or_empty"
-        parsed = self._parse_printed_image(path, declared_language=declared_language)
-        parsed.extra.setdefault("parse_method", "ocr")
-        parsed.extra["fallback_reason"] = fallback_reason
-        parsed.extra["vlm_attempted"] = bool(vlm_model)
+
+        # Step 3: VLM unavailable / short — return OCR result (or empty doc if OCR also failed).
+        if ocr_parsed is None:
+            logger.warning(
+                "Both OCR quality gate and VLM failed — returning empty document",
+                extra={"image": path.name, "fallback_reason": fallback_reason},
+            )
+            return ParsedDocument(
+                source_path=str(path),
+                file_type=path.suffix.lstrip(".").lower(),
+                language=language,
+                pages=[],
+                extra={"parse_method": "none", "fallback_reason": fallback_reason},
+            )
+        ocr_parsed.extra.setdefault("parse_method", "ocr")
+        ocr_parsed.extra["fallback_reason"] = fallback_reason
+        ocr_parsed.extra["vlm_attempted"] = bool(vlm_model)
         if vlm_model:
-            parsed.extra["vlm_model"] = vlm_model
-        return parsed
+            ocr_parsed.extra["vlm_model"] = vlm_model
+        return ocr_parsed
 
     def _parse_printed_image(self, path: Path, *, declared_language: str) -> ParsedDocument:
         runtime_language = self._ocr_runtime_language(declared_language)

@@ -10,14 +10,25 @@ Metrics:
 
 Usage:
     cd backend
-    python scripts/e2e_eval.py \
-        --owner-id user_demo \
-        --collection-id 69fc3c0949fae4625be50223 \
+
+    # Built-in ML question set
+    python scripts/e2e_eval.py \\
+        --owner-id user_demo \\
+        --collection-id 69fc3c0949fae4625be50223 \\
         --api-url http://localhost:8000
+
+    # External gold question set
+    python scripts/e2e_eval.py \\
+        --owner-id nguyenvtp69_gmail_com \\
+        --collection-id 6a16f8d1a0d535db39664088 \\
+        --question-set ../evaluation/datasets/agentbook_e2e_gold.jsonl \\
+        --report eval_results/e2e_report.md \\
+        --ci-mode --ci-threshold 0.70
 """
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import math
 import re
@@ -79,6 +90,161 @@ _CORRECTION_KEYWORDS = [
     "không phải lúc nào", "not always",
 ]
 
+_TASK_TYPE_MAP: dict[str, str] = {
+    "factual": "factual",
+    "compare": "comparison",
+    "comparison": "comparison",
+    "summarize": "summarization",
+    "summarization": "summarization",
+    "study_guide": "summarization",
+    "graph_relation": "graph_relation",
+    "table": "factual",
+    "ocr": "factual",
+    "audio": "factual",
+    "refusal": "off_topic_should_refuse",
+    "off_topic": "off_topic_should_refuse",
+    "off_topic_should_refuse": "off_topic_should_refuse",
+    "cross_lingual": "cross_lingual",
+    "false_premise": "false_premise",
+    "anaphora": "anaphora",
+    "claim_check": "claim_check",
+    "prompt_injection": "off_topic_should_refuse",
+    "no_evidence": "off_topic_should_refuse",
+}
+
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+def _avg(rows: list[dict], key: str) -> float:
+    vals = [r.get(key, 0) for r in rows if isinstance(r.get(key), (int, float))]
+    return sum(vals) / len(vals) if vals else 0.0
+
+
+def _load_question_set(path: str) -> list[tuple[str, str]]:
+    """Load questions from JSONL file.
+
+    Accepts both legacy format (query_type, query) and gold format
+    (task_type, query, expected_behavior).
+    """
+    questions: list[tuple[str, str]] = []
+    p = Path(path)
+    if not p.exists():
+        print(f"[ERROR] Question set not found: {path}", file=sys.stderr)
+        return questions
+    with p.open(encoding="utf-8") as f:
+        for lineno, line in enumerate(f, 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError as exc:
+                print(f"  [WARN] {p.name}:{lineno} bad JSON: {exc}", file=sys.stderr)
+                continue
+            query = item.get("query", "").strip()
+            if not query:
+                continue
+            # Determine query type
+            if item.get("expected_behavior") == "refuse":
+                qtype = "off_topic_should_refuse"
+            else:
+                raw_type = item.get("query_type") or item.get("task_type") or "factual"
+                qtype = _TASK_TYPE_MAP.get(raw_type, raw_type)
+            questions.append((qtype, query))
+    return questions
+
+
+def _write_md_report(
+    results: list[dict],
+    path: str,
+    args: argparse.Namespace,
+    ci_threshold: float,
+) -> None:
+    """Write a Markdown evaluation report."""
+    answered = [r for r in results if r.get("answer") and not r.get("error")]
+    rag_answered = [r for r in answered
+                    if r.get("query_type") not in _OFF_TOPIC_TYPES and not r.get("refused")]
+    off_topic = [r for r in results if r.get("query_type") in _OFF_TOPIC_TYPES]
+    correct_refuse = [r for r in off_topic if r.get("off_topic_verdict") == "correct_refuse"]
+    errors = sum(1 for r in results if r.get("error"))
+    false_refusals = [r for r in results if r.get("false_refusal")]
+    false_premise_rows = [
+        r for r in results
+        if r.get("query_type") in _FALSE_PREMISE_TYPES and r.get("false_premise_corrected") is not None
+    ]
+    fp_corrected_count = sum(1 for r in false_premise_rows if r.get("false_premise_corrected"))
+
+    faith_avg = _avg(rag_answered, "faithfulness")
+    refusal_precision = len(correct_refuse) / len(off_topic) if off_topic else 1.0
+    false_refusal_rate = len(false_refusals) / len(results) if results else 0.0
+
+    q_set_label = Path(args.question_set).name if getattr(args, "question_set", None) else "built-in"
+
+    lines: list[str] = [
+        "# E2E Evaluation Report",
+        "",
+        f"**Date:** {dt.datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}  ",
+        f"**Owner:** `{args.owner_id}`  **Collection:** `{args.collection_id}`  ",
+        f"**Question set:** `{q_set_label}`  **API:** `{args.api_url}`  **Timeout:** {args.timeout}s/query",
+        "",
+        "## Summary",
+        "",
+        "| Metric | Value | Threshold | Status |",
+        "|--------|-------|-----------|--------|",
+        f"| Total queries | {len(results)} | — | — |",
+        f"| Answered | {len(answered)}/{len(results)} | — | — |",
+        f"| Errors / Timeout | {errors} | — | — |",
+        f"| Faithfulness (citation) | {faith_avg:.3f} | ≥{ci_threshold:.2f} | {'✅' if faith_avg >= ci_threshold else '❌'} |",
+        f"| Refusal precision | {refusal_precision:.3f} | ≥0.85 | {'✅' if refusal_precision >= 0.85 else '❌'} |",
+        f"| False refusal rate | {false_refusal_rate:.3f} | ≤0.10 | {'✅' if false_refusal_rate <= 0.10 else '❌'} |",
+        f"| Avg latency | {_avg(answered, 'elapsed_s'):.1f}s | — | — |",
+        "",
+        "## By Query Type",
+        "",
+        "| Type | Answered | Faith | Rel | Sem. Faith | Grounded |",
+        "|------|----------|-------|-----|------------|---------|",
+    ]
+
+    by_type: dict[str, list] = {}
+    for r in results:
+        by_type.setdefault(r.get("query_type", "unknown"), []).append(r)
+    for qt, rows in sorted(by_type.items()):
+        n_ans = sum(1 for r in rows
+                    if r.get("answer") and not r.get("refused") and not r.get("error"))
+        lines.append(
+            f"| {qt} | {n_ans}/{len(rows)} "
+            f"| {_avg(rows, 'faithfulness'):.2f} "
+            f"| {_avg(rows, 'answer_relevance'):.2f} "
+            f"| {_avg(rows, 'semantic_faithfulness'):.2f} "
+            f"| {_avg(rows, 'grounded_sentence_ratio'):.2f} |"
+        )
+
+    lines += [
+        "",
+        "## Per-Query Results",
+        "",
+        "| ID | Type | Latency | Faith | Rel | Refused | Error |",
+        "|----|------|---------|-------|-----|---------|-------|",
+    ]
+    for r in results:
+        err = (r.get("error") or "")[:40] or "—"
+        lines.append(
+            f"| {r['id']} | {r.get('query_type','?')} | {r.get('elapsed_s',0):.1f}s "
+            f"| {r.get('faithfulness',0):.2f} | {r.get('answer_relevance',0):.2f} "
+            f"| {'yes' if r.get('refused') else 'no'} | {err} |"
+        )
+
+    if false_premise_rows:
+        lines += [
+            "",
+            f"## False Premise Correction: {fp_corrected_count}/{len(false_premise_rows)}",
+        ]
+
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("\n".join(lines), encoding="utf-8")
+    print(f"  Report saved: {p.resolve()}", flush=True)
+
 
 # ── Embedding helpers ──────────────────────────────────────────────────────────
 
@@ -127,7 +293,6 @@ def answer_relevance(query_emb: list[float], answer_emb: list[float]) -> float:
 
 def semantic_faithfulness(
     answer: str,
-    citation_snippets: list[str],
     answer_embs: list[list[float]],
     citation_embs: list[list[float]],
 ) -> float:
@@ -241,9 +406,19 @@ def main(args: argparse.Namespace) -> None:
     print(f"  API: {args.api_url}  timeout={args.timeout}s/query", flush=True)
     print(f"{'='*65}\n", flush=True)
 
-    questions = ML_QUESTIONS
+    # Load question set
+    if args.question_set:
+        print(f"Loading question set: {args.question_set}", flush=True)
+        questions = _load_question_set(args.question_set)
+        if not questions:
+            print("[ERROR] No valid questions loaded.", file=sys.stderr)
+            sys.exit(1)
+        print(f"Loaded {len(questions)} questions\n", flush=True)
+    else:
+        questions = list(ML_QUESTIONS)
+
     if args.types:
-        questions = [(qt, q) for qt, q in ML_QUESTIONS if qt in args.types]
+        questions = [(qt, q) for qt, q in questions if qt in args.types]
 
     results = []
     errors = 0
@@ -280,12 +455,6 @@ def main(args: argparse.Namespace) -> None:
             sem_faith = 0.0
             grounded_ratio = 0.0
             try:
-                # sem_faith fix (post-v22): include ALL evidence_blocks per
-                # citation, not just the truncated snippet_original. A citation
-                # often points to 2-4 blocks per chunk, but only one snippet
-                # surfaces at the top level. Concatenating evidence_blocks
-                # widens the source vector so paraphrased answers stop looking
-                # falsely "unfaithful".
                 citation_snippets = []
                 for c in citations[:5]:
                     parts: list[str] = []
@@ -296,13 +465,13 @@ def main(args: argparse.Namespace) -> None:
                         snippet = blk.get("snippet_original") or blk.get("snippet") or ""
                         if snippet and snippet not in parts:
                             parts.append(snippet)
-                    merged = " ".join(parts)[:1200]  # cap to keep embedding cost bounded
+                    merged = " ".join(parts)[:1200]
                     citation_snippets.append(merged)
                 answer_sentences = [
                     _CITATION_CLEAN_RE.sub("", s).strip()
                     for s in _SENTENCE_RE.findall(answer)
                     if len(_CITATION_CLEAN_RE.sub("", s).strip()) >= 20
-                ][:8]  # max 8 sentences, [N] markers stripped before embedding
+                ][:8]
 
                 texts_to_embed: list[str] = []
                 q_idx = len(texts_to_embed); texts_to_embed.append(query)
@@ -320,7 +489,6 @@ def main(args: argparse.Namespace) -> None:
                     ans_rel = answer_relevance(q_emb, a_emb)
                     sem_faith = semantic_faithfulness(
                         answer=answer,
-                        citation_snippets=citation_snippets,
                         answer_embs=sent_embs,
                         citation_embs=cit_embs,
                     )
@@ -367,7 +535,7 @@ def main(args: argparse.Namespace) -> None:
                 "context_precision": round(ctx_prec, 3),
                 "answer_sentences": n_sentences,
                 "false_premise_corrected": fp_corrected,
-                "false_refusal": (not qtype in _OFF_TOPIC_TYPES and is_refused),
+                "false_refusal": (qtype not in _OFF_TOPIC_TYPES and is_refused),
                 "refused": is_refused,
                 "off_topic_verdict": verdict,
                 "human_verdict": None,
@@ -385,20 +553,17 @@ def main(args: argparse.Namespace) -> None:
                             "answer": None, "error": str(exc), "human_verdict": None})
         print(flush=True)
 
-    # Lưu kết quả
+    # Save results
     with out_path.open("w", encoding="utf-8") as f:
         for r in results:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
 
-    # Tổng hợp
+    # Aggregate
     answered = [r for r in results if r.get("answer") and not r.get("error")]
-    rag_answered = [r for r in answered if r.get("query_type") not in _OFF_TOPIC_TYPES and not r.get("refused")]
+    rag_answered = [r for r in answered
+                    if r.get("query_type") not in _OFF_TOPIC_TYPES and not r.get("refused")]
     off_topic = [r for r in results if r.get("query_type") in _OFF_TOPIC_TYPES]
     correct_refuse = [r for r in off_topic if r.get("off_topic_verdict") == "correct_refuse"]
-
-    def _avg(rows, key):
-        vals = [r.get(key, 0) for r in rows if isinstance(r.get(key), (int, float))]
-        return sum(vals) / len(vals) if vals else 0.0
 
     w = 65
     print(f"\n{'='*w}", flush=True)
@@ -409,7 +574,9 @@ def main(args: argparse.Namespace) -> None:
     print(f"  Errors/Timeout:         {errors}", flush=True)
     print(f"  Avg elapsed:            {_avg(answered, 'elapsed_s'):.1f}s/query", flush=True)
     print(f"{'─'*w}", flush=True)
-    false_premise_rows = [r for r in results if r.get("query_type") in _FALSE_PREMISE_TYPES and r.get("false_premise_corrected") is not None]
+    false_premise_rows = [r for r in results
+                          if r.get("query_type") in _FALSE_PREMISE_TYPES
+                          and r.get("false_premise_corrected") is not None]
     fp_corrected_count = sum(1 for r in false_premise_rows if r.get("false_premise_corrected"))
     false_refusals = [r for r in results if r.get("false_refusal")]
 
@@ -435,13 +602,30 @@ def main(args: argparse.Namespace) -> None:
     for r in results:
         by_type.setdefault(r.get("query_type", "unknown"), []).append(r)
     for qt, rows in sorted(by_type.items()):
-        n_ans = sum(1 for r in rows if r.get("answer") and not r.get("refused") and not r.get("error"))
+        n_ans = sum(1 for r in rows
+                    if r.get("answer") and not r.get("refused") and not r.get("error"))
         avg_faith = _avg(rows, "faithfulness")
         avg_rel = _avg(rows, "answer_relevance")
         print(f"    {qt:<30} answered={n_ans}/{len(rows)}  faith={avg_faith:.2f}  rel={avg_rel:.2f}", flush=True)
     print(f"{'─'*w}", flush=True)
     print(f"  Saved: {out_path.resolve()}", flush=True)
     print(f"{'='*w}\n", flush=True)
+
+    # ── Optional: Markdown report ─────────────────────────────────────────────
+    if args.report:
+        _write_md_report(results, args.report, args, ci_threshold=args.ci_threshold)
+
+    # ── Optional: CI mode exit code ───────────────────────────────────────────
+    if args.ci_mode:
+        faith_avg = _avg(rag_answered, "faithfulness")
+        if faith_avg < args.ci_threshold:
+            print(
+                f"\n[CI] FAIL: faithfulness={faith_avg:.3f} < threshold={args.ci_threshold:.2f}",
+                file=sys.stderr, flush=True,
+            )
+            sys.exit(1)
+        else:
+            print(f"\n[CI] PASS: faithfulness={faith_avg:.3f} >= {args.ci_threshold:.2f}", flush=True)
 
 
 if __name__ == "__main__":
@@ -453,5 +637,16 @@ if __name__ == "__main__":
     parser.add_argument("--timeout", type=int, default=300)
     parser.add_argument("--types", nargs="+", default=None,
                         help="Filter by query type(s), e.g. --types factual comparison")
+
+    # Tier A additions
+    parser.add_argument("--question-set", default=None,
+                        help="Path to JSONL with {query, query_type|task_type} records "
+                             "(e.g. agentbook_e2e_gold.jsonl). Overrides built-in ML_QUESTIONS.")
+    parser.add_argument("--report", default=None,
+                        help="Save Markdown evaluation report to this path")
+    parser.add_argument("--ci-mode", action="store_true",
+                        help="Exit 1 when faithfulness < --ci-threshold (use in CI pipelines)")
+    parser.add_argument("--ci-threshold", type=float, default=0.70,
+                        help="Faithfulness threshold for --ci-mode (default 0.70)")
     args = parser.parse_args()
     main(args)

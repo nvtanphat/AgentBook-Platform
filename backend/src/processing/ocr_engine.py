@@ -67,9 +67,6 @@ def _configure_ocr_cache() -> None:
 class _ImagePreprocessor:
     """Deterministic preprocessing pipeline to improve OCR input quality."""
 
-    # Minimum long-edge pixel length before upscaling.
-    _MIN_LONG_EDGE = 1600
-
     @classmethod
     def build_variants(cls, image_path: Path, *, cache_dir: Path) -> dict[str, Path]:
         """Return a dict of {variant_name: preprocessed_path} ready for OCR.
@@ -99,8 +96,10 @@ class _ImagePreprocessor:
             variants["enhanced"] = enhanced_path
 
         # --- Binarized variant (when image contrast is low) ---
+        from src.core.config import get_settings as _get_settings
+        _cfg = _get_settings()
         contrast = float(np.std(gray))
-        if contrast < 60:
+        if contrast < _cfg.ocr_preprocessing_low_contrast_threshold:
             binarized = cls._binarize(enhanced, cv2=cv2)
             binarized_path = cls._save(binarized, image_path, "binarized", cache_dir)
             if binarized_path:
@@ -111,10 +110,12 @@ class _ImagePreprocessor:
     @classmethod
     def _enhance(cls, gray, *, h: int, w: int, np, cv2) -> "np.ndarray":
         """Upscale → denoise → CLAHE → unsharp-mask."""
-        # 1. Upscale to at least MIN_LONG_EDGE on the long side for better char detail
+        from src.core.config import get_settings as _get_settings
+        _cfg = _get_settings()
+        # 1. Upscale to at least min_long_edge_px on the long side for better char detail
         long_edge = max(h, w)
-        if long_edge < cls._MIN_LONG_EDGE:
-            scale = cls._MIN_LONG_EDGE / long_edge
+        if long_edge < _cfg.ocr_preprocessing_min_long_edge_px:
+            scale = _cfg.ocr_preprocessing_min_long_edge_px / long_edge
             gray = cv2.resize(
                 gray,
                 (int(w * scale), int(h * scale)),
@@ -122,15 +123,23 @@ class _ImagePreprocessor:
             )
 
         # 2. Denoise — light enough not to smear diacritics
-        gray = cv2.fastNlMeansDenoising(gray, None, h=8, templateWindowSize=7, searchWindowSize=21)
+        gray = cv2.fastNlMeansDenoising(
+            gray, None,
+            h=_cfg.ocr_preprocessing_denoise_h,
+            templateWindowSize=_cfg.ocr_preprocessing_denoise_template_window,
+            searchWindowSize=_cfg.ocr_preprocessing_denoise_search_window,
+        )
 
         # 3. CLAHE — equalise local contrast so faint text becomes readable
-        clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+        clahe = cv2.createCLAHE(
+            clipLimit=_cfg.ocr_preprocessing_clahe_clip_limit,
+            tileGridSize=tuple(_cfg.ocr_preprocessing_clahe_tile_grid),
+        )
         gray = clahe.apply(gray)
 
         # 4. Unsharp mask — sharpen without amplifying noise
-        blurred = cv2.GaussianBlur(gray, (0, 0), sigmaX=2)
-        gray = cv2.addWeighted(gray, 1.4, blurred, -0.4, 0)
+        blurred = cv2.GaussianBlur(gray, (0, 0), sigmaX=_cfg.ocr_preprocessing_unsharp_sigma)
+        gray = cv2.addWeighted(gray, _cfg.ocr_preprocessing_unsharp_alpha, blurred, _cfg.ocr_preprocessing_unsharp_beta, 0)
         gray = np.clip(gray, 0, 255).astype(np.uint8)
 
         return gray
@@ -138,12 +147,14 @@ class _ImagePreprocessor:
     @staticmethod
     def _binarize(gray, *, cv2) -> "cv2.Mat":
         """Adaptive threshold — works well for high-contrast printed documents."""
+        from src.core.config import get_settings as _get_settings
+        _cfg = _get_settings()
         return cv2.adaptiveThreshold(
             gray, 255,
             cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
             cv2.THRESH_BINARY,
-            blockSize=25,
-            C=10,
+            blockSize=_cfg.ocr_preprocessing_adaptive_block_size,
+            C=_cfg.ocr_preprocessing_adaptive_c,
         )
 
     @staticmethod
@@ -181,8 +192,8 @@ def _sort_blocks_by_reading_order(blocks: list[ParsedBlock]) -> list[ParsedBlock
     if not with_bbox:
         return blocks
 
-    # Bucket into approximate text lines (within 15px vertical distance → same line)
-    LINE_TOLERANCE = 15
+    from src.core.config import get_settings as _get_settings
+    LINE_TOLERANCE = _get_settings().ocr_preprocessing_line_tolerance_px
     with_bbox.sort(key=lambda t: t[1])  # sort by cy first
     lines: list[list[tuple]] = []
     for item in with_bbox:
@@ -228,6 +239,8 @@ def _deduplicate_blocks(blocks: list[ParsedBlock]) -> list[ParsedBlock]:
             return 0.0
         return len(sa & sb) / len(sa | sb)
 
+    from src.core.config import get_settings as _get_settings
+    _cfg = _get_settings()
     kept: list[ParsedBlock] = [blocks[0]]
     for block in blocks[1:]:
         blk_text = block.content.strip()
@@ -240,8 +253,8 @@ def _deduplicate_blocks(blocks: list[ParsedBlock]) -> list[ParsedBlock]:
             block_conf = block.ocr_confidence or 0.0
 
             # Case 1: high token-level similarity (near-exact duplicate)
-            if _sim(blk_text, prev_text) >= 0.80:
-                if block_conf > prev_conf + 0.05:
+            if _sim(blk_text, prev_text) >= _cfg.ocr_preprocessing_dedup_jaccard_threshold:
+                if block_conf > prev_conf + _cfg.ocr_preprocessing_dedup_confidence_boost_margin:
                     kept[prev_i] = block
                 is_dup = True
                 break
@@ -253,7 +266,7 @@ def _deduplicate_blocks(blocks: list[ParsedBlock]) -> list[ParsedBlock]:
                 shorter_t = blk_tokens if blk_shorter else prev_tokens
                 longer_t = prev_tokens if blk_shorter else blk_tokens
                 coverage = len(shorter_t & longer_t) / max(1, len(shorter_t))
-                if coverage >= 0.85:
+                if coverage >= _cfg.ocr_preprocessing_dedup_subset_coverage_threshold:
                     if blk_shorter:
                         # current is the subset → discard current
                         is_dup = True
@@ -368,6 +381,22 @@ class VietOCRRecognizer:
             return ""
         return (text or "").strip()
 
+    def predict_batch(self, pil_images: list) -> list[str]:
+        """Recognize many crops in ONE batched forward pass.
+
+        Far faster than calling `predict` per crop on a CPU transformer (a page
+        has dozens of text boxes). Falls back to per-crop on failure so a single
+        odd crop never aborts the whole page.
+        """
+        if not pil_images:
+            return []
+        try:
+            results = self.predictor.predict_batch(pil_images)
+            return [(t or "").strip() for t in results]
+        except Exception:
+            logger.warning("VietOCR batch recognition failed — falling back to per-crop")
+            return [self.predict(image) for image in pil_images]
+
 
 # ── EasyOCR engine (Vietnamese primary) ──────────────────────────────────────
 
@@ -393,8 +422,9 @@ class EasyOCREngine:
                 import easyocr
             except ImportError as exc:
                 raise DependencyUnavailableError("easyocr is required for Vietnamese OCR") from exc
-            # Map our lang codes to EasyOCR language list
-            lang_list = ["vi"] if self.lang == "vi" else ["en"]
+            # Map our lang codes to EasyOCR language list (configurable per deployment)
+            from src.core.config import get_settings as _get_settings
+            lang_list = _get_settings().ocr_easyocr_language_map.get(self.lang, [self.lang])
             self._reader = easyocr.Reader(lang_list, gpu=self.gpu, verbose=False)
         return self._reader
 
@@ -453,26 +483,37 @@ class EasyOCREngine:
 
     def _ocr_blocks(self, image_path: Path, *, language: str, apply_recognizer: bool = True) -> list[ParsedBlock]:
         raw = self.reader.readtext(str(image_path), detail=1, paragraph=False)
-        # When a recognizer is attached, re-read each detected box from the
-        # source image — EasyOCR boxes, recognizer text (better VN diacritics).
-        source_image = None
-        if apply_recognizer and self.recognizer is not None and raw:
+        # Parse all EasyOCR detections first (boxes + draft text + confidence).
+        parsed: list[tuple[str, float, BBox | None]] = []
+        for item in raw or []:
+            if not isinstance(item, (list, tuple)) or len(item) < 3:
+                continue
+            polygon, text, confidence = item[0], str(item[1]).strip(), float(item[2])
+            parsed.append((text, confidence, self._bbox_from_polygon(polygon)))
+
+        # When a recognizer is attached, re-read EVERY box with VietOCR in a
+        # single BATCH (best VN diacritics, far faster than per-crop on CPU).
+        if apply_recognizer and self.recognizer is not None and parsed:
+            source_image = None
             try:
                 from PIL import Image
                 source_image = Image.open(str(image_path)).convert("RGB")
             except Exception:
                 logger.exception("Failed to open image for recognizer; using EasyOCR text")
-                source_image = None
+            if source_image is not None:
+                crops, crop_idx = [], []
+                for i, (_, _, bbox) in enumerate(parsed):
+                    crop = self._crop(source_image, bbox)
+                    if crop is not None:
+                        crops.append(crop)
+                        crop_idx.append(i)
+                for i, recognized in zip(crop_idx, self.recognizer.predict_batch(crops)):
+                    if recognized:
+                        text, confidence, bbox = parsed[i]
+                        parsed[i] = (recognized, max(confidence, 0.5), bbox)
+
         blocks: list[ParsedBlock] = []
-        for idx, item in enumerate(raw or []):
-            if not isinstance(item, (list, tuple)) or len(item) < 3:
-                continue
-            polygon, text, confidence = item[0], str(item[1]).strip(), float(item[2])
-            bbox = self._bbox_from_polygon(polygon)
-            if source_image is not None and bbox is not None:
-                recognized = self._recognize_crop(source_image, bbox)
-                if recognized:
-                    text, confidence = recognized, max(confidence, 0.5)
+        for idx, (text, confidence, bbox) in enumerate(parsed):
             if not text:
                 continue
             blocks.append(
@@ -505,10 +546,11 @@ class EasyOCREngine:
         scores = [b.ocr_confidence for b in blocks if b.ocr_confidence is not None]
         return sum(scores) / len(scores) if scores else 0.0
 
-    def _recognize_crop(self, source_image, bbox: BBox) -> str:
-        """Crop the bbox region (with small padding) and recognize via VietOCR."""
-        if self.recognizer is None:
-            return ""
+    @staticmethod
+    def _crop(source_image, bbox: BBox | None):
+        """Crop the bbox region (small padding). Returns a PIL image or None."""
+        if bbox is None:
+            return None
         w, h = source_image.size
         pad = 2
         left = max(0, int(bbox.x1) - pad)
@@ -516,9 +558,8 @@ class EasyOCREngine:
         right = min(w, int(bbox.x2) + pad)
         bottom = min(h, int(bbox.y2) + pad)
         if right <= left or bottom <= top:
-            return ""
-        crop = source_image.crop((left, top, right, bottom))
-        return self.recognizer.predict(crop)
+            return None
+        return source_image.crop((left, top, right, bottom))
 
     @staticmethod
     def _bbox_from_polygon(polygon) -> BBox | None:

@@ -165,6 +165,16 @@ class Settings(BaseSettings):
     crag_evaluator_enabled: bool = False
     crag_correct_threshold: float = 0.55
     crag_incorrect_threshold: float = 0.25
+    crag_llm_enabled: bool = False
+    # Budget-aware retrieval: skip optional sub-questions when phase-1 is strong
+    budget_phase2_enabled: bool = True
+    budget_min_strong_score: float = 0.045
+    budget_min_strong_count: int = 3
+    # Semantic dedup threshold for near-duplicate content removal (Jaccard)
+    retrieval_semantic_dedup_threshold: float = 0.85
+    # Self-consistency: generate N candidates and vote when confidence < threshold
+    agentic_self_consistency_n: int = 1       # 1 = disabled (single-shot)
+    agentic_self_consistency_threshold: float = 0.65
     self_rag_reflection_enabled: bool = False
     min_reranker_score: float = 0.35
     min_evidence_confidence: float = 0.55
@@ -281,6 +291,133 @@ class Settings(BaseSettings):
     audio_chunk_target_seconds: float = 45.0
     audio_chunk_min_seconds: float = 10.0
 
+    # Inference engine tuning (see config/model_config.yaml → inference:)
+    inference_default_answer_language: str = "vi"
+    inference_default_chitchat_answer: str = "Xin chào! Tôi có thể giúp gì cho bạn?"
+    inference_graph_timeout_seconds: float = 25.0
+    inference_visual_inline_limit: int = 4
+    inference_visual_inline_max: int = 2
+    inference_retry_evidence_snippet_chars: int = 300
+    inference_fallback_snippet_chars: int = 200
+    inference_retry_evidence_limit: int = 5
+    inference_graph_priority_score_boost: float = 0.25
+    inference_min_chunk_chars: int = 40
+    inference_multi_doc_min_sources: int = 3
+    inference_synthesis_route_types: list[str] = Field(
+        default_factory=lambda: ["summarization", "comparison", "graph_relation"]
+    )
+    inference_self_rag_evidence_char_limit: int = 3000
+    inference_self_rag_answer_char_limit: int = 2000
+    inference_memory_context_header: str = "LỊCH SỬ LIÊN QUAN"
+    inference_language_names: dict[str, str] = Field(
+        default_factory=lambda: {
+            "vi": "tiếng Việt", "en": "English", "zh": "Chinese",
+            "fr": "French", "de": "German", "ja": "Japanese", "ko": "Korean",
+        }
+    )
+    inference_route_prompt_map: dict[str, str] = Field(
+        default_factory=lambda: {
+            "summarization": "summarization.txt",
+            "comparison": "comparison.txt",
+            "claim_check": "claim_check.txt",
+            "graph_relation": "graph_relation.txt",
+        }
+    )
+    inference_multi_source_prompt_file: str = "multi_source.txt"
+    inference_default_prompt_file: str = "qa_grounded.txt"
+    inference_substantive_chunk_filter_prefixes: list[str] = Field(
+        default_factory=lambda: [
+            "Ghi nhớ", "Note:", "Starter Pack", "Tập trung", "Người mới",
+            "nên bắt đầu", "scikit-learn User Guide", "Dive into Deep",
+            "Xem thêm tại", "Link:", "URL:",
+        ]
+    )
+
+    # Docling PDF converter (see config/model_config.yaml → docling:)
+    docling_queue_max_size: int = 2
+    docling_images_scale: float = 1.0
+
+    # User-facing messages (language-keyed, see config/guardrails_config.yaml → messages:)
+    messages_refusal_answer: dict[str, str] = Field(
+        default_factory=lambda: {
+            "vi": "Tôi không tìm thấy đủ bằng chứng trong tài liệu được cung cấp để trả lời câu hỏi này.",
+            "en": "I could not find sufficient evidence in the provided documents to answer this question.",
+        }
+    )
+    messages_refusal_prefix: dict[str, str] = Field(
+        default_factory=lambda: {
+            "vi": "Tôi không tìm thấy đủ bằng chứng",
+            "en": "I could not find sufficient evidence",
+        }
+    )
+    messages_low_confidence_warning: dict[str, str] = Field(
+        default_factory=lambda: {
+            "vi": "\n\n> Cảnh báo: Một số nhận định chưa được bằng chứng hỗ trợ trực tiếp.",
+            "en": "\n\n> Warning: Some claims may not be directly supported by the evidence.",
+        }
+    )
+    messages_partial_confidence_warning: dict[str, str] = Field(
+        default_factory=lambda: {
+            "vi": "\n\n> ⚠️ Câu trả lời dựa trên bằng chứng có độ tin cậy hạn chế. Vui lòng kiểm tra lại nguồn gốc.",
+            "en": "\n\n> ⚠️ This answer is based on limited-confidence evidence. Please verify the sources.",
+        }
+    )
+    messages_insufficient_evidence_refusal: dict[str, str] = Field(
+        default_factory=lambda: {
+            "vi": "Không đủ bằng chứng đáng tin cậy để tạo câu trả lời có citation hợp lệ.",
+            "en": "Insufficient reliable evidence to produce a validly-cited answer.",
+        }
+    )
+    messages_self_rag_unsupported_prefix: dict[str, str] = Field(
+        default_factory=lambda: {
+            "vi": "⚠️ Chưa có đủ bằng chứng",
+            "en": "⚠️ Insufficient evidence",
+        }
+    )
+
+    # Agentic critic loop (see config/retrieval_config.yaml → retrieval:)
+    agentic_critic_max_follow_ups: int = 2
+    agentic_critic_context_buffer: int = 4
+
+    # Extraction heuristics (see config/extraction_config.yaml → heuristics:)
+    extraction_max_chars_per_llm_batch: int = 3000
+    extraction_max_entity_words: int = 7
+    extraction_stopword_only_max_words: int = 2
+    extraction_min_confidence: float = 0.5
+    extraction_merge_confidence_boost: float = 0.02
+    extraction_merge_confidence_max: float = 0.97
+    extraction_confidence_method_keyword: float = 0.78
+    extraction_confidence_metric: float = 0.72
+    extraction_confidence_capitalized_term: float = 0.55
+    extraction_confidence_vietnamese_ner: float = 0.68
+    extraction_method_keywords: list[str] = Field(default_factory=list)
+    extraction_metric_terms: list[str] = Field(default_factory=list)
+    extraction_en_stopwords: list[str] = Field(default_factory=list)
+    extraction_vi_stopwords: list[str] = Field(default_factory=list)
+    extraction_compound_heads: list[str] = Field(default_factory=list)
+    extraction_anaphora_pattern: str = ""
+
+    # OCR preprocessing (see config/model_config.yaml → ocr.preprocessing:)
+    ocr_preprocessing_min_long_edge_px: int = 1600
+    ocr_preprocessing_low_contrast_threshold: float = 60.0
+    ocr_preprocessing_denoise_h: int = 8
+    ocr_preprocessing_denoise_template_window: int = 7
+    ocr_preprocessing_denoise_search_window: int = 21
+    ocr_preprocessing_clahe_clip_limit: float = 2.5
+    ocr_preprocessing_clahe_tile_grid: list[int] = Field(default_factory=lambda: [8, 8])
+    ocr_preprocessing_unsharp_sigma: float = 2.0
+    ocr_preprocessing_unsharp_alpha: float = 1.4
+    ocr_preprocessing_unsharp_beta: float = -0.4
+    ocr_preprocessing_adaptive_block_size: int = 25
+    ocr_preprocessing_adaptive_c: int = 10
+    ocr_preprocessing_line_tolerance_px: int = 15
+    ocr_preprocessing_dedup_jaccard_threshold: float = 0.80
+    ocr_preprocessing_dedup_subset_coverage_threshold: float = 0.85
+    ocr_preprocessing_dedup_confidence_boost_margin: float = 0.05
+    ocr_easyocr_language_map: dict[str, list[str]] = Field(
+        default_factory=lambda: {"vi": ["vi"], "en": ["en"]}
+    )
+
     @property
     def max_upload_size_bytes(self) -> int:
         return self.max_upload_size_mb * 1024 * 1024
@@ -362,13 +499,25 @@ def get_settings() -> Settings:
     graph_config = retrieval_config.get("graph", {})
     graph_semrel_config = graph_config.get("semantic_relation", {})
     try:
-        extraction_config = load_yaml_config("extraction_config.yaml").get("extraction", {})
+        _ext_yaml = load_yaml_config("extraction_config.yaml")
     except FileNotFoundError:
-        extraction_config = {}
+        _ext_yaml = {}
+    extraction_config = _ext_yaml.get("extraction", {})
+    heuristics_cfg = _ext_yaml.get("heuristics", {})
+    method_keywords_cfg = list(_ext_yaml.get("method_keywords", []))
+    metric_terms_cfg = list(_ext_yaml.get("metric_terms", []))
+    en_stopwords_cfg = list(_ext_yaml.get("en_stopwords", []))
+    vi_stopwords_cfg = list(_ext_yaml.get("vi_stopwords", []))
+    compound_heads_cfg = list(_ext_yaml.get("compound_heads", []))
+    anaphora_pattern_cfg = str(_ext_yaml.get("anaphora_pattern", "") or "")
     try:
         viz_config = load_yaml_config("viz_config.yaml").get("visualization", {})
     except FileNotFoundError:
         viz_config = {}
+    inference_cfg = model_config.get("inference", {})
+    messages_config = guardrails_config.get("messages", {})
+    docling_cfg = model_config.get("docling", {})
+    ocr_preproc_cfg = ocr_config.get("preprocessing", {})
 
     return Settings(
         max_upload_size_mb=upload_config.get("max_file_size_mb", 20),
@@ -416,6 +565,20 @@ def get_settings() -> Settings:
         crag_evaluator_enabled=env_bool("CRAG_EVALUATOR_ENABLED", crag_config.get("evaluator_enabled", False)),
         crag_correct_threshold=float(crag_config.get("correct_threshold", 0.55)),
         crag_incorrect_threshold=float(crag_config.get("incorrect_threshold", 0.25)),
+        crag_llm_enabled=env_bool("CRAG_LLM_ENABLED", crag_config.get("llm_enabled", False)),
+        budget_phase2_enabled=env_bool(
+            "BUDGET_PHASE2_ENABLED",
+            retrieval_config.get("budget_aware_retrieval", {}).get("phase2_enabled", True),
+        ),
+        budget_min_strong_score=float(
+            retrieval_config.get("budget_aware_retrieval", {}).get("min_strong_score", 0.045)
+        ),
+        budget_min_strong_count=int(
+            retrieval_config.get("budget_aware_retrieval", {}).get("min_strong_count", 3)
+        ),
+        retrieval_semantic_dedup_threshold=float(
+            retrieval_config.get("semantic_dedup", {}).get("threshold", 0.85)
+        ),
         multi_query_enabled=env_bool("MULTI_QUERY_ENABLED", retrieval_section.get("multi_query_enabled", False)),
         api_auth_enabled=env_bool("API_AUTH_ENABLED", str(env_value("APP_ENV", "development")).lower() == "production"),
         api_key=env_value("API_KEY", None),
@@ -540,4 +703,102 @@ def get_settings() -> Settings:
         extraction_domain_hint_field=str(extraction_config.get("domain_hint_field", "subject")),
         extraction_few_shots=list(extraction_config.get("few_shots", [])),
         viz_config=dict(viz_config),
+        # ── New fields ──────────────────────────────────────────────────────
+        # Inference engine tuning
+        inference_default_answer_language=inference_cfg.get("default_answer_language", "vi"),
+        inference_default_chitchat_answer=inference_cfg.get("default_chitchat_answer", "Xin chào! Tôi có thể giúp gì cho bạn?"),
+        inference_graph_timeout_seconds=float(inference_cfg.get("graph_timeout_seconds", 25.0)),
+        inference_visual_inline_limit=int(inference_cfg.get("visual_inline_retrieval_limit", 4)),
+        inference_visual_inline_max=int(inference_cfg.get("visual_inline_max", 2)),
+        inference_retry_evidence_snippet_chars=int(inference_cfg.get("retry_evidence_snippet_chars", 300)),
+        inference_fallback_snippet_chars=int(inference_cfg.get("fallback_snippet_chars", 200)),
+        inference_retry_evidence_limit=int(inference_cfg.get("retry_evidence_limit", 5)),
+        inference_graph_priority_score_boost=float(inference_cfg.get("graph_priority_score_boost", 0.25)),
+        inference_min_chunk_chars=int(inference_cfg.get("min_chunk_chars", 40)),
+        inference_multi_doc_min_sources=int(inference_cfg.get("multi_doc_min_sources", 3)),
+        inference_synthesis_route_types=list(inference_cfg.get("synthesis_route_types", ["summarization", "comparison", "graph_relation"])),
+        inference_self_rag_evidence_char_limit=int(inference_cfg.get("self_rag_evidence_char_limit", 3000)),
+        inference_self_rag_answer_char_limit=int(inference_cfg.get("self_rag_answer_char_limit", 2000)),
+        inference_memory_context_header=inference_cfg.get("memory_context_header", "LỊCH SỬ LIÊN QUAN"),
+        inference_language_names=dict(inference_cfg.get("language_names", {
+            "vi": "tiếng Việt", "en": "English", "zh": "Chinese",
+            "fr": "French", "de": "German", "ja": "Japanese", "ko": "Korean",
+        })),
+        inference_route_prompt_map=dict(inference_cfg.get("route_prompt_map", {
+            "summarization": "summarization.txt", "comparison": "comparison.txt",
+            "claim_check": "claim_check.txt", "graph_relation": "graph_relation.txt",
+        })),
+        inference_multi_source_prompt_file=inference_cfg.get("multi_source_prompt_file", "multi_source.txt"),
+        inference_default_prompt_file=inference_cfg.get("default_prompt_file", "qa_grounded.txt"),
+        inference_substantive_chunk_filter_prefixes=list(inference_cfg.get("substantive_chunk_filter_prefixes", [
+            "Ghi nhớ", "Note:", "Starter Pack", "Tập trung", "Người mới",
+            "nên bắt đầu", "scikit-learn User Guide", "Dive into Deep",
+            "Xem thêm tại", "Link:", "URL:",
+        ])),
+        # Docling
+        docling_queue_max_size=int(docling_cfg.get("queue_max_size", 2)),
+        docling_images_scale=float(docling_cfg.get("images_scale", 1.0)),
+        # Messages
+        messages_refusal_answer=dict(messages_config.get("refusal_answer", {
+            "vi": "Tôi không tìm thấy đủ bằng chứng trong tài liệu được cung cấp để trả lời câu hỏi này.",
+            "en": "I could not find sufficient evidence in the provided documents to answer this question.",
+        })),
+        messages_refusal_prefix=dict(messages_config.get("refusal_prefix", {
+            "vi": "Tôi không tìm thấy đủ bằng chứng",
+            "en": "I could not find sufficient evidence",
+        })),
+        messages_low_confidence_warning=dict(messages_config.get("low_confidence_warning", {
+            "vi": "\n\n> Cảnh báo: Một số nhận định chưa được bằng chứng hỗ trợ trực tiếp.",
+            "en": "\n\n> Warning: Some claims may not be directly supported by the evidence.",
+        })),
+        messages_partial_confidence_warning=dict(messages_config.get("partial_confidence_warning", {
+            "vi": "\n\n> ⚠️ Câu trả lời dựa trên bằng chứng có độ tin cậy hạn chế. Vui lòng kiểm tra lại nguồn gốc.",
+            "en": "\n\n> ⚠️ This answer is based on limited-confidence evidence. Please verify the sources.",
+        })),
+        messages_insufficient_evidence_refusal=dict(messages_config.get("insufficient_evidence_refusal", {
+            "vi": "Không đủ bằng chứng đáng tin cậy để tạo câu trả lời có citation hợp lệ.",
+            "en": "Insufficient reliable evidence to produce a validly-cited answer.",
+        })),
+        messages_self_rag_unsupported_prefix=dict(messages_config.get("self_rag_unsupported_prefix", {
+            "vi": "⚠️ Chưa có đủ bằng chứng",
+            "en": "⚠️ Insufficient evidence",
+        })),
+        # Agentic critic
+        agentic_critic_max_follow_ups=int(retrieval_section.get("agentic_critic_max_follow_ups", 2)),
+        agentic_critic_context_buffer=int(retrieval_section.get("agentic_critic_context_buffer", 4)),
+        # Extraction heuristics
+        extraction_max_chars_per_llm_batch=int(heuristics_cfg.get("max_chars_per_llm_batch", 3000)),
+        extraction_max_entity_words=int(heuristics_cfg.get("max_entity_words", 7)),
+        extraction_stopword_only_max_words=int(heuristics_cfg.get("stopword_only_max_words", 2)),
+        extraction_min_confidence=float(heuristics_cfg.get("min_extraction_confidence", 0.5)),
+        extraction_merge_confidence_boost=float(heuristics_cfg.get("merge_confidence_boost", 0.02)),
+        extraction_merge_confidence_max=float(heuristics_cfg.get("merge_confidence_max", 0.97)),
+        extraction_confidence_method_keyword=float(heuristics_cfg.get("confidence_method_keyword", 0.78)),
+        extraction_confidence_metric=float(heuristics_cfg.get("confidence_metric", 0.72)),
+        extraction_confidence_capitalized_term=float(heuristics_cfg.get("confidence_capitalized_term", 0.55)),
+        extraction_confidence_vietnamese_ner=float(heuristics_cfg.get("confidence_vietnamese_ner", 0.68)),
+        extraction_method_keywords=method_keywords_cfg,
+        extraction_metric_terms=metric_terms_cfg,
+        extraction_en_stopwords=en_stopwords_cfg,
+        extraction_vi_stopwords=vi_stopwords_cfg,
+        extraction_compound_heads=compound_heads_cfg,
+        extraction_anaphora_pattern=anaphora_pattern_cfg,
+        # OCR preprocessing
+        ocr_preprocessing_min_long_edge_px=int(ocr_preproc_cfg.get("min_long_edge_px", 1600)),
+        ocr_preprocessing_low_contrast_threshold=float(ocr_preproc_cfg.get("low_contrast_threshold", 60.0)),
+        ocr_preprocessing_denoise_h=int(ocr_preproc_cfg.get("denoise_h", 8)),
+        ocr_preprocessing_denoise_template_window=int(ocr_preproc_cfg.get("denoise_template_window", 7)),
+        ocr_preprocessing_denoise_search_window=int(ocr_preproc_cfg.get("denoise_search_window", 21)),
+        ocr_preprocessing_clahe_clip_limit=float(ocr_preproc_cfg.get("clahe_clip_limit", 2.5)),
+        ocr_preprocessing_clahe_tile_grid=list(ocr_preproc_cfg.get("clahe_tile_grid", [8, 8])),
+        ocr_preprocessing_unsharp_sigma=float(ocr_preproc_cfg.get("unsharp_sigma", 2.0)),
+        ocr_preprocessing_unsharp_alpha=float(ocr_preproc_cfg.get("unsharp_alpha", 1.4)),
+        ocr_preprocessing_unsharp_beta=float(ocr_preproc_cfg.get("unsharp_beta", -0.4)),
+        ocr_preprocessing_adaptive_block_size=int(ocr_preproc_cfg.get("adaptive_block_size", 25)),
+        ocr_preprocessing_adaptive_c=int(ocr_preproc_cfg.get("adaptive_c", 10)),
+        ocr_preprocessing_line_tolerance_px=int(ocr_preproc_cfg.get("line_tolerance_px", 15)),
+        ocr_preprocessing_dedup_jaccard_threshold=float(ocr_preproc_cfg.get("dedup_jaccard_threshold", 0.80)),
+        ocr_preprocessing_dedup_subset_coverage_threshold=float(ocr_preproc_cfg.get("dedup_subset_coverage_threshold", 0.85)),
+        ocr_preprocessing_dedup_confidence_boost_margin=float(ocr_preproc_cfg.get("dedup_confidence_boost_margin", 0.05)),
+        ocr_easyocr_language_map=dict(ocr_config.get("easyocr_language_map", {"vi": ["vi"], "en": ["en"]})),
     )

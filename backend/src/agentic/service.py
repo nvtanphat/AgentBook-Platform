@@ -42,6 +42,7 @@ from src.agentic.agents import (
 )
 from src.agentic.planner import AgenticPlanner
 from src.agentic.state import AgentState
+from src.rag.crag_evaluator import LLMCRAGEvaluator
 from src.agentic.tools import (
     GraphRelationSearchTool,
     HybridTextSearchTool,
@@ -96,17 +97,16 @@ class _CoordinatorConfig:
 class AgenticCoordinatingEngine:
     """Dynamic coordinator that drives the specialist agents over `AgentState`."""
 
-    _ANAPHORA_RE = re.compile(
-        r"\b(nó|chúng|họ|điều này|điều đó|vấn đề này|khái niệm này|cái này|cái đó|"
-        r"it\b|they\b|them\b|this\b|that\b|these\b|those\b|"
-        r"the concept|the topic|the above|the same|the latter|the former)\b",
-        re.IGNORECASE,
-    )
-
     def __init__(self, *, engine: InferenceEngine) -> None:
         self.engine = engine
         self.planner = AgenticPlanner()
         self._rerank_fallback_semaphore = asyncio.Semaphore(1)
+        _pattern = engine.settings.extraction_anaphora_pattern or (
+            r"\b(nó|chúng|họ|điều này|điều đó|vấn đề này|khái niệm này|cái này|cái đó|"
+            r"it|they|them|this|that|these|those|"
+            r"the concept|the topic|the above|the same|the latter|the former)\b"
+        )
+        self._anaphora_re = re.compile(_pattern, re.IGNORECASE)
 
         # ── Tool layer ────────────────────────────────────────────────────
         self.text_tool = HybridTextSearchTool(retriever=engine.retriever)
@@ -122,15 +122,29 @@ class AgenticCoordinatingEngine:
         # ── Agent layer ───────────────────────────────────────────────────
         self.agent_planner = PlannerAgent(llm=engine.llm, planner=self.planner)
         self.agent_director = RetrieverDirectorAgent(
-            text_tool=self.text_tool, graph_tool=self.graph_tool,
+            text_tool=self.text_tool,
+            graph_tool=self.graph_tool,
+            budget_phase2_enabled=getattr(engine.settings, "budget_phase2_enabled", True),
+            budget_min_strong_score=float(getattr(engine.settings, "budget_min_strong_score", 0.045)),
+            budget_min_strong_count=int(getattr(engine.settings, "budget_min_strong_count", 3)),
+            semantic_dedup_threshold=float(getattr(engine.settings, "retrieval_semantic_dedup_threshold", 0.85)),
         )
+        _llm_crag_evaluator: LLMCRAGEvaluator | None = None
+        if getattr(engine.settings, "crag_llm_enabled", False) and engine.llm is not None:
+            _llm_crag_evaluator = LLMCRAGEvaluator(llm=engine.llm)
         self.agent_crag = CRAGCriticAgent(
             evaluator=engine.crag_evaluator,
             cleaner=self.cleaner_tool,
             correct_threshold=engine.settings.crag_correct_threshold,
             incorrect_threshold=engine.settings.crag_incorrect_threshold,
+            llm_evaluator=_llm_crag_evaluator,
         )
-        self.agent_synthesizer = SynthesizerAgent(llm=engine.llm, engine=engine)
+        self.agent_synthesizer = SynthesizerAgent(
+            llm=engine.llm,
+            engine=engine,
+            consistency_n=int(getattr(engine.settings, "agentic_self_consistency_n", 1)),
+            consistency_threshold=float(getattr(engine.settings, "agentic_self_consistency_threshold", 0.65)),
+        )
         self.agent_guardrails = GuardrailsAgent(verifier_tool=self.nli_tool)
         self.agent_critic = CriticAgent(llm=engine.llm)
 
@@ -427,10 +441,12 @@ class AgenticCoordinatingEngine:
                 refusal_reason = f"claim_verification_{guard.verdict}"
                 state.final_answer = REFUSAL_ANSWER
             else:
-                state.final_answer = state.final_answer + "\n\n> Cảnh báo: Một số nhận định chưa được bằng chứng hỗ trợ trực tiếp."
+                _lang = getattr(state, "answer_language", None) or self.engine.settings.inference_default_answer_language
+                state.final_answer = state.final_answer + self.engine.settings.messages_low_confidence_warning.get(_lang, self.engine.settings.messages_low_confidence_warning.get("vi", ""))
                 warning = "Evidence may not directly support every claim."
         elif refusal_reason == "partial_confidence":
-            state.final_answer = state.final_answer + "\n\n> Cảnh báo: Câu trả lời dựa trên bằng chứng có độ tin cậy hạn chế. Vui lòng kiểm tra nguồn gốc."
+            _lang = getattr(state, "answer_language", None) or self.engine.settings.inference_default_answer_language
+            state.final_answer = state.final_answer + self.engine.settings.messages_partial_confidence_warning.get(_lang, self.engine.settings.messages_partial_confidence_warning.get("vi", ""))
             warning = "Answer is based on limited-confidence evidence."
 
         if (
@@ -439,7 +455,8 @@ class AgenticCoordinatingEngine:
             and guard.verdict == ClaimVerdict.NOT_ENOUGH_EVIDENCE.value
         ):
             should_refuse = True
-            refusal_reason = "Không đủ bằng chứng đáng tin cậy để tạo câu trả lời có citation hợp lệ."
+            _lang = getattr(state, "answer_language", None) or self.engine.settings.inference_default_answer_language
+            refusal_reason = self.engine.settings.messages_insufficient_evidence_refusal.get(_lang, self.engine.settings.messages_insufficient_evidence_refusal.get("vi", ""))
             state.final_answer = REFUSAL_ANSWER
 
         state.record_step(
@@ -482,12 +499,12 @@ class AgenticCoordinatingEngine:
             await self._emit_step(state.steps_history[-1], on_step)
             if critic_verdict.verdict == "refine" and critic_verdict.follow_up_queries:
                 extras: list[RetrievedChunk] = []
-                for fq in critic_verdict.follow_up_queries[:2]:
+                for fq in critic_verdict.follow_up_queries[:self.engine.settings.agentic_critic_max_follow_ups]:
                     result = await self.text_tool.run(query=fq, scope=scope, limit=4)
                     if result.success and result.data:
                         extras.extend(result.data)
                 if extras:
-                    augmented = dedupe_retrieved_chunks(state.context_chunks + extras)[: final_limit + 4]
+                    augmented = dedupe_retrieved_chunks(state.context_chunks + extras)[: final_limit + self.engine.settings.agentic_critic_context_buffer]
                     state.context_chunks = augmented
                     await self.agent_synthesizer.act(state, mode="repair")
                     if state.final_answer.strip():
@@ -569,7 +586,7 @@ class AgenticCoordinatingEngine:
     async def _maybe_resolve_anaphora(self, *, query: str, memory_context: str | None, scope: RetrievalScope) -> str:
         if not self.config.anaphora_resolution_enabled or not memory_context:
             return query
-        if not memory_context.strip() or not self._ANAPHORA_RE.search(query):
+        if not memory_context.strip() or not self._anaphora_re.search(query):
             return query
         prompt = (
             "Resolve any pronouns or vague references in the current question using the conversation history.\n"
@@ -741,6 +758,11 @@ class AgenticCoordinatingEngine:
                 invalid_citation_count=state.guardrail_report.invalid_citation_count,
                 repair_attempted=state.answer_repair_attempted,
             ) if state.guardrail_report.verdict != "not_run" else None,
+        )
+        # Keep only citations the answer cites (same policy as the direct engine
+        # path) — drops off-topic low-rank context, renumbers markers + SLEC refs.
+        answer, state.citations, state.sentence_coverage_report = InferenceEngine._prune_to_cited(
+            answer, state.citations, state.sentence_coverage_report
         )
         return QueryResponse(
             answer=answer,

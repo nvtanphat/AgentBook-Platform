@@ -1,6 +1,67 @@
 memory:
   max_turns: 10
 
+# ── Agentic pipeline tuning ───────────────────────────────────────────────────
+agentic:
+  # Self-consistency voting: generate N candidates, pick the one with most
+  # cross-answer sentence support. n=1 disables (single-shot, default).
+  # Enable for hard multi-hop queries at cost of N× LLM calls.
+  self_consistency_n: 1
+  self_consistency_threshold: 0.65   # trigger below this confidence score
+
+# ── Inference engine tuning ──────────────────────────────────────────────────
+inference:
+  default_answer_language: "vi"
+  default_chitchat_answer: "Xin chào! Tôi có thể giúp gì cho bạn?"
+  graph_timeout_seconds: 25.0
+  visual_inline_retrieval_limit: 4
+  visual_inline_max: 2
+  retry_evidence_snippet_chars: 300
+  fallback_snippet_chars: 200
+  retry_evidence_limit: 5
+  graph_priority_score_boost: 0.25
+  min_chunk_chars: 40
+  multi_doc_min_sources: 3
+  synthesis_route_types:
+    - "summarization"
+    - "comparison"
+    - "graph_relation"
+  self_rag_evidence_char_limit: 3000
+  self_rag_answer_char_limit: 2000
+  memory_context_header: "LỊCH SỬ LIÊN QUAN"
+  language_names:
+    vi: "tiếng Việt"
+    en: "English"
+    zh: "Chinese"
+    fr: "French"
+    de: "German"
+    ja: "Japanese"
+    ko: "Korean"
+  route_prompt_map:
+    summarization: "summarization.txt"
+    comparison: "comparison.txt"
+    claim_check: "claim_check.txt"
+    graph_relation: "graph_relation.txt"
+  multi_source_prompt_file: "multi_source.txt"
+  default_prompt_file: "qa_grounded.txt"
+  substantive_chunk_filter_prefixes:
+    - "Ghi nhớ"
+    - "Note:"
+    - "Starter Pack"
+    - "Tập trung"
+    - "Người mới"
+    - "nên bắt đầu"
+    - "scikit-learn User Guide"
+    - "Dive into Deep"
+    - "Xem thêm tại"
+    - "Link:"
+    - "URL:"
+
+# ── Docling PDF converter tuning ─────────────────────────────────────────────
+docling:
+  queue_max_size: 2      # max in-flight pages; reduce to limit RAM on large PDFs
+  images_scale: 1.0      # page image scale; lower to 0.5 to further reduce RAM
+
 llm:
   default_provider: "local"
   local_model: "qwen2.5:3b"
@@ -71,6 +132,28 @@ ocr:
   recognition_engine: "vietocr"
   vietocr_model_name: "vgg_transformer"   # vgg_transformer (accurate) | vgg_seq2seq (faster)
   vietocr_device: "cpu"
+  # Language → EasyOCR language list mapping; extend for new deployment languages
+  easyocr_language_map:
+    vi: ["vi"]
+    en: ["en"]
+  # Image preprocessing knobs (used by _ImagePreprocessor in ocr_engine.py)
+  preprocessing:
+    min_long_edge_px: 1600           # upscale when long side shorter than this
+    low_contrast_threshold: 60       # std-dev of gray pixels; below → add binarized variant
+    denoise_h: 8                     # fastNlMeansDenoising h parameter
+    denoise_template_window: 7
+    denoise_search_window: 21
+    clahe_clip_limit: 2.5
+    clahe_tile_grid: [8, 8]
+    unsharp_sigma: 2                 # GaussianBlur sigmaX for unsharp mask
+    unsharp_alpha: 1.4               # addWeighted src1 weight
+    unsharp_beta: -0.4               # addWeighted src2 weight
+    adaptive_block_size: 25          # adaptiveThreshold blockSize (must be odd)
+    adaptive_c: 10                   # adaptiveThreshold C constant
+    line_tolerance_px: 15            # vertical px tolerance for reading-order line grouping
+    dedup_jaccard_threshold: 0.80    # near-exact duplicate detection threshold
+    dedup_subset_coverage_threshold: 0.85   # partial duplicate coverage threshold
+    dedup_confidence_boost_margin: 0.05     # confidence margin to prefer replacement block
 
 pdf:
   render_scale: 2.0                    # accuracy-first OCR fallback for scanned PDF pages

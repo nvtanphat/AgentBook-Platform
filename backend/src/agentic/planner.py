@@ -35,7 +35,7 @@ Output ONLY a JSON object (no markdown, no prose):
   "use_per_source": false,
   "requires_coverage": false,
   "sub_questions": [
-    {{"text": "specific retrieval question", "tool": "retrieve_text", "critical": true}}
+    {{"text": "specific retrieval question", "tool": "retrieve_text", "critical": true, "depends_on": null}}
   ]
 }}
 
@@ -45,6 +45,10 @@ Rules:
 - requires_coverage: must be true when use_per_source is true
 - sub_questions: 1-4 specific decomposed questions using concrete terms; omit if query is simple
 - critical: false for nice-to-have sub-questions; true for those whose absence makes the answer incomplete
+- depends_on: null (independent) OR 0-based index of the prerequisite sub-question.
+  Use ONLY for true sequential multi-hop: when question B needs question A's answer first.
+  Example: Q0="What is regularization?", Q1={{"text":"How does it affect the loss function?","depends_on":0}}
+  NEVER set depends_on if both questions can be retrieved in parallel.
 
 JSON:\
 """
@@ -54,6 +58,7 @@ class AgenticSubQuestion(BaseModel):
     text: str
     tool: str = "retrieve_text"
     critical: bool = True
+    depends_on: int | None = None
 
 
 class AgenticPlan(BaseModel):
@@ -133,8 +138,12 @@ class AgenticPlanner:
                 text_val = str(item.get("text", "")).strip()
                 tool_val = str(item.get("tool", "retrieve_text"))
                 critical_val = bool(item.get("critical", True))
+                raw_dep = item.get("depends_on")
+                depends_on_val: int | None = None
+                if isinstance(raw_dep, int) and 0 <= raw_dep < len(raw_sqs):
+                    depends_on_val = raw_dep
                 if text_val and tool_val in valid_tools:
-                    sub_questions.append(AgenticSubQuestion(text=text_val, tool=tool_val, critical=critical_val))
+                    sub_questions.append(AgenticSubQuestion(text=text_val, tool=tool_val, critical=critical_val, depends_on=depends_on_val))
 
         steps: list[str] = ["retrieve_multi_query" if use_multi_query else "retrieve_text"]
         if use_per_source:

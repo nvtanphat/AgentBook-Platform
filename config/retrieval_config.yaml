@@ -25,6 +25,26 @@ retrieval:
   agentic_max_retrieval_iterations: 0   # single retrieval pass; iterations re-ran same queries (no new info) — pure overhead
   multi_query_enabled: true
   lexical_fallback_multiplier: 3
+  # ── Agentic critic loop tuning ───────────────────────────────────────────
+  agentic_critic_max_follow_ups: 2     # max follow-up queries per critic cycle
+  agentic_critic_context_buffer: 4     # extra chunk slots beyond final_limit after augmentation
+
+# ── Budget-aware retrieval (phase-2 optional sub-questions) ──────────────────
+# Phase 1: main queries + critical sub-questions always run.
+# Phase 2: optional sub-questions only run when phase-1 evidence is weak.
+# Condition: fewer than budget_min_strong_count chunks score >= budget_min_strong_score
+# on the RRF fused scale (typical range 0.02–0.5).
+budget_aware_retrieval:
+  phase2_enabled: true
+  min_strong_score: 0.045   # fused_score threshold; ~0.045 ≈ decent relevance on RRF scale
+  min_strong_count: 3       # need at least this many strong chunks to skip phase-2
+
+# ── Semantic chunk deduplication ─────────────────────────────────────────────
+# Jaccard similarity threshold for near-duplicate content removal.
+# Supplements chunk-id dedup: catches copy-pasted content across documents.
+# Set to 1.0 to disable.
+semantic_dedup:
+  threshold: 0.85
 
 # ── CRAG (Corrective RAG) thresholds ──────────────────────────────────────────
 # Score gate (theo BGE reranker output, đã normalized [0,1]):
@@ -38,6 +58,9 @@ crag:
   evaluator_enabled: false
   correct_threshold: 0.40
   incorrect_threshold: 0.20
+  # When true, re-classifies AMBIGUOUS chunks using an LLM correctness judge.
+  # Adds one LLM call per ambiguous chunk; only enable when latency allows.
+  llm_enabled: false
 
 # ── Phase B · Adaptive Retrieval Budget ──────────────────────────────────────
 # Skip sparse + graph when dense alone clearly wins. Only triggers for FACTUAL /

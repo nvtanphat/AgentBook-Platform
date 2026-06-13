@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 import logging
 
@@ -142,10 +143,22 @@ class GraphRetriever:
         """
         keyword_entities = await self._keyword_matching_entities(query=query, scope=scope)
 
-        # Fallback to semantic only when keyword matching returned nothing
+        # Fallback to semantic only when keyword matching returned nothing.
+        # Guarded by a 10s timeout — per-entity BGE-M3 encoding is O(N×embed_time)
+        # and can block for 400s+ on collections with 200 entities.
         if not keyword_entities and self.embedder is not None:
-            semantic_entities = await self._semantic_matching_entities(query=query, scope=scope, limit=20)
-            return semantic_entities
+            try:
+                semantic_entities = await asyncio.wait_for(
+                    self._semantic_matching_entities(query=query, scope=scope, limit=20),
+                    timeout=10.0,
+                )
+                return semantic_entities
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Semantic entity matching timed out — falling back to empty",
+                    extra={"owner_id": scope.owner_id, "collection_id": scope.collection_id},
+                )
+                return []
 
         return keyword_entities
 

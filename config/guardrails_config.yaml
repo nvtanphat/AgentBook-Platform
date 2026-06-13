@@ -66,6 +66,29 @@ sentence_coverage:
   # CHITCHAT bypasses retrieval entirely.
   skip_routes: ["claim_check", "summarization"]
 
+# ── User-facing response messages (language-keyed) ──────────────────────────
+# Edit these strings to localise responses for new deployment languages.
+# Never hardcode these in Python — always look up by answer_language key.
+messages:
+  refusal_answer:
+    vi: "Tôi không tìm thấy đủ bằng chứng trong tài liệu được cung cấp để trả lời câu hỏi này."
+    en: "I could not find sufficient evidence in the provided documents to answer this question."
+  refusal_prefix:
+    vi: "Tôi không tìm thấy đủ bằng chứng"
+    en: "I could not find sufficient evidence"
+  low_confidence_warning:
+    vi: "\n\n> Cảnh báo: Một số nhận định chưa được bằng chứng hỗ trợ trực tiếp."
+    en: "\n\n> Warning: Some claims may not be directly supported by the evidence."
+  partial_confidence_warning:
+    vi: "\n\n> ⚠️ Câu trả lời dựa trên bằng chứng có độ tin cậy hạn chế. Vui lòng kiểm tra lại nguồn gốc."
+    en: "\n\n> ⚠️ This answer is based on limited-confidence evidence. Please verify the sources."
+  insufficient_evidence_refusal:
+    vi: "Không đủ bằng chứng đáng tin cậy để tạo câu trả lời có citation hợp lệ."
+    en: "Insufficient reliable evidence to produce a validly-cited answer."
+  self_rag_unsupported_prefix:
+    vi: "⚠️ Chưa có đủ bằng chứng"
+    en: "⚠️ Insufficient evidence"
+
 image_quality:
   min_blur_variance: 80.0
   min_brightness: 45.0

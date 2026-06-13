@@ -122,13 +122,15 @@ class DoclingParser:
         from docling.datamodel.pipeline_options import PdfPipelineOptions
         from docling.document_converter import PdfFormatOption
 
+        from src.core.config import get_settings as _get_settings
+        _cfg = _get_settings()
         pdf_options = PdfPipelineOptions(
             do_ocr=False,
             ocr_batch_size=1,
             layout_batch_size=1,
             table_batch_size=1,
-            queue_max_size=2,   # reduced to limit memory pressure from large PDFs
-            images_scale=1.0,   # default; can lower to 0.5 to further reduce RAM
+            queue_max_size=_cfg.docling_queue_max_size,
+            images_scale=_cfg.docling_images_scale,
             # NOTE: do NOT set generate_picture_images=True here — retaining all
             # picture pixels across the document triggers std::bad_alloc on
             # image-heavy PDFs. Figure images are instead extracted lazily,
@@ -299,13 +301,23 @@ class DoclingParser:
             raise DependencyUnavailableError("pypdfium2 is required to render scanned PDF pages for OCR") from exc
 
         from src.core.config import get_settings
-        from src.processing.ocr_engine import EasyOCREngine
+        from src.processing.ocr_engine import EasyOCREngine, VietOCRRecognizer
 
         settings = get_settings()
         ocr_language = "vi" if language == "vi" else "en"
         output_dir = _workspace_cache_dir("pdf_page_images")
         output_dir.mkdir(parents=True, exist_ok=True)
-        engine = EasyOCREngine(lang=ocr_language)
+        # Best-of-breed for Vietnamese scanned pages: EasyOCR detection + VietOCR
+        # recognition (tone-accurate), honouring `ocr_recognition_engine`. The
+        # dedicated image pipeline already does this; without it, EasyOCR reads
+        # Vietnamese tone marks poorly ("hợp đồng" → "ợông đồng") on scanned PDFs.
+        recognizer = None
+        if ocr_language == "vi" and settings.ocr_recognition_engine == "vietocr":
+            recognizer = VietOCRRecognizer(
+                device=settings.ocr_vietocr_device,
+                model_name=settings.ocr_vietocr_model_name,
+            )
+        engine = EasyOCREngine(lang=ocr_language, recognizer=recognizer)
         render_scale = settings.pdf_render_scale
 
         pdf = pdfium.PdfDocument(str(file_path))

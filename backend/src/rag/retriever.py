@@ -604,6 +604,47 @@ def dedupe_retrieved_chunks(chunks: list[RetrievedChunk]) -> list[RetrievedChunk
     return list(by_id.values())
 
 
+def semantic_dedupe_chunks(
+    chunks: list[RetrievedChunk],
+    threshold: float = 0.85,
+) -> list[RetrievedChunk]:
+    """Remove near-duplicate chunks using token-set Jaccard similarity.
+
+    Supplements chunk-id dedup: two chunks from different source documents may
+    contain near-identical content (e.g. lecture slides copied verbatim into
+    notes). Jaccard on word tokens is fast and language-agnostic.
+    Chunks are processed in order; the first occurrence (highest fused/rerank
+    score after dedupe_retrieved_chunks) is kept.
+    """
+    if threshold >= 1.0 or len(chunks) <= 1:
+        return chunks
+
+    def _tokenset(text: str) -> frozenset[str]:
+        return frozenset(re.findall(r"[\w]{3,}", text.lower()))
+
+    kept: list[RetrievedChunk] = []
+    kept_tokens: list[frozenset[str]] = []
+
+    for chunk in chunks:
+        ctok = _tokenset(chunk.content)
+        is_dup = False
+        for ktok in kept_tokens:
+            if not ktok or not ctok:
+                continue
+            union_size = len(ctok | ktok)
+            if union_size and len(ctok & ktok) / union_size >= threshold:
+                is_dup = True
+                break
+        if not is_dup:
+            kept.append(chunk)
+            kept_tokens.append(ctok)
+
+    removed = len(chunks) - len(kept)
+    if removed:
+        logger.debug("semantic_dedupe_chunks: removed %d near-duplicate chunks", removed)
+    return kept
+
+
 def _lexical_score(query: str, content: str) -> float:
     query_lower = query.lower()
     content_lower = content.lower()

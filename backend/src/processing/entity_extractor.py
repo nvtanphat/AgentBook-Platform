@@ -5,9 +5,10 @@ import json
 import logging
 import re
 from collections import OrderedDict
+from functools import lru_cache
 from typing import TYPE_CHECKING
 
-from src.core.config import project_root
+from src.core.config import get_settings, project_root
 from src.processing.types import EvidenceBlock, EvidenceMap, ExtractedEntity
 
 if TYPE_CHECKING:
@@ -16,85 +17,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Domain keyword seed list — regex fast-path only
+# Capitalized-term pattern (structural, not domain-specific — stays in code)
 # ---------------------------------------------------------------------------
-
-_METHOD_KEYWORDS: frozenset[str] = frozenset({
-    # Optimisation
-    "dropout", "regularization", "l1", "l2", "early stopping",
-    "batch normalization", "layer normalization", "weight decay",
-    "gradient descent", "stochastic gradient descent", "sgd", "adam",
-    "adagrad", "rmsprop", "momentum",
-    # Architectures
-    "transformer", "attention", "self-attention", "cross-attention",
-    "encoder", "decoder", "bert", "gpt", "t5", "llama", "mistral",
-    "cnn", "rnn", "lstm", "gru", "autoencoder", "vae", "gan",
-    "diffusion model", "unet",
-    # Techniques
-    "fine-tuning", "transfer learning", "few-shot", "zero-shot",
-    "prompt engineering", "rag", "retrieval augmented generation",
-    "knowledge distillation", "quantization", "pruning",
-    # Vietnamese equivalents
-    "học máy", "học sâu", "mạng neural", "mạng nơ-ron",
-    "trí tuệ nhân tạo", "xử lý ngôn ngữ", "thị giác máy tính",
-})
-
-_METRIC_PATTERN = re.compile(
-    r"\b(?:accuracy|precision|recall|f1[\s\-]?score|loss|error|auc|bleu|rouge|"
-    r"perplexity|map|mrr|ndcg|throughput|latency)\b",
-    re.IGNORECASE,
-)
 
 _CAPITALIZED_TERM_PATTERN = re.compile(
     r"\b[A-Z][A-Za-z0-9]*(?:[- ][A-Z][A-Za-z0-9]*){0,4}\b"
 )
 
 # ---------------------------------------------------------------------------
-# Stopword sets — English + Vietnamese common words
-# ---------------------------------------------------------------------------
-
-_EN_STOPWORDS: frozenset[str] = frozenset({
-    "the", "a", "an", "this", "that", "these", "those",
-    "it", "its", "we", "our", "they", "their", "he", "she", "his", "her",
-    "you", "your", "i", "my", "me", "us",
-    "and", "or", "but", "nor", "for", "yet", "so",
-    "in", "on", "at", "to", "of", "by", "up", "as",
-    "with", "from", "into", "onto", "upon", "over", "under",
-    "about", "than", "then", "when", "where", "while",
-    "is", "are", "was", "were", "be", "been", "being",
-    "have", "has", "had", "do", "does", "did",
-    "will", "would", "shall", "should", "can", "could", "may", "might", "must",
-    "also", "both", "each", "all", "any", "some", "more", "most",
-    "such", "not", "no", "if", "how", "why", "what", "who", "which",
-    "figure", "table", "section", "chapter", "page", "appendix",
-    "example", "note", "see", "cf", "ref", "eq",
-    "abstract", "introduction", "conclusion", "references",
-    "using", "based", "used", "shown", "given", "thus", "hence", "therefore",
-    "however", "moreover", "furthermore", "additionally", "finally",
-    "first", "second", "third", "last", "next", "previous",
-    "following", "above", "below", "here", "there",
-    "new", "high", "low", "large", "small", "good", "best", "better",
-    "different", "same", "similar", "other", "another", "many", "few",
-})
-
-_VI_STOPWORDS: frozenset[str] = frozenset({
-    "là", "và", "của", "trong", "với", "cho", "các", "có", "được",
-    "này", "đó", "những", "một", "không", "khi", "từ", "tại", "theo",
-    "bởi", "vì", "nên", "mà", "thì", "đã", "sẽ", "đang", "rằng",
-    "như", "hay", "hoặc", "cũng", "còn", "đến", "lên", "xuống",
-    "vào", "ra", "về", "do", "nếu", "để", "qua", "sau", "trước",
-    "trên", "dưới", "giữa", "ngoài", "giữa", "bằng", "hơn",
-    "nhất", "rất", "quá", "chỉ", "cần", "phải", "nên", "muốn",
-    "thêm", "tất", "cả", "nhiều", "ít", "mỗi", "toàn", "bộ",
-    "phần", "điều", "việc", "cách", "loại", "dạng", "kiểu",
-    "trang", "bảng", "hình", "mục", "chương", "ví", "dụ",
-    "thứ", "nhất", "hai", "ba", "bốn", "năm", "sáu", "bảy", "tám",
-})
-
-_ALL_STOPWORDS: frozenset[str] = _EN_STOPWORDS | _VI_STOPWORDS
-
-# ---------------------------------------------------------------------------
-# Junk-entity heuristics
+# Junk-entity heuristics (structural patterns — not domain-specific)
 # ---------------------------------------------------------------------------
 
 _JUNK_PATTERNS = re.compile(
@@ -108,24 +39,64 @@ _JUNK_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
+# ---------------------------------------------------------------------------
+# Config-driven lazy loaders — loaded once, cached for the process lifetime
+# ---------------------------------------------------------------------------
+
+@lru_cache(maxsize=1)
+def _method_keywords() -> frozenset[str]:
+    return frozenset(get_settings().extraction_method_keywords)
+
+
+@lru_cache(maxsize=1)
+def _metric_pattern() -> re.Pattern[str]:
+    terms = get_settings().extraction_metric_terms
+    if not terms:
+        # Fallback if config is missing
+        terms = ["accuracy", "precision", "recall", "f1", "loss", "error", "auc", "bleu", "rouge"]
+    return re.compile(r"\b(?:" + "|".join(terms) + r")\b", re.IGNORECASE)
+
+
+@lru_cache(maxsize=1)
+def _en_stopwords() -> frozenset[str]:
+    return frozenset(get_settings().extraction_en_stopwords)
+
+
+@lru_cache(maxsize=1)
+def _vi_stopwords() -> frozenset[str]:
+    return frozenset(get_settings().extraction_vi_stopwords)
+
+
+@lru_cache(maxsize=1)
+def _all_stopwords() -> frozenset[str]:
+    return _en_stopwords() | _vi_stopwords()
+
+
+@lru_cache(maxsize=1)
+def _compound_heads() -> frozenset[str]:
+    return frozenset(get_settings().extraction_compound_heads)
+
+
+@lru_cache(maxsize=1)
+def _edge_strip_stopwords() -> frozenset[str]:
+    # Vietnamese compound-head nouns must NOT be stripped from entity edges.
+    # See extraction_config.yaml → compound_heads for the rationale.
+    return _all_stopwords() - _compound_heads()
 
 def _is_junk(name: str) -> bool:
     """Return True if the candidate is almost certainly not a real entity."""
     name = name.strip()
     if not name:
         return True
-    # Too short (≤ 1 char) or too long (> 7 words — likely a phrase/sentence)
-    if len(name) < 2 or len(name.split()) > 7:
+    cfg = get_settings()
+    if len(name) < 2 or len(name.split()) > cfg.extraction_max_entity_words:
         return True
-    # Regex-detected junk patterns
     if _JUNK_PATTERNS.search(name):
         return True
-    # All words are stopwords
     words = [w.lower() for w in name.split()]
-    if all(w in _ALL_STOPWORDS for w in words):
+    if all(w in _all_stopwords() for w in words):
         return True
-    # Starts AND ends with stopword AND only 1–2 words → "The Model" etc.
-    if len(words) <= 2 and words[0] in _ALL_STOPWORDS:
+    if len(words) <= cfg.extraction_stopword_only_max_words and words[0] in _all_stopwords():
         return True
     return False
 
@@ -134,11 +105,11 @@ def _clean_name(name: str) -> str:
     """Strip leading/trailing stopwords and normalise whitespace."""
     name = re.sub(r"\s+", " ", name).strip()
     words = name.split()
-    # Strip leading stopwords
-    while words and words[0].lower() in _ALL_STOPWORDS:
+    # Strip leading/trailing stopwords — but keep compound-head nouns so phrases
+    # like "điều kiện kết hôn" survive intact.
+    while words and words[0].lower() in _edge_strip_stopwords():
         words.pop(0)
-    # Strip trailing stopwords
-    while words and words[-1].lower() in _ALL_STOPWORDS:
+    while words and words[-1].lower() in _edge_strip_stopwords():
         words.pop()
     return " ".join(words) if words else name
 
@@ -146,7 +117,6 @@ def _clean_name(name: str) -> str:
 # Prompt loader — loaded once from prompts/entity_extraction.txt
 # ---------------------------------------------------------------------------
 
-_MAX_CHARS_PER_BATCH = 3000  # token budget per LLM call
 _PROMPT_TEMPLATE: str | None = None
 
 
@@ -259,7 +229,7 @@ class EntityExtractor:
                 continue
             entity_type = str(raw.get("type", "concept")).lower()
             confidence = float(raw.get("confidence", 0.7))
-            if confidence < 0.5:
+            if confidence < get_settings().extraction_min_confidence:
                 continue
             # Strict mode: drop entities whose type isn't in the default seed list
             if self._mode == "strict" and entity_type not in self._default_types:
@@ -281,7 +251,8 @@ class EntityExtractor:
                 )
             else:
                 # Merge: keep higher confidence, extend mentions
-                merged_confidence = min(0.97, max(existing.confidence, confidence) + 0.02)
+                _cfg = get_settings()
+                merged_confidence = min(_cfg.extraction_merge_confidence_max, max(existing.confidence, confidence) + _cfg.extraction_merge_confidence_boost)
                 seen_ids = {b.block_id for b in existing.mention_refs}
                 new_mentions = [b for b in mention_blocks if b.block_id not in seen_ids]
                 entities[key] = existing.model_copy(update={
@@ -309,7 +280,7 @@ class EntityExtractor:
             return []
 
         prompt = _load_prompt_template().format(
-            text=text[:_MAX_CHARS_PER_BATCH],
+            text=text[:get_settings().extraction_max_chars_per_llm_batch],
             entity_types_block=self._render_entity_types_block(),
             domain_hint_block=self._render_domain_hint_block(domain_hint),
             few_shots_block=self._render_few_shots_block(),
@@ -324,7 +295,7 @@ class EntityExtractor:
     def _render_entity_types_block(self) -> str:
         """Bullet list for prompt {entity_types_block}. Empty when mode=simple."""
         if self._mode == "simple":
-            return "(không bắt buộc loại cụ thể — hãy chọn nhãn snake_case phù hợp nhất với ngữ cảnh)\n"
+            return "(no specific types required — choose the most fitting snake_case label for the context)\n"
         return "".join(f"- {t}\n" for t in self._default_types)
 
     @staticmethod
@@ -398,29 +369,33 @@ class EntityExtractor:
 
     def _extract_regex(self, evidence_map: EvidenceMap) -> list[ExtractedEntity]:
         entities: OrderedDict[str, ExtractedEntity] = OrderedDict()
+        cfg = get_settings()
+        conf_keyword = cfg.extraction_confidence_method_keyword
+        conf_metric = cfg.extraction_confidence_metric
+        conf_cap = cfg.extraction_confidence_capitalized_term
 
         for block in evidence_map.blocks:
             text = block.snippet_original
 
             # 1. Domain keyword seeds
-            for keyword in _METHOD_KEYWORDS:
+            for keyword in _method_keywords():
                 if re.search(rf"(?<!\w){re.escape(keyword)}(?!\w)", text, re.IGNORECASE):
                     key = keyword.lower()
                     _upsert_entity(
                         entities, key,
                         canonical_name=keyword.title() if keyword not in {"l1", "l2", "sgd", "adam", "rag"} else keyword.upper(),
                         entity_type="algorithm",
-                        confidence=0.78,
+                        confidence=conf_keyword,
                         block=block,
                     )
 
             # 2. Metric terms
-            for match in _METRIC_PATTERN.finditer(text):
+            for match in _metric_pattern().finditer(text):
                 raw = match.group(0)
                 name = _clean_name(raw)
                 if _is_junk(name):
                     continue
-                _upsert_entity(entities, name.lower(), canonical_name=name.lower(), entity_type="metric", confidence=0.72, block=block)
+                _upsert_entity(entities, name.lower(), canonical_name=name.lower(), entity_type="metric", confidence=conf_metric, block=block)
 
             # 3. Capitalized terms — stricter gate than before
             for match in _CAPITALIZED_TERM_PATTERN.finditer(text):
@@ -429,10 +404,10 @@ class EntityExtractor:
                     continue
                 if len(term) < 3:
                     continue
-                if term.lower() in _ALL_STOPWORDS:
+                if term.lower() in _all_stopwords():
                     continue
                 key = term.lower()
-                _upsert_entity(entities, key, canonical_name=term, entity_type="concept", confidence=0.55, block=block)
+                _upsert_entity(entities, key, canonical_name=term, entity_type="concept", confidence=conf_cap, block=block)
 
             # 4. Vietnamese NER
             for name, entity_type, confidence in self._extract_vietnamese_ner(text):
@@ -467,10 +442,12 @@ class EntityExtractor:
         current_words: list[str] = []
         current_type: str | None = None
 
+        _vi_ner_conf = get_settings().extraction_confidence_vietnamese_ner
+
         def flush() -> None:
             nonlocal current_words, current_type
             if current_words and current_type:
-                entities.append((" ".join(current_words), current_type.lower(), 0.68))
+                entities.append((" ".join(current_words), current_type.lower(), _vi_ner_conf))
             current_words = []
             current_type = None
 
@@ -518,7 +495,7 @@ class EntityExtractor:
         current_chars = 0
         for block in blocks:
             text = block.snippet_original or ""
-            if current and current_chars + len(text) > _MAX_CHARS_PER_BATCH:
+            if current and current_chars + len(text) > get_settings().extraction_max_chars_per_llm_batch:
                 batches.append(current)
                 current = []
                 current_chars = 0
