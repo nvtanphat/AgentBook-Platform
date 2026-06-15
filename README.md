@@ -35,31 +35,47 @@ AgentBook turns heterogeneous documents into a queryable, citation-backed knowle
 ## Architecture
 
 ```
-┌──────────────────────── Ingestion ────────────────────────┐
-│  Upload  →  Docling parse  →  OCR / handwriting / audio   │
-│           →  layout normalize  →  chunking (token-aware)  │
-│           →  contextual enrichment  →  entity + relation  │
-│             extraction  →  embedding (BGE-M3 dense+sparse)│
-│           →  Qdrant index  +  Mongo evidence store        │
-└────────────────────────────────────────────────────────────┘
+┌──────────────────────── Ingestion Ingest ────────────────────────┐
+│  Upload  →  Docling parse  →  OCR / handwriting / audio          │
+│           →  layout normalize  →  chunking (token-aware)         │
+│           →  contextual enrichment  →  entity + relation         │
+│             extraction  →  embedding (BGE-M3 dense+sparse)       │
+│           →  Qdrant index  +  Mongo evidence store               │
+└──────────────────────────────────────────────────────────────────┘
                                 │
-┌──────────────────────── Query  ───────────────────────────┐
-│  Intent classifier  (chitchat/off-topic shortcut)         │
-│        │                                                  │
-│  Query processor  (anaphora, language detect, multi-query)│
-│        │                                                  │
-│  Planner agent  →  Director agent  (text / graph / per-   │
-│                                     source retrieval)     │
-│        │                                                  │
-│  CRAG Critic  →  Cross-encoder rerank  →  Synthesizer     │
-│        │                                                  │
-│  Guardrails  (NLI claim verifier, contradiction detector) │
-│        │                                                  │
-│  Sentence-Level Coverage  (SLEC drop / hedge / refuse)    │
-│        │                                                  │
-│  Response parser  (citation inject, acronym strip,        │
-│                    language-drift strip)                  │
-└────────────────────────────────────────────────────────────┘
+┌──────────────────────── Query Pipeline ──────────────────────────┐
+│                                                                  │
+│                        [User Query]                              │
+│                             │                                    │
+│                             ▼                                    │
+│             Intent Classifier (chitchat/off-topic)               │
+│                             │                                    │
+│             ┌───────────────┴───────────────────────┐            │
+│             ▼ (Sequential Direct Pipeline)          ▼ (Agentic Loop)
+│         Query Router                         Planner Agent       │
+│             │                                       │            │
+│         Retriever (Hybrid/Modality)          Director Agent      │
+│             │                                       │            │
+│         Smart Reranker                       CRAG Critic Agent   │
+│             │                                       │            │
+│         Table Executor                              │            │
+│             │                                       │            │
+│         Evidence Validator                          │            │
+│             │                                       │            │
+│         Synthesizer (Draft)                  Synthesizer (Draft) │
+│             │                                       │            │
+│         Claim Verifier (Self-RAG)            Guardrails Agent    │
+│             │                                       │            │
+│         SLEC Coverage Gate                   SLEC Coverage Gate  │
+│             │                                       │            │
+│         Citation Aligner                    (Critic / Re-plan)   │
+│             │                                       │            │
+│         Quality Gate                                │            │
+│             │                                       │            │
+│             └───────────────────────┬───────────────┘            │
+│                                     ▼                            │
+│                             [Final Response]                     │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -77,25 +93,43 @@ AgentBook turns heterogeneous documents into a queryable, citation-backed knowle
 7. **Entity + relation extraction** — LLM-driven extractor produces typed entities (concept, model, dataset, metric, …) and relations (`references`, `co_located_with`, …) with evidence-block back-references. A quality gate drops single-char, all-numeric, or noise labels.
 8. **Embedding + index** — BGE-M3 dense (1024-d) + sparse (sparse-impact) vectors written to Qdrant in a single hybrid collection. Mongo holds the chunks, blocks, entities, relations, and material metadata.
 
-### Query pipeline
+### Query pipelines
 
-Each step writes a typed `AgentTraceStep` to the shared state and is visible in the UI's *Agent Trace* panel.
+AgentBook supports two query pipelines depending on difficulty, router confidence, and route type:
 
-| Step | Owner | Decision |
+#### 1. Bounded Agentic Pipeline (Multi-Agent State-Machine)
+The coordinator drives specialist agents over a shared `AgentState` blackboard. Each step writes a typed `AgentTraceStep` rendered in the UI's *Agent Trace* panel.
+
+| Step / Trace Stage | Specialist Agent / Owner | Responsibility |
 |---|---|---|
-| `classify_intent` | `IntentClassifier` | knowledge / chitchat / off-topic — off-topic short-circuits to a refusal in ≈2 s |
-| `process_query` | `QueryProcessor` | Language detect, anaphora resolution, optional translation, build query variants |
-| `route_query` | `QueryRouter` | Dynamic LLM or rule-based route (factual, comparison, claim_check, relation_trace, summarization) |
-| `retrieve_evidence` | `RetrieverDirector` | Routes queries to hybrid text, graph, or visual search tools; gathers candidates |
-| `rerank_evidence` | `CrossEncoderReranker` | BGE reranker (with optional MMR) trims candidate bundle |
-| `table_executor` | `TableExecutor` | Hot-path for table aggregations (`sum`, `avg`, `max`, `min`, `count`); calculates deterministically in Python (None ⇒ normal RAG) |
-| `validate_evidence` | `EvidenceValidator` | Pre-generation validation wrapping checks and verifying preferred modality alignment (e.g. table questions have table evidence) |
-| `synthesize_answer` | `SynthesizerAgent` / LLM | Grounded answer draft with `[N]` citation markers |
-| `verify_claims` | `GuardrailsAgent` (NLI) | Self-RAG reflection + NLI claim verification (SUPPORTED / NOT_ENOUGH_EVIDENCE / CONTRADICTED) |
-| `slec_gate` | `SentenceCoverageGate` | Per-sentence evidence-support check; drops unsupported sentences, hedges partials, refuses if coverage < floor |
-| `citation_aligner` | `CitationAligner` | Modality-aware citation validation (prunes out-of-range tags and verifies table/figure/audio citation modalities) |
-| `quality_gate` | `QualityGate` | Post-generation quality check combining SLEC, Citation, and Confidence. Enforces a refusal when $\ge 2$ stages fail. |
-| `build_response` | `ResponseParser` | Renumber citations, prune unused chunks, inject visual overlays, build final `QueryResponse` |
+| `classify_intent` | `IntentClassifier` | Chitchat/off-topic short-circuit (refuses in ≤ 2 s) |
+| `plan_query` | `PlannerAgent` | Dynamic plan building (general/comparison/summarization/claim_check/relation_trace), query decomposition, sub-question list |
+| `retrieve_evidence` | `RetrieverDirectorAgent` | Multi-source routing: dispatches sub-queries to Hybrid Text Search, Graph Search, or Visual Search tools |
+| `crag_triage` | `CRAGCriticAgent` | Evaluates retrieve results against CRAG thresholds, tagging them as CORRECT / AMBIGUOUS / INCORRECT |
+| `rerank_evidence` | `CrossEncoderReranker` | Cross-encoder reranks top candidates to match final context limit |
+| `synthesize_answer` | `SynthesizerAgent` | Grounded draft answer with `[N]` citation markers |
+| `verify_claims` | `GuardrailsAgent` | NLI-based verification scoring; triggers synthesizer repair mode if grounding errors or contradictions are found |
+| `repair_answer` | `SynthesizerAgent` | In-context revision when Guardrails flag grounding gaps |
+| `critic_review` | `CriticAgent` | Post-synthesis follow-up check (determines if additional retrieval loops are needed) |
+| `slec_gate` | `SentenceCoverageGate` | Per-sentence semantic-support scoring; drops unsupported text, hedges partials, refuses if weighted score < floor |
+
+#### 2. Sequential Direct Pipeline (Fast-Path Pipeline)
+Runs a linear sequence of modules optimized for speed on clear, factual queries.
+
+| Pipeline Phase | Module / Owner | Responsibility |
+|---|---|---|
+| **Intent Classification** | `IntentClassifier` | Identifies off-topic or chitchat queries instantly |
+| **Modality-Aware Routing** | `QueryRouter` | Classifies query modality (table/figure/audio) and determines whether to trigger a modality-filtered retrieval pass |
+| **Hybrid Retrieval** | `HybridRetriever` + `GraphRetriever` | Dense + sparse retrieval with optional K-hop KG traversal |
+| **Smart Reranking** | `SmartReranker` / `CrossEncoderReranker` | Rerank candidates; bypassable via `adaptive_retrieval` when RRF scores are exceptionally strong |
+| **Deterministic Aggregation** | `TableExecutor` | Hot-path aggregation (`sum`, `avg`, `max`, `min`, `count`) over full table data, avoiding RAG context boundaries and LLM errors |
+| **Evidence Validation** | `EvidenceValidator` | Gathers retrieval checks and modalities before generation to determine if evidence is sufficient |
+| **Answer Synthesis** | `LLM Generator` | Translates prompts and synthesizes citation-grounded response drafts |
+| **Self-RAG & Claim Verifier** | `Self-RAG` reflection + `ClaimVerifier` | Reflection loop + NLI claim check (supporting claim checking routes) |
+| **Coverage Adjudication** | `SentenceCoverageGate` (SLEC) | Sentences scored against chunks; prunes unsupported sentences, hedges partials, enforces coverage floor refusal |
+| **Citation Alignment** | `CitationAligner` | Validates citation modalities (e.g. table queries link to table chunks) and renumbers tags |
+| **Quality Gating** | `QualityGate` | Consolidates SLEC, citation, and confidence stage verdicts into PASS/CAUTION/FAIL; refuses when $\ge 2$ stages fail |
+| **Response Finalization** | `ResponseParser` | Post-processes acronym expansions, language-drift stripping, and outputs final `QueryResponse` |
 
 ### Evidence schema (citation payload)
 
