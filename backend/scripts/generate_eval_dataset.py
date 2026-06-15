@@ -236,7 +236,7 @@ async def run_meta_inventory(args: argparse.Namespace) -> None:
         doc_name = mat.original_name if mat else str(chunk.material_id)
         block_id = chunk.source_block_ids[0] if chunk.source_block_ids else ""
         records.append({
-            "record_id": f"meta-{str(chunk.id)[:16]}",
+            "record_id": f"meta-{str(chunk.id)}",
             "type": "chunk",
             "chunk_id": str(chunk.id),
             "material_id": str(chunk.material_id),
@@ -292,7 +292,7 @@ Rules:
 - Query must be answerable from one of the given passages
 - page number from the passage context
 - difficulty: easy (direct lookup), medium (needs inference), hard (multi-hop)
-- case_id format: ab-ret-{index:04d}
+- case_id format: ab-ret-0001, ab-ret-0002, etc.
 """
 
 
@@ -638,6 +638,18 @@ async def run_adversarial(args: argparse.Namespace) -> None:
         except Exception as exc:
             print(f"  [WARN] {exc}", flush=True)
         await asyncio.sleep(0.5)
+
+    # Deduplicate by exact query text
+    seen_queries: set[str] = set()
+    deduped: list[dict] = []
+    for case in all_cases:
+        q = case.get("query", "").strip()
+        if q and q not in seen_queries:
+            seen_queries.add(q)
+            deduped.append(case)
+    if len(deduped) < len(all_cases):
+        print(f"  Removed {len(all_cases) - len(deduped)} duplicate queries", flush=True)
+    all_cases = deduped
 
     _save_jsonl(all_cases, args.output)
     print(f"\nSaved {len(all_cases)} adversarial cases → {args.output}", flush=True)

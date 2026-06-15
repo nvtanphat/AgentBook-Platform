@@ -219,18 +219,48 @@ def _write_md_report(
             f"| {_avg(rows, 'grounded_sentence_ratio'):.2f} |"
         )
 
+    # ── Trace aggregate section ───────────────────────────────────────────────
+    traced = [r for r in answered if r.get("trace_latency_total_ms") is not None]
+    if traced:
+        avg_lat = _avg(traced, "trace_latency_total_ms")
+        avg_cit_err = _avg(traced, "trace_citation_error_count")
+        route_dist: dict[str, int] = {}
+        for r in traced:
+            rt = r.get("trace_route") or "unknown"
+            route_dist[rt] = route_dist.get(rt, 0) + 1
+        gate_pass = sum(1 for r in traced
+                        if all(v.get("verdict") in {"PASS", "CAUTION"}
+                               for v in (r.get("trace_quality_verdicts") or {}).values()))
+        lines += [
+            "",
+            "## Trace Metrics",
+            "",
+            f"| Field | Value |",
+            f"|-------|-------|",
+            f"| Queries with trace | {len(traced)} |",
+            f"| Avg latency (total ms) | {avg_lat:.0f} |",
+            f"| Avg latency (generate ms) | {_avg(traced, 'trace_latency_generate_ms'):.0f} |",
+            f"| Avg latency (retrieve ms) | {_avg(traced, 'trace_latency_retrieve_ms'):.0f} |",
+            f"| Avg latency (rerank ms) | {_avg(traced, 'trace_latency_rerank_ms'):.0f} |",
+            f"| Avg citation errors | {avg_cit_err:.2f} |",
+            f"| Quality gate pass/caution | {gate_pass}/{len(traced)} |",
+            f"| Route distribution | {'; '.join(f'{k}={v}' for k, v in sorted(route_dist.items()))} |",
+        ]
+
     lines += [
         "",
         "## Per-Query Results",
         "",
-        "| ID | Type | Latency | Faith | Rel | Refused | Error |",
-        "|----|------|---------|-------|-----|---------|-------|",
+        "| ID | Type | Latency | Faith | Rel | Route | CitErr | Refused | Error |",
+        "|----|------|---------|-------|-----|-------|--------|---------|-------|",
     ]
     for r in results:
         err = (r.get("error") or "")[:40] or "—"
         lines.append(
             f"| {r['id']} | {r.get('query_type','?')} | {r.get('elapsed_s',0):.1f}s "
             f"| {r.get('faithfulness',0):.2f} | {r.get('answer_relevance',0):.2f} "
+            f"| {r.get('trace_route') or '—'} "
+            f"| {r.get('trace_citation_error_count') if r.get('trace_citation_error_count') is not None else '—'} "
             f"| {'yes' if r.get('refused') else 'no'} | {err} |"
         )
 
@@ -420,10 +450,26 @@ def main(args: argparse.Namespace) -> None:
     if args.types:
         questions = [(qt, q) for qt, q in questions if qt in args.types]
 
+    # Resume: load existing results if output file exists
     results = []
     errors = 0
+    start_idx = 0
+    if args.start_from > 0 or (out_path.exists() and args.resume):
+        if out_path.exists():
+            with out_path.open(encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        results.append(json.loads(line))
+            start_idx = len(results)
+            errors = sum(1 for r in results if r.get("error"))
+            print(f"Resuming from Q{start_idx + 1} ({len(results)} results loaded)", flush=True)
+        if args.start_from > 0:
+            start_idx = args.start_from
 
     for i, (qtype, query) in enumerate(questions):
+        if i < start_idx:
+            continue
         print(f"[{i+1:>2}/{len(questions)}] [{qtype}] {query[:55]}", flush=True)
         t0 = time.time()
         try:
@@ -496,6 +542,17 @@ def main(args: argparse.Namespace) -> None:
             except Exception as emb_exc:
                 print(f"        [embed error] {type(emb_exc).__name__}: {emb_exc}", flush=True)
 
+            # ── Trace fields (Phase 6) ───────────────────────────────────────
+            trace_raw: dict = payload.get("trace") or {}
+            trace_route = trace_raw.get("route")
+            trace_modality = trace_raw.get("modality")
+            trace_difficulty = trace_raw.get("difficulty")
+            trace_latency: dict = trace_raw.get("latency_by_stage") or {}
+            trace_latency_total = trace_latency.get("total")
+            trace_cit_errors: int | None = trace_raw.get("citation_error_count")
+            trace_claim_count: int | None = trace_raw.get("claim_count")
+            trace_verdicts: dict = trace_raw.get("quality_stage_verdicts") or {}
+
             # ── Off-topic verdict ────────────────────────────────────────────
             status = "refused" if is_refused else "answered"
             if qtype in _OFF_TOPIC_TYPES:
@@ -504,6 +561,8 @@ def main(args: argparse.Namespace) -> None:
                 verdict = None
 
             fp_str = f"  fp_corrected={fp_corrected}" if fp_corrected is not None else ""
+            route_str = f"  route={trace_route}" if trace_route else ""
+            lat_str = f"  lat={trace_latency_total}ms" if trace_latency_total is not None else ""
             print(
                 f"        [{status}] {elapsed:.1f}s  conf={top_conf:.3f}  "
                 f"faith={faith_cit:.2f}  cit_cov={cit_cov:.2f}  cit_valid={cit_valid:.2f}{fp_str}",
@@ -514,6 +573,18 @@ def main(args: argparse.Namespace) -> None:
                 f"grounded={grounded_ratio:.2f}  ctx_prec={ctx_prec:.2f}  sents={n_sentences}",
                 flush=True,
             )
+            if trace_raw:
+                print(
+                    f"        trace:{route_str}  modality={trace_modality}  diff={trace_difficulty}"
+                    f"{lat_str}  cit_errors={trace_cit_errors}  claims={trace_claim_count}",
+                    flush=True,
+                )
+                if trace_verdicts:
+                    vdict_str = "  ".join(
+                        f"{s}={v.get('verdict','-')}({v.get('score',0):.2f})"
+                        for s, v in trace_verdicts.items()
+                    )
+                    print(f"        quality: {vdict_str}", flush=True)
             if answer:
                 print(f"        answer[:80]: {answer[:80]}", flush=True)
 
@@ -539,6 +610,17 @@ def main(args: argparse.Namespace) -> None:
                 "refused": is_refused,
                 "off_topic_verdict": verdict,
                 "human_verdict": None,
+                # Trace fields (Phase 6)
+                "trace_route": trace_route,
+                "trace_modality": trace_modality,
+                "trace_difficulty": trace_difficulty,
+                "trace_latency_total_ms": trace_latency_total,
+                "trace_latency_generate_ms": trace_latency.get("generate"),
+                "trace_latency_retrieve_ms": trace_latency.get("retrieve"),
+                "trace_latency_rerank_ms": trace_latency.get("rerank"),
+                "trace_citation_error_count": trace_cit_errors,
+                "trace_claim_count": trace_claim_count,
+                "trace_quality_verdicts": trace_verdicts or None,
             })
 
         except requests.Timeout:
@@ -553,7 +635,7 @@ def main(args: argparse.Namespace) -> None:
                             "answer": None, "error": str(exc), "human_verdict": None})
         print(flush=True)
 
-    # Save results
+    # Save results (incremental write)
     with out_path.open("w", encoding="utf-8") as f:
         for r in results:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
@@ -597,6 +679,34 @@ def main(args: argparse.Namespace) -> None:
     print(f"    Correction detected:  {fp_corrected_count}/{len(false_premise_rows)}", flush=True)
     print(f"  FALSE REFUSALS (in-scope refused): {len(false_refusals)}", flush=True)
     print(f"{'─'*w}", flush=True)
+    # ── Trace aggregate (Phase 6) ─────────────────────────────────────────────
+    traced = [r for r in answered if r.get("trace_latency_total_ms") is not None]
+    if traced:
+        print(f"  TRACE FIELDS ({len(traced)} queries with trace)", flush=True)
+        avg_lat = _avg(traced, "trace_latency_total_ms")
+        avg_gen = _avg(traced, "trace_latency_generate_ms")
+        avg_ret = _avg(traced, "trace_latency_retrieve_ms")
+        avg_rnk = _avg(traced, "trace_latency_rerank_ms")
+        avg_cit_err = _avg(traced, "trace_citation_error_count")
+        print(f"    Avg latency total:    {avg_lat:.0f}ms", flush=True)
+        print(f"    Avg latency generate: {avg_gen:.0f}ms", flush=True)
+        print(f"    Avg latency retrieve: {avg_ret:.0f}ms", flush=True)
+        print(f"    Avg latency rerank:   {avg_rnk:.0f}ms", flush=True)
+        print(f"    Avg citation errors:  {avg_cit_err:.2f}", flush=True)
+        # Route distribution
+        route_dist: dict[str, int] = {}
+        for r in traced:
+            rt = r.get("trace_route") or "unknown"
+            route_dist[rt] = route_dist.get(rt, 0) + 1
+        routes_str = "  ".join(f"{k}={v}" for k, v in sorted(route_dist.items()))
+        print(f"    Route distribution:   {routes_str}", flush=True)
+        # Quality gate verdicts
+        gate_pass = sum(1 for r in traced
+                        if all(v.get("verdict") in {"PASS", "CAUTION"}
+                               for v in (r.get("trace_quality_verdicts") or {}).values()))
+        gate_fail = len(traced) - gate_pass
+        print(f"    Quality gate: {gate_pass} pass/caution  {gate_fail} with FAIL stage", flush=True)
+        print(f"{'─'*w}", flush=True)
     print(f"  BY QUERY TYPE", flush=True)
     by_type: dict[str, list] = {}
     for r in results:
@@ -648,5 +758,9 @@ if __name__ == "__main__":
                         help="Exit 1 when faithfulness < --ci-threshold (use in CI pipelines)")
     parser.add_argument("--ci-threshold", type=float, default=0.70,
                         help="Faithfulness threshold for --ci-mode (default 0.70)")
+    parser.add_argument("--start-from", type=int, default=0,
+                        help="Skip first N questions (0-based). Use to resume after crash.")
+    parser.add_argument("--resume", action="store_true",
+                        help="Resume from existing output JSONL (auto-detect start index).")
     args = parser.parse_args()
     main(args)
