@@ -41,6 +41,12 @@ MIME_ALLOWLIST: dict[str, set[str]] = {
 }
 
 
+def _normalized_content_type(content_type: str | None) -> str | None:
+    if not content_type:
+        return None
+    return content_type.split(";", 1)[0].strip().lower() or None
+
+
 @dataclass(frozen=True)
 class StreamedUpload:
     temp_path: Path
@@ -123,8 +129,9 @@ def validate_upload_head(
     if extension not in allowed_extensions:
         raise UploadValidationError(f"File extension .{extension} is not allowed")
 
+    normalized_content_type = _normalized_content_type(content_type)
     allowed_mime_types = MIME_ALLOWLIST.get(extension, set())
-    if content_type and allowed_mime_types and content_type not in allowed_mime_types:
+    if normalized_content_type and allowed_mime_types and normalized_content_type not in allowed_mime_types:
         raise UploadValidationError(f"MIME type {content_type} is not allowed for .{extension}")
 
     if extension == "pdf" and not head.startswith(b"%PDF"):

@@ -72,15 +72,17 @@ crag:
 # When satisfied, sparse and graph stages are skipped — cuts median latency on
 # easy factual queries with no measurable recall loss in the smoke pass.
 adaptive_retrieval:
-  enabled: true
-  # Re-tuned after v17→v20 ablation matrix: v19 (B off) recovered ctx_precision
-  # from 0.638 → 1.000, showing fast-path was skipping reranker too liberally.
-  # Tightening the threshold 0.50→0.55 + strong_hits 2→3 keeps the latency win
-  # (~16s/query) on truly confident retrievals while letting borderline queries
-  # fall through to the full reranker pipeline.
-  dense_skip_threshold: 0.55
+  # fast_path_eligible() uses fused_score (RRF-normalised, always populated).
+  # retrieve_fast() is NOT dense-only — it calls the full hybrid RRF retrieve().
+  # Thresholds use fused_score (dense+sparse combined), not raw dense cosine.
+  # DISABLED: thresholds (0.022 ≈ top-4 RRF hit) trigger on nearly every factual
+  # query, causing the cross-encoder reranker to be skipped — the primary signal
+  # for citation ordering and faithfulness. Re-enable only after calibrating
+  # thresholds against citation accuracy metrics.
+  enabled: false
+  fused_skip_threshold: 0.022   # ≈ top-4 RRF hit (was: dense_skip_threshold)
   strong_hits_required: 3
-  strong_hit_min_score: 0.35
+  strong_hit_min_score: 0.017   # ≈ top-18 RRF hit
   eligible_routes: ["factual", "general", "claim_check"]
 
 # ── Knowledge graph / mindmap rendering ──────────────────────────────────────
@@ -102,10 +104,39 @@ graph:
   mindmap_entity_cap: 60               # entities kept after dedup for mindmap
 
   # ── LLM semantic relation extractor (per-material call) ──────────────────
+  # Tuned for typed-relation RECALL (knowledge-edge density). Wider coverage +
+  # a GraphRAG-style gleaning pass surfaces relations a single pass misses.
   semantic_relation:
-    max_concepts: 25
-    max_passages: 18
-    max_passage_chars: 600
+    max_concepts: 40           # top concepts considered for pairwise relations
+    max_passages: 50           # co-mention passages sent to the LLM
+    max_passage_chars: 700     # context window per passage
+    gleaning: true             # second "what did you miss?" pass (recall +15-30%)
+    min_knowledge_edges_for_no_fallback: 3  # viz: below this, allow co-occur supplement
+
+# ── Modality-aware query routing ──────────────────────────────────────────────
+# Detects table/figure/audio questions and runs a modality-filtered retrieval
+# pass so table-native (and figure/audio) content is not buried by plain text.
+# Orthogonal to the intent route (factual/comparison/…): a "compare the tables"
+# query stays COMPARISON route + TABLE modality. Keywords are VI + EN; add more
+# per domain — no code change needed.
+routing:
+  # Below this router confidence (or on COMPLEX difficulty) the query is flagged
+  # should_use_agentic for the multi-step path.
+  agentic_confidence_threshold: 0.55
+  modality:
+    enabled: true
+    table_keywords:
+      [bảng, cột, hàng, dòng, ô, giá trị, tổng, trung bình, lớn nhất, nhỏ nhất,
+       table, column, row, cell, value, sum, average, mean, total, max, min]
+    figure_keywords:
+      [biểu đồ, đồ thị, sơ đồ, hình, ảnh, hình vẽ,
+       chart, figure, diagram, graph, plot, image]
+    audio_keywords:
+      [ghi âm, đoạn ghi, băng ghi, phút, giây, nói rằng,
+       audio, recording, timestamp, minute, transcript]
+    table_boost_multiplier: 0.30      # fused-score boost added to modality=table hits
+    extra_pass: true                  # run a modality-filtered retrieval pass and merge
+    filtered_pass_limit_ratio: 0.5    # size of that pass vs the main retrieval limit
 
 chunking:
   strategy: semantic

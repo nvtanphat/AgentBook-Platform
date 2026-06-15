@@ -34,10 +34,103 @@ extraction:
   # Auto-routing per provider lives in `model_factory.py` — this is the fallback.
   output_format: json
 
+  # Entity extraction backend:
+  #   "llm"    — LLM-based extraction (~34 calls/material, highest recall on complex text)
+  #   "gliner" — GLiNER2 local model (0 LLM calls, ~50ms/batch, no hallucinations)
+  # GLiNER requires: pip install gliner  (downloads gliner_model on first run, ~500MB)
+  entity_backend: "gliner"
+  gliner_model: "gliner-community/gliner_medium-v2.5"
+  gliner_threshold: 0.5
+
   # Multi-pass gleaning (GraphRAG pattern): re-prompt "anything missed?" to
   # boost recall ~15-30% on dense chunks. 0 disables, 1 = one extra pass.
   # Each gleaning pass = 1 extra LLM call per chunk batch, so cost scales.
   max_gleanings: 0
+
+  # ── Section-aware extraction ────────────────────────────────────────────────
+  # Heading names whose sections are EXCLUDED from entity/relation extraction
+  # (but kept in chunking/retrieval). Prevents reference/author lists from
+  # flooding the graph with single-mention person nodes. Matched at the START
+  # of a heading block, optionally numbered ("6. References"). EN + VI seeds;
+  # add languages/domains here, no code change needed.
+  excluded_sections:
+    - "references?"
+    - "bibliography"
+    - "acknowledge?ments?"
+    - "works\\s+cited"
+    - "tài\\s+liệu\\s+tham\\s+khảo"
+    - "lời\\s+cảm\\s+ơn"
+    - "danh\\s+mục\\s+tài\\s+liệu"
+
+  # ── Entity types that participate in graph relation extraction ───────────────
+  # Any entity whose type is in this list can appear as source/target of a graph
+  # edge. Covers all universal types so the same pipeline works across ML, law,
+  # history, medicine, etc. without code changes.
+  graph_entity_types:
+    - concept
+    - model
+    - algorithm
+    - framework
+    - method
+    - dataset
+    - metric
+    - artifact
+    - technology
+    - field
+    - person
+    - organization
+    - event
+    - location
+
+  # ── Relation vocabulary for graph extraction ──────────────────────────────
+  # Controlled set injected into the LLM prompt. Generic enough to cover any
+  # domain — add or remove entries here, no code changes needed.
+  relation_types:
+    - uses          # A applies/employs B as a component or tool
+    - extends       # A is built on top of B
+    - replaces      # A is proposed in place of B
+    - improves      # A enhances B's behaviour or performance
+    - compared_with # A is benchmarked or contrasted with B
+    - evaluates_on  # A is measured on B (model on dataset, method on case)
+    - depends_on    # A requires B to function
+    - part_of       # A is a sub-component or subset of B
+    - contradicts   # A presents a finding or claim contrary to B
+    - governs       # A (rule/law/authority) regulates or controls B
+    - applies_to    # A (rule/concept) applies to or covers B
+    - created_by    # A was authored, founded, or produced by B (person/org)
+    - located_in    # A is situated in or belongs to B (location/domain)
+    - occurred_at   # A (event) happened at or during B (time/location)
+    - related_to    # generic fallback — meaningful link but no specific type
+
+  # ── Ontology-Guided Extraction (OMD-GraphRAG pattern) ──────────────────────
+  # Controls which relation types are valid for each source entity type.
+  # Relations outside the allowed set are pruned after LLM extraction.
+  # Missing type = no constraint (all relation_types allowed).
+  ontology:
+    # Technical / research types
+    concept:      [uses, extends, replaces, improves, compared_with, evaluates_on, depends_on, part_of, contradicts, governs, applies_to, related_to]
+    algorithm:    [uses, extends, replaces, improves, compared_with, evaluates_on, depends_on, part_of, related_to]
+    metric:       [evaluates_on, compared_with, related_to]
+    dataset:      [evaluates_on, related_to]
+    model:        [uses, extends, replaces, improves, compared_with, evaluates_on, depends_on, part_of, related_to]
+    framework:    [uses, extends, depends_on, related_to]
+    method:       [uses, improves, compared_with, evaluates_on, depends_on, related_to]
+    # Universal types — permissive so any domain works out of the box
+    artifact:     [uses, extends, depends_on, part_of, governs, applies_to, created_by, related_to]
+    organization: [governs, applies_to, located_in, part_of, created_by, related_to]
+    person:       [created_by, governs, located_in, related_to]
+    event:        [occurred_at, part_of, related_to]
+    location:     [part_of, related_to]
+
+  # ── Cross-lingual entity resolution (BGE-M3 cosine merge) ──────────────────
+  # merge_threshold            — cross-TYPE pairs (strict). Avoids merging a
+  #                              concept into a person, etc.
+  # cross_lingual_merge_threshold — same-TYPE pairs (loose). Catches
+  #                              cross-lingual synonyms ("Machine Learning" ↔
+  #                              "Học máy") whose cosine ~0.72-0.80. Lower = more
+  #                              merging (risk of false merges); tune per corpus.
+  merge_threshold: 0.82
+  cross_lingual_merge_threshold: 0.74
 
   # Field on KnowledgeCollection to inject as domain context (e.g. "Pháp luật
   # Việt Nam", "Machine learning research"). When empty → prompt skips the hint.
@@ -60,6 +153,20 @@ extraction:
     - input: |-
         Bảng 3 cho thấy kết quả trên trang 12. Xem thêm ở phần 4.2.
       output: []
+    # Legal domain: extract semantic parties, rights, and obligations — NOT article numbers.
+    - input: |-
+        Nghĩa vụ và quyền của vợ, chồng:
+        Vợ, chồng có nghĩa vụ thương yêu, chung thuỷ và cùng nhau thực hiện công việc gia đình.
+        Vợ, chồng có quyền chiếm hữu, sử dụng, định đoạt tài sản chung theo quy định pháp luật.
+        Trong trường hợp thừa kế, tài sản của người chết được chia theo di chúc hoặc theo pháp luật.
+      output:
+        - {name: "vợ", type: "person", confidence: 0.90}
+        - {name: "chồng", type: "person", confidence: 0.90}
+        - {name: "tài sản chung", type: "concept", confidence: 0.88}
+        - {name: "thừa kế", type: "concept", confidence: 0.90}
+        - {name: "di chúc", type: "artifact", confidence: 0.85}
+        - {name: "quyền chiếm hữu", type: "concept", confidence: 0.82}
+        - {name: "nghĩa vụ thương yêu", type: "concept", confidence: 0.78}
 
 # ── Heuristic / regex extractor tuning ───────────────────────────────────────
 heuristics:
@@ -73,6 +180,14 @@ heuristics:
   confidence_metric: 0.72            # confidence assigned to metric-pattern entities
   confidence_capitalized_term: 0.55  # confidence assigned to capitalized-term entities
   confidence_vietnamese_ner: 0.68    # confidence assigned to underthesea NER entities
+
+# ── Structural junk patterns (anchored regex, applied to candidate entity names) ─
+# Spans matching any pattern are rejected as structural noise, not semantic entities.
+# Pattern matching uses re.IGNORECASE | re.UNICODE. Add/remove without touching code.
+structural_junk_patterns:
+  - "^[Đđ]iều\\s+\\d"    # Vietnamese legal article header: "Điều 69. ..." (Đ ≠ D in Unicode)
+  - "^[Kk]hoản\\s+\\d"   # Vietnamese legal clause:  "Khoản 1. ..."
+  - "^[Đđ]iểm\\s+[a-z]\\b"  # Vietnamese legal sub-item: "Điểm a. ..."
 
 # ── Domain keyword seeds (method keyword fast-path) ──────────────────────────
 # YAML list → frozenset at load time. Add/remove terms per deployment domain.
@@ -133,6 +248,27 @@ method_keywords:
   - "trí tuệ nhân tạo"
   - "xử lý ngôn ngữ"
   - "thị giác máy tính"
+  # Vietnamese legal / family-law concepts (Bộ luật Dân sự, Luật Hôn nhân và Gia đình)
+  - "thừa kế"
+  - "di chúc"
+  - "tài sản chung"
+  - "tài sản riêng"
+  - "hôn nhân"
+  - "ly hôn"
+  - "hôn ước"
+  - "quyền thừa kế"
+  - "nghĩa vụ cấp dưỡng"
+  - "nuôi con nuôi"
+  - "quyền giám hộ"
+  - "người giám hộ"
+  - "hàng thừa kế"
+  - "di sản"
+  - "bồi thường thiệt hại"
+  - "quyền sở hữu"
+  - "quyền sử dụng đất"
+  - "hợp đồng dân sự"
+  - "năng lực hành vi dân sự"
+  - "năng lực pháp luật dân sự"
 
 # ── Metric pattern terms (joined into a single alternation regex) ─────────────
 metric_terms:

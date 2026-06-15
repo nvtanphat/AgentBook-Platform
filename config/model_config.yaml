@@ -42,6 +42,9 @@ inference:
     comparison: "comparison.txt"
     claim_check: "claim_check.txt"
     graph_relation: "graph_relation.txt"
+    # Modality-specific prompts (selected by preferred_modality, overrides route)
+    table: "qa_table.txt"
+    figure: "qa_figure.txt"
   multi_source_prompt_file: "multi_source.txt"
   default_prompt_file: "qa_grounded.txt"
   substantive_chunk_filter_prefixes:
@@ -64,18 +67,26 @@ docling:
 
 llm:
   default_provider: "local"
-  local_model: "qwen2.5:3b"
+  local_model: "qwen2.5:7b"
   ollama_base_url: "http://localhost:11434"
   api_fallback_provider: "openai_compatible"
   openai_base_url: "https://api.openai.com/v1"
   openai_model: "gpt-4o-mini"
+  # ── Model Routing (P3.2) ─────────────────────────────────────────────────
+  # Override LLM provider for specific tasks (empty = use default_provider).
+  # Use "local" for cheap extraction tasks, "api" for complex reasoning.
+  # Example: extraction on local 7B, answer generation on API GPT-4o.
+  extraction_provider: ""      # "" = same as default_provider
+  extraction_local_model: ""   # "" = same as local_model
   temperature: 0.0
   max_output_tokens: 1024
   # Raised from 120s → 300s after v15 eval (summarization on 9-citation prompts
   # exceeded the 180s default in 3 consecutive runs, triggering false refusals
   # with reason="The answer generation pipeline failed").
   timeout_seconds: 300
-  self_rag_reflection_enabled: true
+  # Disabled: SLEC + quality gate (cross-encoder per-sentence scoring) replaces this
+  # LLM-based pass — same coverage check at lower cost with fewer false positives.
+  self_rag_reflection_enabled: false
 
 embedding:
   model_name: "BAAI/bge-m3"

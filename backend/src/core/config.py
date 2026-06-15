@@ -120,6 +120,8 @@ class Settings(BaseSettings):
     index_batch_size: int = 64
     llm_default_provider: str = "local"
     llm_local_model: str = "qwen2.5:3b"
+    llm_extraction_provider: str = ""   # "" = same as llm_default_provider
+    llm_extraction_local_model: str = ""  # "" = same as llm_local_model
     ollama_base_url: str = "http://localhost:11434"
     openai_base_url: str = "https://api.openai.com/v1"
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
@@ -217,6 +219,15 @@ class Settings(BaseSettings):
     extraction_max_gleanings: int = 0
     extraction_domain_hint_field: str = "subject"
     extraction_few_shots: list[dict] = Field(default_factory=list)
+    extraction_entity_backend: str = "llm"  # "llm" | "gliner"
+    extraction_gliner_model: str = "gliner-community/gliner_medium-v2.5"
+    extraction_gliner_threshold: float = 0.5
+    extraction_ontology: dict = Field(default_factory=dict)  # entity_type → valid relation types
+    extraction_graph_entity_types: list[str] = Field(default_factory=list)  # types that enter the graph
+    extraction_relation_types: list[str] = Field(default_factory=list)      # relation vocab
+    extraction_excluded_sections: list[str] = Field(default_factory=list)   # heading patterns skipped for KG
+    extraction_merge_threshold: float = 0.82                # cross-type BGE-M3 merge
+    extraction_cross_lingual_merge_threshold: float = 0.74  # same-type BGE-M3 merge
 
     # Knowledge-graph endpoint thresholds + fetch caps (see retrieval_config.yaml → graph)
     graph_fuzzy_dedup_threshold: float = 0.88
@@ -234,6 +245,8 @@ class Settings(BaseSettings):
     graph_semantic_relation_max_concepts: int = 25
     graph_semantic_relation_max_passages: int = 18
     graph_semantic_relation_max_passage_chars: int = 600
+    graph_semantic_relation_gleaning: bool = False
+    graph_min_knowledge_edges_for_no_fallback: int = 3
 
     # Phase B — Adaptive Retrieval Budget (skip sparse + graph on easy factuals)
     adaptive_retrieval_enabled: bool = True
@@ -243,6 +256,16 @@ class Settings(BaseSettings):
     adaptive_eligible_routes: list[str] = Field(
         default_factory=lambda: ["factual", "general", "claim_check"]
     )
+
+    # Modality-aware routing (config/retrieval_config.yaml → routing.modality)
+    modality_routing_enabled: bool = True
+    modality_table_keywords: list[str] = Field(default_factory=list)
+    modality_figure_keywords: list[str] = Field(default_factory=list)
+    modality_audio_keywords: list[str] = Field(default_factory=list)
+    modality_table_boost_multiplier: float = 0.30
+    modality_extra_pass: bool = True
+    modality_filtered_pass_limit_ratio: float = 0.5
+    router_agentic_confidence_threshold: float = 0.55
 
     # Sentence-level Evidence Coverage (SLEC) — Adaptive Evidence-Guided RAG core
     slec_enabled: bool = True
@@ -396,6 +419,7 @@ class Settings(BaseSettings):
     extraction_vi_stopwords: list[str] = Field(default_factory=list)
     extraction_compound_heads: list[str] = Field(default_factory=list)
     extraction_anaphora_pattern: str = ""
+    extraction_structural_junk_patterns: list[str] = Field(default_factory=list)
 
     # OCR preprocessing (see config/model_config.yaml → ocr.preprocessing:)
     ocr_preprocessing_min_long_edge_px: int = 1600
@@ -498,6 +522,7 @@ def get_settings() -> Settings:
     crag_config = retrieval_config.get("crag", {})
     graph_config = retrieval_config.get("graph", {})
     graph_semrel_config = graph_config.get("semantic_relation", {})
+    modality_config = retrieval_config.get("routing", {}).get("modality", {})
     try:
         _ext_yaml = load_yaml_config("extraction_config.yaml")
     except FileNotFoundError:
@@ -510,6 +535,7 @@ def get_settings() -> Settings:
     vi_stopwords_cfg = list(_ext_yaml.get("vi_stopwords", []))
     compound_heads_cfg = list(_ext_yaml.get("compound_heads", []))
     anaphora_pattern_cfg = str(_ext_yaml.get("anaphora_pattern", "") or "")
+    structural_junk_patterns_cfg = list(_ext_yaml.get("structural_junk_patterns", []))
     try:
         viz_config = load_yaml_config("viz_config.yaml").get("visualization", {})
     except FileNotFoundError:
@@ -539,6 +565,8 @@ def get_settings() -> Settings:
         index_batch_size=qdrant_config.get("index_batch_size", 64),
         llm_default_provider=env_value("LLM_DEFAULT_PROVIDER", llm_config.get("default_provider", "local")),
         llm_local_model=env_value("LLM_LOCAL_MODEL", llm_config.get("local_model", "qwen2.5:3b")),
+        llm_extraction_provider=str(llm_config.get("extraction_provider", "")),
+        llm_extraction_local_model=str(llm_config.get("extraction_local_model", "")),
         ollama_base_url=env_value("OLLAMA_BASE_URL", llm_config.get("ollama_base_url", "http://localhost:11434")),
         openai_base_url=env_value("OPENAI_BASE_URL", llm_config.get("openai_base_url", "https://api.openai.com/v1")),
         openai_model=env_value("OPENAI_MODEL", llm_config.get("openai_model", "gpt-4o-mini")),
@@ -612,6 +640,16 @@ def get_settings() -> Settings:
             adaptive_retrieval_config.get(
                 "eligible_routes", ["factual", "general", "claim_check"]
             )
+        ),
+        modality_routing_enabled=bool(modality_config.get("enabled", True)),
+        modality_table_keywords=list(modality_config.get("table_keywords", [])),
+        modality_figure_keywords=list(modality_config.get("figure_keywords", [])),
+        modality_audio_keywords=list(modality_config.get("audio_keywords", [])),
+        modality_table_boost_multiplier=float(modality_config.get("table_boost_multiplier", 0.30)),
+        modality_extra_pass=bool(modality_config.get("extra_pass", True)),
+        modality_filtered_pass_limit_ratio=float(modality_config.get("filtered_pass_limit_ratio", 0.5)),
+        router_agentic_confidence_threshold=float(
+            retrieval_config.get("routing", {}).get("agentic_confidence_threshold", 0.55)
         ),
         slec_enabled=env_bool("SLEC_ENABLED", slec_config.get("enabled", True)),
         slec_supported_threshold=float(slec_config.get("supported_threshold", 0.55)),
@@ -690,6 +728,8 @@ def get_settings() -> Settings:
         graph_semantic_relation_max_concepts=int(graph_semrel_config.get("max_concepts", 25)),
         graph_semantic_relation_max_passages=int(graph_semrel_config.get("max_passages", 18)),
         graph_semantic_relation_max_passage_chars=int(graph_semrel_config.get("max_passage_chars", 600)),
+        graph_semantic_relation_gleaning=bool(graph_semrel_config.get("gleaning", False)),
+        graph_min_knowledge_edges_for_no_fallback=int(graph_semrel_config.get("min_knowledge_edges_for_no_fallback", 3)),
         extraction_mode=str(extraction_config.get("mode", "dynamic")).lower(),
         extraction_default_entity_types=list(
             extraction_config.get(
@@ -702,6 +742,15 @@ def get_settings() -> Settings:
         extraction_max_gleanings=int(extraction_config.get("max_gleanings", 0)),
         extraction_domain_hint_field=str(extraction_config.get("domain_hint_field", "subject")),
         extraction_few_shots=list(extraction_config.get("few_shots", [])),
+        extraction_entity_backend=str(extraction_config.get("entity_backend", "llm")),
+        extraction_gliner_model=str(extraction_config.get("gliner_model", "gliner-community/gliner_medium-v2.5")),
+        extraction_gliner_threshold=float(extraction_config.get("gliner_threshold", 0.5)),
+        extraction_ontology=dict(extraction_config.get("ontology", {})),
+        extraction_graph_entity_types=list(extraction_config.get("graph_entity_types", [])),
+        extraction_relation_types=list(extraction_config.get("relation_types", [])),
+        extraction_excluded_sections=list(extraction_config.get("excluded_sections", [])),
+        extraction_merge_threshold=float(extraction_config.get("merge_threshold", 0.82)),
+        extraction_cross_lingual_merge_threshold=float(extraction_config.get("cross_lingual_merge_threshold", 0.74)),
         viz_config=dict(viz_config),
         # ── New fields ──────────────────────────────────────────────────────
         # Inference engine tuning
@@ -783,6 +832,7 @@ def get_settings() -> Settings:
         extraction_vi_stopwords=vi_stopwords_cfg,
         extraction_compound_heads=compound_heads_cfg,
         extraction_anaphora_pattern=anaphora_pattern_cfg,
+        extraction_structural_junk_patterns=structural_junk_patterns_cfg,
         # OCR preprocessing
         ocr_preprocessing_min_long_edge_px=int(ocr_preproc_cfg.get("min_long_edge_px", 1600)),
         ocr_preprocessing_low_contrast_threshold=float(ocr_preproc_cfg.get("low_contrast_threshold", 60.0)),
