@@ -32,3 +32,12 @@ def test_query_router_returns_adaptive_decision_flags() -> None:
     graph = router.route("relationship between concepts")
     assert graph.use_graph is True
     assert graph.graph_priority is True
+
+
+def test_query_router_context_question_is_factual() -> None:
+    router = QueryRouter()
+
+    assert router.route("Trong doan trich, cong cu nao duoc dung?").route_type == RouteType.FACTUAL
+    assert router.route("Theo doan trich, AI co nhung cong cu nao duoc neu ra?").route_type == RouteType.FACTUAL
+    assert router.route("Trong đoạn trích, công cụ nào được dùng?").route_type == RouteType.FACTUAL
+    assert router.route("Theo đoạn trích, AI có những công cụ nào được nêu ra?").route_type == RouteType.FACTUAL

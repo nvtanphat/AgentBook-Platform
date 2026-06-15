@@ -9,6 +9,7 @@ class GraphNode(BaseModel):
     id: str
     label: str
     type: str
+    description: str | None = None  # short context snippet describing the entity
     confidence: float | None = None
     mention_count: int = 0
     degree: int = 0

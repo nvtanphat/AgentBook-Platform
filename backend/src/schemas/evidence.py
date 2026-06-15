@@ -25,6 +25,9 @@ class EvidenceBlockSchema(BaseModel):
     audio_start_seconds: float | None = None
     audio_end_seconds: float | None = None
     audio_file: str | None = None
+    # Figure-only: API URL to the cropped/embedded figure image on disk.
+    # Set when block_type="figure" and FigureCaptioner saved an image crop.
+    figure_image_url: str | None = None
 
 
 class CitationSchema(BaseModel):
@@ -36,6 +39,10 @@ class CitationSchema(BaseModel):
     block_type: str | None = None
     snippet_original: str
     snippet_translated: str | None = None
+    # Span-level citation: the specific sentence within snippet_original that directly
+    # proves the answer sentence. Extracted by token-overlap scoring against focus_text.
+    # Frontend highlights this span inside the full blockquote.
+    cited_span: str | None = None
     bbox: BoundingBoxSchema | None = None
     role: str = "primary"
     source_language: str

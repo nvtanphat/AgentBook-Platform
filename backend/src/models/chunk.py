@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from beanie import Document, PydanticObjectId
 from pydantic import Field
@@ -18,6 +19,8 @@ class Chunk(Document):
     modality: str = Modality.TEXT.value
     source_block_ids: list[str] = Field(default_factory=list)
     source_pages: list[int] = Field(default_factory=list)
+    bboxes: list[dict[str, float]] = Field(default_factory=list)
+    evidence_blocks: list[dict[str, Any]] = Field(default_factory=list)
     entity_ids: list[str] = Field(default_factory=list)
     relation_ids: list[str] = Field(default_factory=list)
     token_count: int | None = None

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import unicodedata
 from enum import Enum
 from typing import TYPE_CHECKING
 
@@ -12,6 +13,11 @@ if TYPE_CHECKING:
     from src.core.base_llm import BaseLLM
 
 logger = logging.getLogger(__name__)
+
+
+def _fold_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFD", value or "")
+    return "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn").replace("đ", "d").replace("Đ", "D")
 
 _ROUTER_PROMPT = """\
 You are a query classifier for a multilingual document Q&A system. Classify the query into exactly one route.
@@ -51,6 +57,37 @@ class RouteType(str, Enum):
     GENERAL = "general"
 
 
+class PreferredModality(str, Enum):
+    """Modality the query is asking about — orthogonal to RouteType.
+
+    A "compare the two tables" query is COMPARISON route + TABLE modality. NONE
+    means no modality signal (plain text QA, the default).
+    """
+
+    NONE = "none"
+    TABLE = "table"
+    FIGURE = "figure"
+    AUDIO = "audio"
+
+
+class Difficulty(str, Enum):
+    """How much work the query needs — drives agentic activation."""
+
+    SIMPLE = "simple"        # one fact / one hop
+    MULTI_HOP = "multi_hop"  # 2-3 hops, cross-doc, or multi-question
+    COMPLEX = "complex"      # 4+ factors / synthesis-heavy
+
+
+class TableQueryType(str, Enum):
+    """Sub-intent for TABLE-modality queries — drives the table executor."""
+
+    LOOKUP = "lookup"            # value of column C where A = X
+    AGGREGATION = "aggregation"  # sum/avg/max/min/count over a column
+    FILTER = "filter"            # rows matching a condition
+    COMPARISON = "comparison"    # compare specific rows
+    SORT = "sort"                # rank/sort by a column
+
+
 class RouteDecision(BaseModel):
     route_type: RouteType
     top_k_multiplier: float = 1.0
@@ -58,6 +95,38 @@ class RouteDecision(BaseModel):
     graph_priority: bool = False
     use_multi_query: bool = False
     use_mmr: bool = False
+    preferred_modality: PreferredModality = PreferredModality.NONE
+    # Structured product-router signals (Phase 2). Defaults keep prior behaviour.
+    difficulty: Difficulty = Difficulty.SIMPLE
+    confidence: float = 0.6
+    should_use_agentic: bool = False
+    table_query_type: TableQueryType | None = None
+
+
+# Fallback modality keyword seeds — used when config lists are empty. VI + EN.
+_DEFAULT_TABLE_KEYWORDS = [
+    "bảng", "cột", "hàng", "dòng", "ô", "giá trị", "bao nhiêu", "tổng", "trung bình",
+    "table", "column", "row", "cell", "value", "sum", "average", "mean", "total",
+]
+_DEFAULT_FIGURE_KEYWORDS = [
+    "biểu đồ", "đồ thị", "sơ đồ", "hình", "ảnh",
+    "chart", "figure", "diagram", "graph", "plot", "image",
+]
+_DEFAULT_AUDIO_KEYWORDS = [
+    "ghi âm", "đoạn ghi", "băng ghi", "phút", "giây", "nói rằng",
+    "audio", "recording", "timestamp", "minute", "transcript",
+]
+
+
+def _compile_keyword_re(keywords: list[str]) -> re.Pattern[str]:
+    # ASCII-fold keywords so a query typed without Vietnamese diacritics
+    # ("bao nhieu") still matches a diacritic keyword ("bao nhiêu"). Drop folded
+    # keywords shorter than 2 chars (e.g. "ô"→"o") — they would match any letter —
+    # and require word boundaries so we match whole words, not substrings.
+    from src.processing.slug import ascii_fold
+    folded = {f for k in keywords if k and len(f := ascii_fold(k).lower().strip()) >= 2}
+    body = "|".join(re.escape(k) for k in sorted(folded, key=len, reverse=True))
+    return re.compile(rf"\b(?:{body})\b", re.IGNORECASE)
 
 
 _FACTUAL_RE = re.compile(
@@ -108,6 +177,7 @@ _GRAPH_RELATION_RE = re.compile(
 
 _CLAIM_CHECK_RE = re.compile(
     r"\b("
+    r"có đúng là.{0,120}không|co dung la.{0,120}khong|"
     r"có đúng không|co dung khong|đúng không|dung khong|"
     r"kiểm chứng|kiem chung|xác minh|xac minh|"
     r"verify|is it true|true or false|fact.?check"
@@ -115,16 +185,142 @@ _CLAIM_CHECK_RE = re.compile(
     re.IGNORECASE,
 )
 
+_CONTEXT_FACTUAL_RE = re.compile(
+    r"\b("
+    r"theo doan trich|trong doan trich|doan trich|passage|excerpt|"
+    r"duoc mo ta|duoc nhac|xuat hien|cong cu nao|nhan nao|ten .* la gi|"
+    r"which|what .* listed|what .* shown|who .* shown"
+    r")\b",
+    re.IGNORECASE,
+)
+_QUESTION_FACT_RE = re.compile(
+    r"\b(nao|gi|ai|o dau|bao nhieu|which|what|who|where|how many)\b",
+    re.IGNORECASE,
+)
+
+
+# ── Structured-signal patterns (Phase 2) ─────────────────────────────────────
+# Matched on ASCII-folded text. Table sub-intent for the deterministic executor.
+_AGG_RE = re.compile(
+    r"\b(tong|trung binh|lon nhat|nho nhat|cao nhat|thap nhat|dem so|bao nhieu (san pham|dong|hang|muc)|"
+    r"sum|total|average|mean|max|min|maximum|minimum|count|highest|lowest)\b",
+    re.IGNORECASE,
+)
+_SORT_RE = re.compile(r"\b(sap xep|xep hang|thu tu|sort|rank|ranked|descending|ascending|top \d+)\b", re.IGNORECASE)
+_FILTER_RE = re.compile(r"\b(nhung (san pham|dong|hang|muc) (co|ma)|loc|where|filter|matching|co dieu kien)\b", re.IGNORECASE)
+_TABLE_COMPARE_RE = re.compile(r"\b(so sanh|cao hon|thap hon|nhieu hon|it hon|compare|versus|\bvs\b|hon)\b", re.IGNORECASE)
+
+# Difficulty factors — each hit is one complexity point. Deliberately excludes
+# bare "và"/"and" (ubiquitous conjunctions) so simple compound questions are NOT
+# mis-flagged multi-hop; only genuine chaining/relational phrases count.
+_MULTIHOP_RE = re.compile(
+    r"\b(sau do|truoc do|dan den|keo theo|moi quan he|lien quan den|tu do suy ra|"
+    r"and then|because of|leads to|relationship between|step by step)\b",
+    re.IGNORECASE,
+)
+_CROSSDOC_RE = re.compile(r"\b(tat ca tai lieu|cac tai lieu|nhieu nguon|across documents|all sources|moi nguon)\b", re.IGNORECASE)
+_TEMPORAL_RE = re.compile(r"\b(truoc|sau|theo thoi gian|tien trinh|lich su|before|after|over time|timeline|evolution)\b", re.IGNORECASE)
+
+# route_type → base confidence (well-defined intents score higher).
+_ROUTE_CONFIDENCE: dict = {
+    RouteType.FACTUAL: 0.85,
+    RouteType.CLAIM_CHECK: 0.80,
+    RouteType.GENERAL: 0.62,
+    RouteType.COMPARISON: 0.55,
+    RouteType.SUMMARIZATION: 0.58,
+    RouteType.GRAPH_RELATION: 0.50,
+}
+
 
 class QueryRouter:
     """Adaptive routing for knowledge queries — LLM-powered with regex fallback."""
+
+    def __init__(self, settings=None) -> None:
+        if settings is None:
+            from src.core.config import get_settings
+            settings = get_settings()
+        self._modality_enabled = getattr(settings, "modality_routing_enabled", True)
+        self._table_re = _compile_keyword_re(
+            getattr(settings, "modality_table_keywords", None) or _DEFAULT_TABLE_KEYWORDS
+        )
+        self._figure_re = _compile_keyword_re(
+            getattr(settings, "modality_figure_keywords", None) or _DEFAULT_FIGURE_KEYWORDS
+        )
+        self._audio_re = _compile_keyword_re(
+            getattr(settings, "modality_audio_keywords", None) or _DEFAULT_AUDIO_KEYWORDS
+        )
+        self._agentic_conf_threshold = float(
+            getattr(settings, "router_agentic_confidence_threshold", 0.55)
+        )
+
+    def _detect_modality(self, text: str) -> PreferredModality:
+        """Orthogonal modality detection — does NOT change route_type/multipliers."""
+        if not self._modality_enabled:
+            return PreferredModality.NONE
+        from src.processing.slug import ascii_fold
+        text = ascii_fold(text)
+        # Table wins over figure/audio when multiple hit: table QA is the highest-value
+        # dedicated path and table keywords ("giá trị", "bao nhiêu") are most specific.
+        if self._table_re.search(text):
+            return PreferredModality.TABLE
+        if self._figure_re.search(text):
+            return PreferredModality.FIGURE
+        if self._audio_re.search(text):
+            return PreferredModality.AUDIO
+        return PreferredModality.NONE
+
+    # ── Structured product-router signals ────────────────────────────────────
+    def _enrich(self, decision: RouteDecision, query: str) -> RouteDecision:
+        """Attach difficulty / confidence / should_use_agentic / table_query_type.
+
+        Orthogonal to route_type & multipliers — never changes existing retrieval
+        behaviour; these signals drive the table executor and agentic activation.
+        """
+        from src.processing.slug import ascii_fold
+        text = ascii_fold(query).lower()
+
+        if decision.preferred_modality == PreferredModality.TABLE:
+            decision.table_query_type = self._detect_table_subtype(text)
+
+        factors = 0
+        factors += 1 if _MULTIHOP_RE.search(text) else 0
+        factors += 1 if _CROSSDOC_RE.search(text) else 0
+        factors += 1 if _TEMPORAL_RE.search(text) else 0
+        if decision.route_type in (RouteType.COMPARISON, RouteType.GRAPH_RELATION):
+            factors += 1  # relational/synthesis routes are inherently multi-hop
+        if factors >= 3:
+            decision.difficulty = Difficulty.COMPLEX
+        elif factors >= 1:
+            decision.difficulty = Difficulty.MULTI_HOP
+        else:
+            decision.difficulty = Difficulty.SIMPLE
+
+        base = _ROUTE_CONFIDENCE.get(decision.route_type, 0.6)
+        decision.confidence = round(max(0.0, base - 0.1 * factors), 3)
+        decision.should_use_agentic = (
+            decision.confidence < self._agentic_conf_threshold
+            or decision.difficulty == Difficulty.COMPLEX
+        )
+        return decision
+
+    @staticmethod
+    def _detect_table_subtype(text: str) -> "TableQueryType":
+        if _AGG_RE.search(text):
+            return TableQueryType.AGGREGATION
+        if _SORT_RE.search(text):
+            return TableQueryType.SORT
+        if _FILTER_RE.search(text):
+            return TableQueryType.FILTER
+        if _TABLE_COMPARE_RE.search(text):
+            return TableQueryType.COMPARISON
+        return TableQueryType.LOOKUP
 
     async def route_with_llm(self, query: str, *, llm: "BaseLLM") -> RouteDecision:
         """LLM-powered routing. Falls back to deterministic regex on any failure."""
         try:
             prompt = _ROUTER_PROMPT.format(query=query)
             raw = await llm.generate(prompt=prompt)
-            decision = self._parse_llm_route(raw)
+            decision = self._parse_llm_route(raw, query=query)
             if decision is not None:
                 logger.info("LLM router decision", extra={"route": decision.route_type.value})
                 return decision
@@ -132,7 +328,7 @@ class QueryRouter:
             logger.warning("LLM router failed — falling back to regex", extra={"error": str(exc)})
         return self.route(query)
 
-    def _parse_llm_route(self, raw: str) -> RouteDecision | None:
+    def _parse_llm_route(self, raw: str, *, query: str = "") -> RouteDecision | None:
         text = raw.strip()
         text = re.sub(r"^```(?:json)?\s*", "", text)
         text = re.sub(r"\s*```$", "", text)
@@ -152,32 +348,42 @@ class QueryRouter:
         except ValueError:
             return None
 
-        return RouteDecision(
+        # Modality: trust an explicit LLM "modality" key, else regex-detect from query.
+        modality = PreferredModality.NONE
+        raw_modality = str(data.get("modality", "")).lower().strip()
+        if raw_modality in {m.value for m in PreferredModality}:
+            modality = PreferredModality(raw_modality)
+        elif query:
+            modality = self._detect_modality(" ".join(query.split()))
+
+        decision = RouteDecision(
             route_type=route_type,
             top_k_multiplier=float(data.get("top_k_multiplier", 1.0)),
             use_graph=bool(data.get("use_graph", route_type == RouteType.GRAPH_RELATION)),
             graph_priority=route_type == RouteType.GRAPH_RELATION,
             use_multi_query=bool(data.get("use_multi_query", True)),
             use_mmr=bool(data.get("use_mmr", route_type in (RouteType.COMPARISON, RouteType.SUMMARIZATION))),
+            preferred_modality=modality,
         )
+        return self._enrich(decision, query) if query else decision
 
     def route(self, query: str) -> RouteDecision:
         text = " ".join(query.split())
+        folded_text = _fold_text(text).lower()
 
         # Multipliers reverted to v12-baseline values after v13 regression.
         # Aggressive multipliers (2.5-3.0) bloated rerank candidate pool and
         # caused 4 false refusals on synthesis queries — keep tight here.
         if _CLAIM_CHECK_RE.search(text):
-            return RouteDecision(
+            decision = RouteDecision(
                 route_type=RouteType.CLAIM_CHECK,
                 top_k_multiplier=1.25,
                 use_graph=False,
                 use_multi_query=True,
                 use_mmr=False,
             )
-
-        if _GRAPH_RELATION_RE.search(text):
-            return RouteDecision(
+        elif _GRAPH_RELATION_RE.search(text):
+            decision = RouteDecision(
                 route_type=RouteType.GRAPH_RELATION,
                 top_k_multiplier=1.5,
                 use_graph=True,
@@ -185,38 +391,47 @@ class QueryRouter:
                 use_multi_query=True,
                 use_mmr=False,
             )
-
-        if _COMPARISON_RE.search(text):
-            return RouteDecision(
+        elif _COMPARISON_RE.search(text):
+            decision = RouteDecision(
                 route_type=RouteType.COMPARISON,
                 top_k_multiplier=1.5,
                 use_graph=False,
                 use_multi_query=True,
                 use_mmr=True,
             )
-
-        if _SUMMARIZATION_RE.search(text):
-            return RouteDecision(
-                route_type=RouteType.SUMMARIZATION,
-                top_k_multiplier=2.0,
-                use_graph=False,
-                use_multi_query=True,
-                use_mmr=True,
-            )
-
-        if _FACTUAL_RE.search(text):
-            return RouteDecision(
+        elif _CONTEXT_FACTUAL_RE.search(folded_text) and _QUESTION_FACT_RE.search(folded_text):
+            decision = RouteDecision(
                 route_type=RouteType.FACTUAL,
                 top_k_multiplier=0.75,
                 use_graph=False,
                 use_multi_query=True,
                 use_mmr=False,
             )
+        elif _SUMMARIZATION_RE.search(text):
+            decision = RouteDecision(
+                route_type=RouteType.SUMMARIZATION,
+                top_k_multiplier=2.0,
+                use_graph=False,
+                use_multi_query=True,
+                use_mmr=True,
+            )
+        elif _FACTUAL_RE.search(text):
+            decision = RouteDecision(
+                route_type=RouteType.FACTUAL,
+                top_k_multiplier=0.75,
+                use_graph=False,
+                use_multi_query=True,
+                use_mmr=False,
+            )
+        else:
+            decision = RouteDecision(
+                route_type=RouteType.GENERAL,
+                top_k_multiplier=1.0,
+                use_graph=False,
+                use_multi_query=True,
+                use_mmr=False,
+            )
 
-        return RouteDecision(
-            route_type=RouteType.GENERAL,
-            top_k_multiplier=1.0,
-            use_graph=False,
-            use_multi_query=True,
-            use_mmr=False,
-        )
+        # Orthogonal modality dimension — leaves route_type/multipliers untouched.
+        decision.preferred_modality = self._detect_modality(text)
+        return self._enrich(decision, text)

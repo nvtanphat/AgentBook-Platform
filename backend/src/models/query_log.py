@@ -30,6 +30,29 @@ class EmbeddedFeedback(BaseModel):
     created_at: datetime = Field(default_factory=utc_now)
 
 
+class RequestTraceModel(BaseModel):
+    """Per-request observability record (see core/trace.py::RequestTrace).
+
+    Fields beyond query_id/latency_by_stage are filled progressively by later
+    pipeline phases (validator_result, quality stage_verdicts, claim_count,
+    citation_error_count); all optional so older logs and partial traces are valid.
+    """
+
+    query_id: str | None = None
+    route: str | None = None
+    modality: str | None = None
+    difficulty: str | None = None
+    table_query_type: str | None = None
+    prompt_file: str | None = None
+    retrieved_chunk_ids: list[str] = Field(default_factory=list)
+    rerank_scores: list[float] = Field(default_factory=list)
+    latency_by_stage: dict[str, int] = Field(default_factory=dict)
+    validator_result: dict[str, Any] | None = None
+    quality_stage_verdicts: dict[str, Any] | None = None
+    claim_count: int | None = None
+    citation_error_count: int | None = None
+
+
 class QueryLog(Document):
     owner_id: str
     collection_id: PydanticObjectId | None = None
@@ -42,6 +65,7 @@ class QueryLog(Document):
     was_refused: bool = False
     refusal_reason: str | None = None
     retrieval_trace: dict[str, Any] = Field(default_factory=dict)
+    trace: RequestTraceModel | None = None
     latency_ms: int | None = None
     feedback: list[EmbeddedFeedback] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=utc_now)

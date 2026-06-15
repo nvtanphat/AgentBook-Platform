@@ -6,6 +6,7 @@ import re
 import time
 from dataclasses import dataclass
 from threading import RLock
+from typing import Any
 
 from beanie import PydanticObjectId
 from qdrant_client import QdrantClient, models
@@ -106,7 +107,14 @@ class HybridRetriever:
         self._embedding_semaphore = asyncio.Semaphore(1)
         self._qdrant_semaphore = asyncio.Semaphore(4)
 
-    async def retrieve(self, *, query: str, scope: RetrievalScope, limit: int | None = None) -> list[RetrievedChunk]:
+    async def retrieve(
+        self,
+        *,
+        query: str,
+        scope: RetrievalScope,
+        limit: int | None = None,
+        preferred_modality: str | None = None,
+    ) -> list[RetrievedChunk]:
         scope.ensure_scoped()
         embedding = _get_cached_embedding(query)
         if embedding is None:
@@ -174,21 +182,96 @@ class HybridRetriever:
         # Keep short but meaningful chunks. Ingestion already handles most noise;
         # a fixed length threshold here can drop valid atomic facts.
         hydrated = [c for c in hydrated if _has_retrievable_content(c.content)]
+
+        # Modality-native pass: when the query targets a modality (table/figure/audio),
+        # run an extra Qdrant query filtered to that modality (reusing the cached
+        # embedding) and boost matching chunks so they survive into the reranker pool
+        # instead of being buried by the plain-text RRF result.
+        if (
+            preferred_modality
+            and self.settings.modality_routing_enabled
+            and self.settings.modality_extra_pass
+        ):
+            boosted = await self._modality_filtered_pass(
+                embedding=embedding,
+                scope=scope,
+                modality=preferred_modality,
+                base_limit=limit or self.settings.rerank_input_k,
+            )
+            hydrated = self._merge_modality_boost(hydrated, boosted, preferred_modality)
+
         return self._diversify(hydrated, max_per_doc=self.settings.max_chunks_per_doc)
+
+    async def _modality_filtered_pass(
+        self,
+        *,
+        embedding,
+        scope: RetrievalScope,
+        modality: str,
+        base_limit: int,
+    ) -> list[RetrievedChunk]:
+        """A second retrieval scoped to a single modality (reuses cached embedding)."""
+        import math
+
+        modality_filter = self._scope_filter(scope, modality=modality)
+        pass_limit = max(1, math.ceil(base_limit * self.settings.modality_filtered_pass_limit_ratio))
+        has_sparse = bool(embedding.sparse.indices)
+        prefetches: list[models.Prefetch] = [
+            models.Prefetch(query=embedding.dense, using="dense", limit=pass_limit, filter=modality_filter),
+        ]
+        if has_sparse:
+            prefetches.append(
+                models.Prefetch(
+                    query=models.SparseVector(indices=embedding.sparse.indices, values=embedding.sparse.values),
+                    using="bge_m3_sparse",
+                    limit=pass_limit,
+                    filter=modality_filter,
+                )
+            )
+        points = await self._query_with_rrf_async(
+            embedding=embedding,
+            prefetches=prefetches,
+            has_sparse=has_sparse,
+            query_filter=modality_filter,
+            limit=pass_limit,
+        )
+        hydrated = await self._hydrate_points(points)
+        return [c for c in hydrated if _has_retrievable_content(c.content)]
+
+    def _merge_modality_boost(
+        self,
+        primary: list[RetrievedChunk],
+        boosted: list[RetrievedChunk],
+        modality: str,
+    ) -> list[RetrievedChunk]:
+        """Union by chunk_id; add a fused-score boost to chunks of the target modality.
+
+        Boost (not hard-filter) so surrounding text/caption context survives and the
+        cross-encoder reranker still makes the final cut — this only ADDS candidates
+        and RAISES matching-modality scores, never starves the pool.
+        """
+        boost = self.settings.modality_table_boost_multiplier
+        by_id: dict[str, RetrievedChunk] = {c.chunk_id: c for c in primary}
+        for chunk in boosted:
+            by_id.setdefault(chunk.chunk_id, chunk)
+        for chunk in by_id.values():
+            if chunk.modality == modality:
+                chunk.fused_score = min(1.0, chunk.fused_score + boost)
+        return sorted(by_id.values(), key=lambda c: c.fused_score, reverse=True)
 
     async def retrieve_fast(
         self, *, query: str, scope: RetrievalScope, limit: int | None = None
     ) -> list[RetrievedChunk]:
-        """Phase B fast path: single hybrid retrieval (RRF dense+sparse) on the
-        original query, returning fused-score-ordered chunks. The caller uses
-        `fast_path_eligible` to decide whether the resulting bundle is strong
-        enough to also skip graph retrieval, multi-query expansion AND the
-        cross-encoder reranker — those are the real latency hogs.
+        """Probe retrieval for the adaptive fast-path (Phase B).
 
-        We use the *fused* score (already RRF-normalised in [0,1]) rather than
-        raw dense cosine because the stored dense vectors in this deployment
-        carry sparse signal only (dense vectors are zero post-indexing — a known
-        data issue that would require reindexing to fix).
+        Calls the full hybrid RRF retrieve() — NOT dense-only despite the
+        historical name. Returns fused-score-ordered chunks that `fast_path_eligible`
+        inspects to decide whether to skip graph retrieval, multi-query expansion,
+        and the cross-encoder reranker.
+
+        Note: adaptive_retrieval is currently disabled (see retrieval_config.yaml)
+        because the fused_skip_threshold was too low, causing the reranker to be
+        skipped on nearly every factual query and degrading citation faithfulness.
         """
         return await self.retrieve(query=query, scope=scope, limit=limit)
 
@@ -196,11 +279,11 @@ class HybridRetriever:
     def fast_path_eligible(
         *, chunks: list[RetrievedChunk], settings: Settings
     ) -> bool:
-        """Decide if the quick retrieve() result is strong enough to skip the
+        """Decide if the probe retrieve() result is strong enough to skip the
         downstream rerank + graph + multi-query stages.
 
         Signal: fused RRF score (always populated, range [0,1]). Two gates:
-          - top-1 fused score ≥ adaptive_dense_skip_threshold
+          - top-1 fused score ≥ fused_skip_threshold (config: adaptive_retrieval.fused_skip_threshold)
           - at least `strong_hits_required` chunks fused ≥ strong_hit_min_score
         """
         if not settings.adaptive_retrieval_enabled or not chunks:
@@ -362,7 +445,7 @@ class HybridRetriever:
             point.score = scores[point.id]
         return ranked[:limit]
 
-    def _scope_filter(self, scope: RetrievalScope) -> models.Filter:
+    def _scope_filter(self, scope: RetrievalScope, *, modality: str | None = None) -> models.Filter:
         must: list[models.FieldCondition] = [
             models.FieldCondition(key="owner_id", match=models.MatchValue(value=scope.owner_id))
         ]
@@ -370,6 +453,8 @@ class HybridRetriever:
             must.append(models.FieldCondition(key="collection_id", match=models.MatchValue(value=scope.collection_id)))
         if scope.material_ids:
             must.append(models.FieldCondition(key="material_id", match=models.MatchAny(any=scope.material_ids)))
+        if modality:
+            must.append(models.FieldCondition(key="modality", match=models.MatchValue(value=modality)))
         return models.Filter(must=must)
 
     async def _hydrate_points(self, points: list[models.ScoredPoint]) -> list[RetrievedChunk]:
@@ -436,6 +521,7 @@ class HybridRetriever:
                     source_pages=chunk.source_pages,
                     bboxes=[block.bbox for block in evidence if block.bbox is not None],
                     evidence=evidence,
+                    metadata=_rollup_table_metadata(evidence),
                     fused_score=float(point.score),
                 )
             )
@@ -663,3 +749,33 @@ def _has_retrievable_content(content: str | None) -> bool:
     if not text:
         return False
     return bool(re.search(r"[\wÀ-ɏḀ-ỿ]{2,}", text, flags=re.UNICODE))
+
+
+def _rollup_table_metadata(evidence: list[EvidenceBlock]) -> dict[str, Any]:
+    """Surface table descriptors (sheet/kind/columns) from evidence to the chunk.
+
+    Lets the table-aware prompt and citation layer name the sheet/columns without
+    walking every evidence block. Empty for non-table chunks.
+    """
+    sheets: list[str] = []
+    kinds: list[str] = []
+    columns: list[str] = []
+    for block in evidence:
+        meta = block.metadata or {}
+        for key, bucket in (("sheet_name", sheets), ("block_kind", kinds)):
+            value = meta.get(key)
+            if isinstance(value, str) and value and value not in bucket:
+                bucket.append(value)
+        cols = meta.get("columns")
+        if isinstance(cols, list):
+            for col in cols:
+                if isinstance(col, str) and col and col not in columns:
+                    columns.append(col)
+    rollup: dict[str, Any] = {}
+    if sheets:
+        rollup["sheet_names"] = sheets
+    if kinds:
+        rollup["block_kinds"] = kinds
+    if columns:
+        rollup["columns"] = columns
+    return rollup

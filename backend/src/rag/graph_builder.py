@@ -54,6 +54,37 @@ def compute_communities(G: nx.DiGraph) -> dict[str, int]:
         return partition
 
 
+def compute_community_labels(
+    community_map: dict[str, int],
+    label_by_id: dict[str, str],
+    importance_by_id: dict[str, float],
+    *,
+    top_k: int = 3,
+) -> dict[int, str]:
+    """Derive a human-readable label per community from its most central members.
+
+    GraphRAG generates LLM summaries per community; this is the zero-cost
+    deterministic variant — join the top-`top_k` highest-importance member
+    labels (e.g. "RAG · Embedding · Retrieval"). Good enough to orient the user
+    without an LLM call; callers may override with an LLM summary when desired.
+    """
+    members: dict[int, list[str]] = {}
+    for node_id, comm in community_map.items():
+        members.setdefault(comm, []).append(node_id)
+
+    labels: dict[int, str] = {}
+    for comm, node_ids in members.items():
+        ranked = sorted(
+            node_ids,
+            key=lambda nid: importance_by_id.get(nid, 0.0),
+            reverse=True,
+        )
+        names = [label_by_id.get(nid, "").strip() for nid in ranked[:top_k]]
+        names = [n for n in names if n]
+        labels[comm] = " · ".join(names) if names else f"Cụm {comm}"
+    return labels
+
+
 def compute_betweenness(G: nx.DiGraph) -> dict[str, float]:
     """Betweenness centrality — identifies 'bridge' nodes between communities."""
     if G.number_of_nodes() == 0:

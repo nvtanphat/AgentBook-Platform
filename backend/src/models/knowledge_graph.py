@@ -24,6 +24,7 @@ class Entity(Document):
     entity_type: str
     mention_refs: list[EvidenceRef] = Field(default_factory=list)
     normalized_value: str | None = None
+    description: str | None = None  # short context snippet describing the entity
     confidence: float
     chunk_ids: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=utc_now)

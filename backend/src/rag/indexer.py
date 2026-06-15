@@ -4,7 +4,7 @@ import logging
 import asyncio
 from datetime import UTC, datetime
 from itertools import islice
-from typing import Awaitable, Callable, Iterable, TypeVar
+from typing import Any, Awaitable, Callable, Iterable, TypeVar
 from uuid import NAMESPACE_URL, uuid5
 
 from beanie import PydanticObjectId
@@ -233,6 +233,8 @@ class QdrantMongoIndexer:
                 modality=chunk.modality,
                 source_block_ids=chunk.source_block_ids,
                 source_pages=chunk.source_pages,
+                bboxes=_bbox_payloads(chunk.bboxes),
+                evidence_blocks=_evidence_payloads(chunk),
                 token_count=chunk.token_count,
                 embedding_model=chunk.embedding_model,
                 embedding_version=chunk.embedding_version,
@@ -275,12 +277,19 @@ class QdrantMongoIndexer:
                         "modality": chunk.modality,
                         "subject": None,
                         "topic": None,
+                        "pages": chunk.source_pages,
                         "page_numbers": chunk.source_pages,
+                        "block_ids": chunk.source_block_ids,
                         "block_types": [evidence.block_type for evidence in chunk.evidence],
                         "block_kinds": _collect_evidence_field(chunk, "block_kind"),
                         "sheet_names": _collect_evidence_field(chunk, "sheet_name"),
                         "row_indices": _collect_evidence_field(chunk, "row_index"),
                         "source_block_ids": chunk.source_block_ids,
+                        "bboxes": _bbox_payloads(chunk.bboxes),
+                        "evidence_blocks": _evidence_payloads(chunk),
+                        "table_metadata": _metadata_by_kind(chunk, {"table_block", "table_row"}),
+                        "audio_metadata": _metadata_with_any_key(chunk, {"start_seconds", "end_seconds", "timestamp"}),
+                        "figure_metadata": _figure_metadata(chunk),
                         "token_count": chunk.token_count,
                         "parser_version": chunk.parser_version,
                         "chunker_version": chunk.chunker_version,
@@ -421,6 +430,7 @@ class QdrantMongoIndexer:
                 entity_type=entity.entity_type,
                 mention_refs=[self._to_ref(ref) for ref in entity.mention_refs],
                 normalized_value=entity.normalized_value,
+                description=entity.description or _entity_description(entity),
                 confidence=entity.confidence,
             )
             for entity in entities
@@ -586,6 +596,31 @@ def batched(items: Iterable[T], size: int) -> Iterable[list[T]]:
         yield batch
 
 
+def _entity_description(entity: ExtractedEntity, *, max_chars: int = 240) -> str | None:
+    """Pick a short context snippet describing the entity from its mentions.
+
+    Zero-cost alternative to GraphRAG's LLM-generated descriptions: prefer the
+    mention block whose text actually contains the entity name and is long
+    enough to be informative, truncated to `max_chars`. Returns None when no
+    usable snippet exists.
+    """
+    name_lower = entity.canonical_name.lower()
+    candidates: list[str] = []
+    for ref in entity.mention_refs:
+        snippet = " ".join((ref.snippet_original or "").split())
+        if len(snippet) < 20:
+            continue
+        candidates.append(snippet)
+    if not candidates:
+        return None
+    # Prefer a snippet that contains the name; among those, the shortest
+    # self-contained one (least padding); else the longest available context.
+    containing = [s for s in candidates if name_lower in s.lower()]
+    pool = containing or candidates
+    best = min(pool, key=len) if containing else max(pool, key=len)
+    return best[:max_chars].rstrip() + ("…" if len(best) > max_chars else "")
+
+
 def _collect_evidence_field(chunk: TextChunk, field: str) -> list:
     seen: list = []
     for evidence in chunk.evidence:
@@ -594,6 +629,105 @@ def _collect_evidence_field(chunk: TextChunk, field: str) -> list:
             continue
         seen.append(value)
     return seen
+
+
+def _bbox_payloads(bboxes: Iterable[Any]) -> list[dict[str, float]]:
+    payloads: list[dict[str, float]] = []
+    for bbox in bboxes:
+        if bbox is None:
+            continue
+        if hasattr(bbox, "model_dump"):
+            raw = bbox.model_dump()
+        elif isinstance(bbox, dict):
+            raw = bbox
+        else:
+            raw = {
+                "x1": getattr(bbox, "x1", None),
+                "y1": getattr(bbox, "y1", None),
+                "x2": getattr(bbox, "x2", None),
+                "y2": getattr(bbox, "y2", None),
+            }
+        try:
+            payloads.append(
+                {
+                    "x1": float(raw["x1"]),
+                    "y1": float(raw["y1"]),
+                    "x2": float(raw["x2"]),
+                    "y2": float(raw["y2"]),
+                }
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+    return payloads
+
+
+def _evidence_payloads(chunk: TextChunk) -> list[dict[str, Any]]:
+    payloads: list[dict[str, Any]] = []
+    for evidence in chunk.evidence:
+        payloads.append(
+            {
+                "page": evidence.page,
+                "block_id": evidence.block_id,
+                "block_type": evidence.block_type,
+                "bbox": _bbox_payloads([evidence.bbox])[0] if evidence.bbox is not None else None,
+                "confidence": evidence.confidence,
+                "metadata": evidence.metadata or {},
+            }
+        )
+    return payloads
+
+
+def _metadata_by_kind(chunk: TextChunk, block_kinds: set[str]) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    for evidence in chunk.evidence:
+        metadata = evidence.metadata or {}
+        if metadata.get("block_kind") not in block_kinds:
+            continue
+        results.append(
+            {
+                "page": evidence.page,
+                "block_id": evidence.block_id,
+                "block_type": evidence.block_type,
+                **metadata,
+            }
+        )
+    return results
+
+
+def _metadata_with_any_key(chunk: TextChunk, keys: set[str]) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    for evidence in chunk.evidence:
+        metadata = evidence.metadata or {}
+        if not any(key in metadata for key in keys):
+            continue
+        results.append(
+            {
+                "page": evidence.page,
+                "block_id": evidence.block_id,
+                "block_type": evidence.block_type,
+                **metadata,
+            }
+        )
+    return results
+
+
+def _figure_metadata(chunk: TextChunk) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    for evidence in chunk.evidence:
+        metadata = evidence.metadata or {}
+        if evidence.block_type != "figure" and not any(
+            key in metadata for key in ("image_path", "embedded_image_uri", "caption", "needs_captioning")
+        ):
+            continue
+        results.append(
+            {
+                "page": evidence.page,
+                "block_id": evidence.block_id,
+                "block_type": evidence.block_type,
+                **metadata,
+            }
+        )
+    return results
 
 
 def _build_visual_payload(item: FigureIndexItem) -> dict:

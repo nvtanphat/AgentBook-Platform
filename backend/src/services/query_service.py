@@ -19,9 +19,10 @@ from src.inference.inference_engine import InferenceEngine
 from src.inference.response_parser import ResponseParser
 from src.models.common import PipelineStatus
 from src.models.material import BoundingBox, Material
-from src.models.query_log import QueryCitation, QueryLog
+from src.models.query_log import QueryCitation, QueryLog, RequestTraceModel
 from src.services.memory_service import MemoryService
 from src.rag.graph_retriever import GraphRetriever
+from src.rag.query_router import TableQueryType
 from src.rag.reranker import CrossEncoderReranker
 from src.rag.retriever import HybridRetriever
 from src.rag.types import RetrievalScope
@@ -73,8 +74,19 @@ class QueryService:
             response_parser=self.response_parser,
             confidence_scorer=self.confidence_scorer,
         )
-        self.agentic_rag = AgenticRagService(engine=self.inference_engine)
+        # Built lazily on first agentic use: the agentic coordinator eagerly wires
+        # many engine internals (settings, planner agents, …), so constructing it
+        # up-front forces every QueryService (incl. compare/test paths that never
+        # go agentic) to provide a fully-featured engine. Lazy keeps non-agentic
+        # paths light and decoupled.
+        self._agentic_rag: AgenticRagService | None = None
         self._query_processor = QueryProcessor()
+
+    @property
+    def agentic_rag(self) -> AgenticRagService:
+        if self._agentic_rag is None:
+            self._agentic_rag = AgenticRagService(engine=self.inference_engine)
+        return self._agentic_rag
 
     async def ask(self, request: QueryRequest) -> QueryResponse:
         scope = RetrievalScope(owner_id=request.owner_id, collection_id=request.collection_id, material_ids=request.material_ids)
@@ -85,6 +97,22 @@ class QueryService:
         started = perf_counter()
         flags = request.rag_flags
         use_agentic = flags.get("agentic_rag_enabled", self.settings.agentic_rag_enabled)
+        # The structured router decides when the multi-agent loop is actually
+        # warranted: simple / table-aggregation / factual queries take the fast
+        # single-pass path (which owns the deterministic table executor and the
+        # full request trace); only multi-hop / complex queries go agentic.
+        if use_agentic:
+            try:
+                _decision = self.inference_engine.query_router.route(effective_query)
+                # Table aggregation is deterministic — always take the single-pass
+                # executor path. Otherwise let should_use_agentic decide.
+                if (
+                    _decision.table_query_type == TableQueryType.AGGREGATION
+                    or not _decision.should_use_agentic
+                ):
+                    use_agentic = False
+            except Exception:
+                pass
         if use_agentic:
             response = await self.agentic_rag.answer(
                 query=effective_query,
@@ -1067,9 +1095,21 @@ class QueryService:
                 "source_languages": response.source_languages,
                 "retrieval_time_ms": latency_ms,
             },
+            trace=self._build_trace_model(response),
             latency_ms=latency_ms,
         )
         await query_log.insert()
+
+    @staticmethod
+    def _build_trace_model(response: QueryResponse) -> RequestTraceModel | None:
+        """Map the response's observability trace dict into the typed log model."""
+        data = response.trace
+        if not data:
+            return None
+        try:
+            return RequestTraceModel(**{k: v for k, v in data.items() if k in RequestTraceModel.model_fields})
+        except Exception:
+            return None
 
     @staticmethod
     def _conversation_id(value: str | None) -> str:

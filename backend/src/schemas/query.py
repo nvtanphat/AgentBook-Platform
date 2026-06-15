@@ -89,6 +89,10 @@ class QueryResponse(BaseModel):
     # the answer in GraphCanvas.
     used_entity_ids: list[str] = Field(default_factory=list)
     used_relation_ids: list[str] = Field(default_factory=list)
+    # Observability (core/trace.py): per-request id + per-stage latency and routing
+    # fields. Debug-visible; persisted into QueryLog.trace.
+    query_id: str | None = None
+    trace: dict[str, Any] | None = None
 
 
 class SentenceSupport(BaseModel):

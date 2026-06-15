@@ -8,9 +8,9 @@ from beanie import PydanticObjectId
 from qdrant_client import QdrantClient
 
 from src.core.config import Settings
-from src.processing.types import EvidenceBlock, TextChunk
+from src.processing.types import BBox, EvidenceBlock, TextChunk
 from src.rag.embedder import EmbeddedText, SparseEmbedding
-from src.rag.indexer import QdrantMongoIndexer
+from src.rag.indexer import QdrantMongoIndexer, _bbox_payloads, _evidence_payloads
 
 
 class FakeEmbedder:
@@ -150,3 +150,108 @@ async def run_indexer_abort_smoke() -> None:
             relations=[],
             should_continue=should_continue,
         )
+
+
+def test_indexer_preserves_multimodal_metadata_in_payloads() -> None:
+    asyncio.run(run_multimodal_metadata_smoke())
+
+
+async def run_multimodal_metadata_smoke() -> None:
+    owner_id = "user_demo"
+    collection_id = "65f000000000000000000012"
+    material_id = "65f000000000000000000013"
+    evidence = [
+        EvidenceBlock(
+            owner_id=owner_id,
+            collection_id=collection_id,
+            material_id=material_id,
+            document_name="multi.pdf",
+            page=3,
+            block_id="tbl-row-7",
+            block_type="table",
+            snippet_original="Revenue | 120",
+            source_language="vi",
+            bbox=BBox(x1=1, y1=2, x2=30, y2=40),
+            metadata={
+                "block_kind": "table_row",
+                "sheet_name": "Sheet1",
+                "row_index": 7,
+                "columns": {"Revenue": "120"},
+            },
+        ),
+        EvidenceBlock(
+            owner_id=owner_id,
+            collection_id=collection_id,
+            material_id=material_id,
+            document_name="multi.pdf",
+            page=4,
+            block_id="audio-1",
+            block_type="paragraph",
+            snippet_original="[00:01.000 - 00:04.000] intro",
+            source_language="vi",
+            metadata={"start_seconds": 1.0, "end_seconds": 4.0},
+        ),
+        EvidenceBlock(
+            owner_id=owner_id,
+            collection_id=collection_id,
+            material_id=material_id,
+            document_name="multi.pdf",
+            page=5,
+            block_id="fig-1",
+            block_type="figure",
+            snippet_original="Chart caption",
+            source_language="vi",
+            metadata={"image_path": "figures/fig-1.png", "caption": "Chart caption"},
+        ),
+    ]
+    chunk = TextChunk(
+        owner_id=owner_id,
+        collection_id=collection_id,
+        material_id=material_id,
+        document_name="multi.pdf",
+        content="A multimodal chunk with table, audio and figure evidence",
+        language="vi",
+        modality="table",
+        source_block_ids=["tbl-row-7", "audio-1", "fig-1"],
+        source_pages=[3, 4, 5],
+        bboxes=[BBox(x1=1, y1=2, x2=30, y2=40)],
+        token_count=9,
+        chunk_strategy="layout_heading_parent_child",
+        chunker_version="test",
+        parser_version="test",
+        embedding_model="fake",
+        embedding_version="fake-v1",
+        index_version="test-index",
+        evidence=evidence,
+    )
+    settings = Settings(
+        testing=True,
+        qdrant_url=":memory:",
+        qdrant_collection_name="idx_multimodal_metadata",
+        embedding_dense_size=4,
+    )
+    qdrant_client = QdrantClient(location=":memory:")
+    indexer = InMemoryIndexer(settings=settings, qdrant_client=qdrant_client, embedder=FakeEmbedder())
+
+    await indexer.index(chunks=[chunk], entities=[], events=[], relations=[])
+    points, _ = qdrant_client.scroll(
+        collection_name="idx_multimodal_metadata",
+        limit=10,
+        with_payload=True,
+        with_vectors=True,
+    )
+
+    assert len(points) == 1
+    payload = points[0].payload
+    assert payload["owner_id"] == owner_id
+    assert payload["collection_id"] == collection_id
+    assert payload["material_id"] == material_id
+    assert payload["modality"] == "table"
+    assert payload["pages"] == [3, 4, 5]
+    assert payload["block_ids"] == ["tbl-row-7", "audio-1", "fig-1"]
+    assert payload["table_metadata"][0]["columns"] == {"Revenue": "120"}
+    assert payload["audio_metadata"][0]["start_seconds"] == 1.0
+    assert payload["figure_metadata"][0]["image_path"] == "figures/fig-1.png"
+    assert payload["evidence_blocks"][0]["bbox"] == {"x1": 1.0, "y1": 2.0, "x2": 30.0, "y2": 40.0}
+    assert _bbox_payloads(chunk.bboxes) == [{"x1": 1.0, "y1": 2.0, "x2": 30.0, "y2": 40.0}]
+    assert _evidence_payloads(chunk)[0]["metadata"]["row_index"] == 7

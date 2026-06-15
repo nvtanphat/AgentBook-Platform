@@ -22,6 +22,7 @@ from src.processing.contextual_enricher import ContextualEnricher
 from src.processing.docling_parser import DoclingParser, SUPPORTED_DOCLING_EXTENSIONS
 from src.processing.cross_modal_linker import CrossModalLinker
 from src.processing.entity_extractor import EntityExtractor
+from src.processing.section_filter import filter_extraction_blocks
 from src.processing.entity_resolution import EntityResolver
 from src.processing.semantic_relation_extractor import LLMSemanticRelationExtractor
 from src.processing.event_extractor import EventExtractor
@@ -119,6 +120,7 @@ class ParseIndexPipeline:
             max_concepts=settings.graph_semantic_relation_max_concepts,
             max_passages=settings.graph_semantic_relation_max_passages,
             max_passage_chars=settings.graph_semantic_relation_max_passage_chars,
+            gleaning=settings.graph_semantic_relation_gleaning,
         )
         self.graph_quality_gate = graph_quality_gate or GraphQualityGate(
             min_entity_confidence=settings.min_graph_confidence,
@@ -185,10 +187,16 @@ class ParseIndexPipeline:
             chunks = [c for c in chunks if len((c.content or "").strip()) >= self.settings.chunk_min_content_chars]
             run_chunk_qa(chunks, material_id=str(material.id))
             domain_hint = await self._fetch_domain_hint(material)
-            entities = self.entity_resolver.resolve(
-                await self.entity_extractor.extract_async(evidence_map, domain_hint=domain_hint)
+            # Section-aware extraction: drop References/Acknowledgments/etc from the
+            # graph input only. Chunking/retrieval above still see the full document.
+            graph_map = filter_extraction_blocks(
+                evidence_map,
+                excluded_patterns=tuple(self.settings.extraction_excluded_sections) or None,
             )
-            events, relations = self.event_extractor.extract(evidence_map, entities)
+            raw_entities = await self.entity_extractor.extract_async(graph_map, domain_hint=domain_hint)
+            embedder = self.indexer.embedder if self.indexer is not None else None
+            entities = await self.entity_resolver.resolve_async(raw_entities, embedder=embedder)
+            events, relations = self.event_extractor.extract(graph_map, entities)
             cm_entities, cm_relations = self.cross_modal_linker.link(evidence_map, entities)
             # LLM-driven typed semantic relations between concept entities
             # (uses / extends / improves / compared_with / …). Empty when
