@@ -275,14 +275,15 @@ Switching `AGENTBOOK_LLM_DEFAULT_PROVIDER=openai` and pointing at GPT-4o-mini / 
 
 | Layer | Components |
 |---|---|
-| **API** | FastAPI (async), Pydantic v2, Beanie ODM, Slowapi rate limiting |
+| **API** | FastAPI (async), Pydantic v2, Beanie ODM, Slowapi rate limiting, Python-Multipart, HTTPX |
 | **Storage** | MongoDB (documents + evidence + graph), Qdrant (hybrid vectors), Redis (cache + Celery broker) |
-| **Embeddings** | BGE-M3 dense + sparse (FlagEmbedding), BGE reranker |
-| **Parsing** | Docling (PDF/DOCX/PPTX), EasyOCR (printed scans), VLM fallback (handwriting), Faster-Whisper (audio) |
+| **Embeddings & Reranker** | BGE-M3 dense + sparse (FlagEmbedding), BGE reranker (SentenceTransformers) |
+| **Parsing & Processing** | Docling (PDF/DOCX/PPTX), EasyOCR (printed scans), VLM fallback (handwriting), Faster-Whisper (audio), PyPDF, openpyxl & xlrd (Excel spreadsheets), Pillow, OpenCV (image processing) |
 | **LLM** | Local Ollama (`qwen2.5:3b`, `qwen2.5-vl:7b`) with OpenAI-compatible cloud fallback |
-| **Background** | Celery (eager mode supported for local dev), structured background tasks |
-| **Frontend** | React 18, TypeScript, Vite, TailwindCSS, React Flow, Zustand |
-| **Tooling** | Pytest (15 test suites), Ruff, MyPy-friendly typing |
+| **Orchestration & Graph** | NetworkX (backend graph structure), RapidFuzz (fuzzy text matching) |
+| **Background Queue** | Celery (eager mode supported for local dev), structured background tasks |
+| **Frontend UI** | React 18, TypeScript, Vite, TailwindCSS, React Flow (concept graph canvas), @dagrejs/dagre, Lucide React, React Resizable Panels, Zustand |
+| **Tooling & Testing** | Pytest (15 test suites), pytest-asyncio, Ruff, MyPy-friendly typing, Vitest & JSDOM (frontend unit testing) |
 
 ---
 
