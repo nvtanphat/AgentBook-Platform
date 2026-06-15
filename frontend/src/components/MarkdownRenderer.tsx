@@ -354,6 +354,46 @@ export function parseBlocks(text: string): Block[] {
 // Main MarkdownRenderer component
 // ──────────────────────────────────────────────────────────────
 
+// ──────────────────────────────────────────────────────────────
+// Sentence-level annotation helpers
+// ──────────────────────────────────────────────────────────────
+
+// Split a prose line into sentence segments at [.!?][N]? boundaries
+const SENT_BOUNDARY = /(?<=[.!?](?:\[\d+\])?)\s+/;
+
+function annotateLine(
+  line: string,
+  annotations: Map<string, "partial" | "unsupported">,
+  renderInlineFn: (t: string) => React.ReactNode[],
+): React.ReactNode[] {
+  const segments = line.split(SENT_BOUNDARY);
+  if (segments.length <= 1) {
+    const norm = line.replace(/\[\d+\]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+    const status = annotations.get(norm);
+    const rendered = renderInlineFn(line);
+    if (status === "partial") {
+      return [<span key="0" className="underline decoration-amber-400/70 decoration-dotted decoration-2 underline-offset-2" title="Bằng chứng yếu">{rendered}</span>];
+    }
+    if (status === "unsupported") {
+      return [<span key="0" className="opacity-50 line-through decoration-red-400/60" title="Không có bằng chứng">{rendered}</span>];
+    }
+    return rendered;
+  }
+  return segments.flatMap((seg, i) => {
+    const norm = seg.replace(/\[\d+\]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+    const status = annotations.get(norm);
+    const text = seg + (i < segments.length - 1 ? " " : "");
+    const rendered = renderInlineFn(text);
+    if (status === "partial") {
+      return [<span key={i} className="underline decoration-amber-400/70 decoration-dotted decoration-2 underline-offset-2" title="Bằng chứng yếu">{rendered}</span>];
+    }
+    if (status === "unsupported") {
+      return [<span key={i} className="opacity-50 line-through decoration-red-400/60" title="Không có bằng chứng">{rendered}</span>];
+    }
+    return rendered.map((r, ri) => <React.Fragment key={`${i}-${ri}`}>{r}</React.Fragment>);
+  });
+}
+
 type MarkdownRendererProps = {
   text: string;
   className?: string;
@@ -361,6 +401,8 @@ type MarkdownRendererProps = {
   onCitationClick?: (ref: number) => void;
   /** Compact mode reduces vertical spacing (e.g., evidence snippets) */
   compact?: boolean;
+  /** SLEC sentence annotations: norm(sentence) → status. Partial = dotted underline, unsupported = strikethrough. */
+  sentenceAnnotations?: Map<string, "partial" | "unsupported"> | null;
 };
 
 export default function MarkdownRenderer({
@@ -368,12 +410,20 @@ export default function MarkdownRenderer({
   className = "",
   onCitationClick,
   compact = false,
+  sentenceAnnotations,
 }: MarkdownRendererProps) {
   const blocks = parseBlocks(text);
   const gap = compact ? "space-y-1.5" : "space-y-3";
 
   function renderInline(t: string) {
     return renderInlineTokens(parseInline(t, !!onCitationClick), onCitationClick);
+  }
+
+  function renderLine(line: string): React.ReactNode[] {
+    if (sentenceAnnotations && sentenceAnnotations.size > 0) {
+      return annotateLine(line, sentenceAnnotations, renderInline);
+    }
+    return renderInline(line);
   }
 
   return (
@@ -402,7 +452,7 @@ export default function MarkdownRenderer({
                 {block.lines.map((line, li) => (
                   <React.Fragment key={li}>
                     {li > 0 && <br />}
-                    {renderInline(line)}
+                    {renderLine(line)}
                   </React.Fragment>
                 ))}
               </p>

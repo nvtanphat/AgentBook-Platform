@@ -97,12 +97,11 @@ export default function DebugModal({ materialId, ownerId, originalName, onClose 
     return getMaterialRawUrl(materialId, ownerId);
   }, [data, materialId, ownerId]);
 
-  // Compute scale from natural size to displayed size for bbox overlay
-  const scale = useMemo(() => {
-    if (!imgSize || !currentPage) return { x: 1, y: 1 };
-    const naturalW = currentPage.width ?? imgSize.w;
-    const naturalH = currentPage.height ?? imgSize.h;
-    return { x: imgSize.w / naturalW, y: imgSize.h / naturalH };
+  // Natural image dimensions for SVG viewBox — bbox coords are in this space.
+  // SVG is stretched to 100% of the overlay div so the browser handles scaling.
+  const naturalSize = useMemo(() => {
+    if (!imgSize) return null;
+    return { w: currentPage?.width ?? imgSize.w, h: currentPage?.height ?? imgSize.h };
   }, [imgSize, currentPage]);
 
   return (
@@ -214,30 +213,27 @@ export default function DebugModal({ materialId, ownerId, originalName, onClose 
                           className="max-w-full h-auto block"
                           onLoad={(e) => {
                             const t = e.currentTarget;
-                            setImgSize({ w: t.clientWidth, h: t.clientHeight });
+                            // Natural pixel dimensions — bbox coords are in this space
+                            setImgSize({ w: t.naturalWidth, h: t.naturalHeight });
                           }}
                         />
-                        {showOverlay && currentPage && imgSize && (
+                        {showOverlay && currentPage && naturalSize && (
                           <svg
                             className="absolute inset-0 pointer-events-none"
-                            width={imgSize.w}
-                            height={imgSize.h}
-                            viewBox={`0 0 ${imgSize.w} ${imgSize.h}`}
+                            width="100%"
+                            height="100%"
+                            viewBox={`0 0 ${naturalSize.w} ${naturalSize.h}`}
                           >
                             {currentPage.blocks.map((b) => {
                               if (!b.bbox) return null;
-                              const x = b.bbox.x1 * scale.x;
-                              const y = b.bbox.y1 * scale.y;
-                              const w = (b.bbox.x2 - b.bbox.x1) * scale.x;
-                              const h = (b.bbox.y2 - b.bbox.y1) * scale.y;
                               const isHover = hoveredBlockId === b.block_id;
                               return (
                                 <rect
                                   key={b.block_id}
-                                  x={x}
-                                  y={y}
-                                  width={w}
-                                  height={h}
+                                  x={b.bbox.x1}
+                                  y={b.bbox.y1}
+                                  width={b.bbox.x2 - b.bbox.x1}
+                                  height={b.bbox.y2 - b.bbox.y1}
                                   fill={isHover ? blockColor(b.block_type) : "transparent"}
                                   fillOpacity={isHover ? 0.25 : 0}
                                   stroke={blockColor(b.block_type)}

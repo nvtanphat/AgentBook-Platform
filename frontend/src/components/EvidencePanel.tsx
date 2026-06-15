@@ -144,6 +144,17 @@ function MatchedSnippet({ citation, ownerId }: { citation: Citation; ownerId: st
     (b) => b.audio_start_seconds != null && b.audio_end_seconds != null,
   );
 
+  // Figure thumbnail: find the primary evidence block matching citation.block_id
+  const isFigureCitation = citation.block_type === "figure" || citation.block_type === "image";
+  const figureBlock = isFigureCitation
+    ? (citation.evidence_blocks?.find((b) => b.block_id === citation.block_id) ?? null)
+    : null;
+  const figureUrl = figureBlock?.figure_image_url
+    ? (figureBlock.figure_image_url.startsWith("http")
+        ? figureBlock.figure_image_url
+        : `${API_BASE_URL}${figureBlock.figure_image_url}`)
+    : null;
+
   return (
     <div className="shrink-0 border-b border-slate-100 px-4 py-3.5">
       {audioBlock && citation.evidence_blocks && (
@@ -152,13 +163,37 @@ function MatchedSnippet({ citation, ownerId }: { citation: Citation; ownerId: st
         </div>
       )}
 
+      {/* Figure thumbnail (shown above blockquote for figure citations) */}
+      {figureUrl && (
+        <div className="mb-3 overflow-hidden rounded-lg border border-slate-200 bg-white">
+          <img
+            src={figureUrl}
+            alt={citation.snippet_original || "Hình minh họa"}
+            className="max-h-56 w-full object-contain"
+            onError={(e) => { (e.currentTarget as HTMLImageElement).parentElement!.style.display = "none"; }}
+          />
+          {citation.snippet_original && (
+            <p className="border-t border-slate-100 px-3 py-1.5 text-[11px] italic text-slate-500">
+              {citation.snippet_original}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Span-level citation: highlight the exact sentence that proves the claim */}
+      {citation.cited_span && (
+        <div className="mb-2 flex items-start gap-2 rounded-md border border-primary/20 bg-primary/5 px-3 py-2">
+          <span className="mt-0.5 shrink-0 text-[9px] font-bold uppercase tracking-wider text-primary/70">Trích dẫn</span>
+          <p className="text-[12px] leading-relaxed text-primary/90">{citation.cited_span}</p>
+        </div>
+      )}
+
       {/* Premium blockquote */}
       <div className="border-l-[3px] border-primary bg-slate-50/60 px-3.5 py-3 rounded-r-lg">
-        <SnippetRenderer
+        <HighlightedText
           text={text}
-          blockType={citation.block_type ?? undefined}
-          maxRows={SNIPPET_COLLAPSE_LINES}
-          textClassName="text-[13px] leading-relaxed text-slate-800"
+          exactSnippet={citation.cited_span}
+          className="text-[13px] leading-relaxed text-slate-800 whitespace-pre-wrap"
         />
         {isLong && (
           <button
@@ -308,12 +343,27 @@ function DocumentBlock({
         {block.snippet_original}
       </pre>
     );
-    if (isImage) return (
-      <div className="flex items-start gap-2 text-slate-500">
-        <Image size={13} className="mt-0.5 shrink-0 text-slate-400" />
-        <p className="whitespace-pre-wrap text-xs italic leading-relaxed">{block.snippet_original || "Hình minh họa"}</p>
-      </div>
-    );
+    if (isImage) {
+      const figUrl = block.figure_image_url
+        ? (block.figure_image_url.startsWith("http") ? block.figure_image_url : `${API_BASE_URL}${block.figure_image_url}`)
+        : null;
+      return (
+        <div className="space-y-1.5">
+          {figUrl ? (
+            <img
+              src={figUrl}
+              alt={block.snippet_original || "Hình minh họa"}
+              className="max-h-48 w-full rounded border border-slate-200 object-contain bg-white"
+              onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+            />
+          ) : null}
+          <div className="flex items-start gap-2 text-slate-500">
+            <Image size={13} className="mt-0.5 shrink-0 text-slate-400" />
+            <p className="whitespace-pre-wrap text-xs italic leading-relaxed">{block.snippet_original || "Hình minh họa"}</p>
+          </div>
+        </div>
+      );
+    }
     return (
       <p className={`whitespace-pre-wrap leading-relaxed ${
         highlighted

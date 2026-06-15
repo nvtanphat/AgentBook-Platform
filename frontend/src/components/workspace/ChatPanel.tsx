@@ -117,7 +117,13 @@ function statusColor(status: "supported" | "partial" | "unsupported") {
   return { dot: "#ef4444", text: "text-slate-600", bg: "bg-slate-50", border: "border-slate-200", label: "Không có bằng chứng" };
 }
 
-function EvidenceCoverageBadge({ report }: { report: SentenceCoverageReport }) {
+function EvidenceCoverageBadge({
+  report,
+  onCitationClick,
+}: {
+  report: SentenceCoverageReport;
+  onCitationClick?: (idx: number) => void;
+}) {
   const [open, setOpen] = useState(false);
   if (!report.enabled || report.total_sentences === 0) return null;
   const pct = Math.round(report.coverage_ratio * 100);
@@ -142,8 +148,18 @@ function EvidenceCoverageBadge({ report }: { report: SentenceCoverageReport }) {
         <ul className="mt-1.5 space-y-1 rounded-lg border border-outline/30 bg-surface-low/60 p-2">
           {report.sentences.map((s) => {
             const c = statusColor(s.status);
+            // Navigate to the first cited citation when clicking a sentence row
+            const citationIdx = s.citation_refs && s.citation_refs.length > 0
+              ? s.citation_refs[0] - 1  // citation_refs is 1-based
+              : null;
+            const isClickable = citationIdx !== null && citationIdx >= 0 && !!onCitationClick;
             return (
-              <li key={s.index} className="flex items-start gap-2 text-[11px]">
+              <li
+                key={s.index}
+                className={`flex items-start gap-2 text-[11px] rounded ${isClickable ? "cursor-pointer hover:bg-slate-100 -mx-1 px-1 py-0.5 transition" : ""}`}
+                onClick={isClickable ? () => onCitationClick!(citationIdx!) : undefined}
+                title={isClickable ? `Click để xem bằng chứng [${citationIdx! + 1}]` : undefined}
+              >
                 <span
                   className={`mt-0.5 inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 font-bold ${c.bg} ${c.text} ${c.border}`}
                   title={`${c.label} · score ${(s.score * 100).toFixed(0)}%`}
@@ -151,7 +167,10 @@ function EvidenceCoverageBadge({ report }: { report: SentenceCoverageReport }) {
                   <span className="inline-block h-1 w-1 rounded-full" style={{ background: c.dot }} />
                   {(s.score * 100).toFixed(0)}%
                 </span>
-                <span className="leading-snug text-muted">{s.text}</span>
+                <span className="leading-snug text-muted flex-1">{s.text}</span>
+                {isClickable && (
+                  <span className="shrink-0 text-[9px] font-bold text-primary/60">→[{citationIdx! + 1}]</span>
+                )}
               </li>
             );
           })}
@@ -178,17 +197,37 @@ function ConfidenceBadge({ value }: { value: number }) {
 
 // ─── Message content (full markdown with citation refs) ───────────────────────
 
-function MessageContent({ content, citations, onCitationClick }: {
+function buildSentenceAnnotations(
+  sentences: SentenceCoverageReport["sentences"],
+): Map<string, "partial" | "unsupported"> | null {
+  if (!sentences?.length) return null;
+  const map = new Map<string, "partial" | "unsupported">();
+  for (const s of sentences) {
+    if (s.status === "supported") continue;
+    // Normalize: strip [N] markers and collapse whitespace for matching
+    const norm = s.text.replace(/\[\d+\]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+    if (norm.length >= 20) map.set(norm, s.status as "partial" | "unsupported");
+  }
+  return map.size > 0 ? map : null;
+}
+
+function MessageContent({ content, citations, onCitationClick, sentenceCoverage }: {
   content: string;
   citations: Citation[];
   onCitationClick: (idx: number) => void;
+  sentenceCoverage?: SentenceCoverageReport | null;
 }) {
+  const sentenceAnnotations = useMemo(
+    () => sentenceCoverage ? buildSentenceAnnotations(sentenceCoverage.sentences) : null,
+    [sentenceCoverage],
+  );
   return (
     <MarkdownRenderer
       text={content}
       onCitationClick={(ref) => {
         if (ref >= 0 && ref < citations.length) onCitationClick(ref);
       }}
+      sentenceAnnotations={sentenceAnnotations}
     />
   );
 }
@@ -347,7 +386,7 @@ function AgentTraceBody({ trace }: { trace: NonNullable<QueryResponse["agent_tra
   );
 }
 
-function AnswerMeta({ response, onTraceGraph }: { response: QueryResponse; onTraceGraph?: () => void }) {
+function AnswerMeta({ response, onTraceGraph, onCitationClick }: { response: QueryResponse; onTraceGraph?: () => void; onCitationClick?: (idx: number) => void }) {
   const [open, setOpen] = useState(false);
   const coverage = response.coverage;
   const trace = response.agent_trace;
@@ -374,7 +413,7 @@ function AnswerMeta({ response, onTraceGraph }: { response: QueryResponse; onTra
           </span>
         )}
         {response.sentence_coverage && (
-          <EvidenceCoverageBadge report={response.sentence_coverage} />
+          <EvidenceCoverageBadge report={response.sentence_coverage} onCitationClick={onCitationClick} />
         )}
         {hasExpandable && (
           <button
@@ -1091,6 +1130,7 @@ export default function ChatPanel({ onOpenSources, onOpenEvidence, onTraceGraph,
                     content={message.content}
                     citations={message.response.citations}
                     onCitationClick={(idx) => selectCitation(message.response!.citations[idx])}
+                    sentenceCoverage={message.response.sentence_coverage}
                   />
                 ) : (
                   <p className="whitespace-pre-wrap text-sm leading-relaxed">
@@ -1107,7 +1147,11 @@ export default function ChatPanel({ onOpenSources, onOpenEvidence, onTraceGraph,
 
                 {/* Compact meta strip + collapsible details */}
                 {message.response && !message.response.was_refused && (
-                  <AnswerMeta response={message.response} onTraceGraph={onTraceGraph} />
+                  <AnswerMeta
+                    response={message.response}
+                    onTraceGraph={onTraceGraph}
+                    onCitationClick={(idx) => selectCitation(message.response!.citations[idx])}
+                  />
                 )}
 
                 {/* Citations footer */}

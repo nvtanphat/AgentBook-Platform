@@ -41,6 +41,7 @@ export type Citation = {
   block_type: string | null;
   snippet_original: string;
   snippet_translated: string | null;
+  cited_span: string | null;
   bbox: BoundingBox | null;
   role: string;
   source_language: string;
@@ -322,6 +323,8 @@ export type EvidenceBlock = {
   audio_start_seconds?: number | null;
   audio_end_seconds?: number | null;
   audio_file?: string | null;
+  // Figure-only — API URL to cropped/embedded figure image
+  figure_image_url?: string | null;
 };
 
 export type EvidencePageResponse = {
