@@ -79,6 +79,8 @@ class Settings(BaseSettings):
     testing: bool = False
     api_auth_enabled: bool = False
     api_key: str | None = None
+    seed_user_email: str | None = None
+    seed_user_password: str | None = None
 
     mongodb_uri: str | None = Field(
         default=None,
@@ -303,6 +305,7 @@ class Settings(BaseSettings):
     ocr_recognition_engine: str = "easyocr"  # easyocr | vietocr (vi-only)
     ocr_vietocr_model_name: str = "vgg_transformer"
     ocr_vietocr_device: str = "cpu"
+    ocr_garbled_vi_diacritic_ratio: float = 0.03  # re-OCR page when VI diacritics < 3% of alpha chars
     pdf_render_scale: float = 1.5
 
     # Audio (faster-whisper)
@@ -610,6 +613,8 @@ def get_settings() -> Settings:
         multi_query_enabled=env_bool("MULTI_QUERY_ENABLED", retrieval_section.get("multi_query_enabled", False)),
         api_auth_enabled=env_bool("API_AUTH_ENABLED", str(env_value("APP_ENV", "development")).lower() == "production"),
         api_key=env_value("API_KEY", None),
+        seed_user_email=env_value("SEED_USER_EMAIL", None),
+        seed_user_password=env_value("SEED_USER_PASSWORD", None),
         min_ocr_text_quality=refusal_config.get("min_ocr_text_quality", 0.35),
         warn_ocr_text_quality=refusal_config.get("warn_ocr_text_quality", 0.55),
         min_reranker_score=refusal_config.get("min_reranker_score", 0.35),
@@ -683,6 +688,7 @@ def get_settings() -> Settings:
         ocr_recognition_engine=str(ocr_config.get("recognition_engine", "easyocr")).lower(),
         ocr_vietocr_model_name=str(ocr_config.get("vietocr_model_name", "vgg_transformer")),
         ocr_vietocr_device=env_value("OCR_VIETOCR_DEVICE", ocr_config.get("vietocr_device", "cpu")),
+        ocr_garbled_vi_diacritic_ratio=float(ocr_config.get("garbled_vi_diacritic_ratio", 0.03)),
         pdf_render_scale=float(pdf_config.get("render_scale", 1.5)),
         visual_embedding_enabled=env_bool(
             "VISUAL_EMBEDDING_ENABLED", visual_config.get("enabled", False)

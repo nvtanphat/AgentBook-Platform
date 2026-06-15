@@ -143,6 +143,9 @@ ocr:
   recognition_engine: "vietocr"
   vietocr_model_name: "vgg_transformer"   # vgg_transformer (accurate) | vgg_seq2seq (faster)
   vietocr_device: "cpu"
+  # Re-OCR trigger: if VI diacritics < this ratio of alpha chars, Docling text is garbled
+  # (non-standard font encoding common in Vietnamese legal PDFs) → re-process with VietOCR.
+  garbled_vi_diacritic_ratio: 0.03
   # Language → EasyOCR language list mapping; extend for new deployment languages
   easyocr_language_map:
     vi: ["vi"]

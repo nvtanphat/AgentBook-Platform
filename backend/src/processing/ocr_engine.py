@@ -365,7 +365,17 @@ class VietOCRRecognizer:
                 from vietocr.tool.predictor import Predictor
             except ImportError as exc:
                 raise DependencyUnavailableError("vietocr is required for VietOCR recognition") from exc
-            cfg = Cfg.load_config_from_name(self.model_name)
+            # VietOCR downloads model weights to tempfile.gettempdir() which gets
+            # cleared on reboot. Redirect to a persistent cache so we only download once.
+            import tempfile as _tempfile
+            _cache_dir = _workspace_cache_dir("vietocr_models")
+            _cache_dir.mkdir(parents=True, exist_ok=True)
+            _orig_tmpdir = _tempfile.tempdir
+            _tempfile.tempdir = str(_cache_dir)
+            try:
+                cfg = Cfg.load_config_from_name(self.model_name)
+            finally:
+                _tempfile.tempdir = _orig_tmpdir
             cfg["device"] = self.device
             # Avoid re-downloading the CNN backbone; the seq model weights are enough.
             cfg["cnn"]["pretrained"] = False
@@ -454,6 +464,14 @@ class EasyOCREngine:
         # Variant selection uses EasyOCR confidence only (recognizer OFF) — cheap.
         # The VietOCR recognition pass (expensive) runs ONCE on the winning variant.
         primary = self._ocr_blocks(image_path, language=language, apply_recognizer=False)
+
+        # When VietOCR recognizer is attached, skip preprocessing variants: VietOCR
+        # re-reads every box for text quality, so variant comparison only matters for
+        # bbox detection accuracy. Digital PDF renders are already sharp — original
+        # detection is reliable without grayscale. Skips ~12s per page.
+        if self.recognizer is not None:
+            best = self._ocr_blocks(image_path, language=language, apply_recognizer=True)
+            return self._finalize(best), {"ocr_preprocessing": "vietocr_direct"}
 
         cache_dir = _workspace_cache_dir("ocr_preprocess")
         preprocessed = _ImagePreprocessor.build_variants(image_path, cache_dir=cache_dir)

@@ -111,6 +111,30 @@ async def _recover_stuck_materials() -> None:
     logger.info("Marked %d stuck materials as failed — use retry endpoint to re-process.", len(stuck))
 
 
+async def _ensure_seed_user(settings) -> None:
+    """Create the default user from SEED_USER_EMAIL / SEED_USER_PASSWORD if missing.
+
+    Runs on every startup so the account survives a full data reset.
+    No-op when credentials are not configured or the user already exists.
+    """
+    email = settings.seed_user_email
+    password = settings.seed_user_password
+    if not email or not password:
+        return
+    from src.models.user import User
+    from src.services.auth_service import AuthService, AuthError
+    logger = logging.getLogger(__name__)
+    existing = await User.find_one({"email": email.lower().strip()})
+    if existing:
+        return
+    try:
+        auth = AuthService(settings)
+        await auth.register(email=email, password=password, display_name="Admin")
+        logger.info("Seed user created", extra={"email": email})
+    except AuthError as exc:
+        logger.warning("Seed user already exists or could not be created", extra={"error": str(exc)})
+
+
 async def _reenqueue_uploaded_materials(settings) -> None:
     """Re-enqueue materials stuck in 'uploaded' state (asyncio.create_task lost on restart)."""
     from src.models.material import Material
@@ -152,6 +176,7 @@ async def lifespan(app: FastAPI):
     await init_database(settings)
     _ensure_qdrant_collection(settings)
     if not settings.testing:
+        await _ensure_seed_user(settings)
         await _recover_stuck_materials()
         await _reenqueue_uploaded_materials(settings)
     yield

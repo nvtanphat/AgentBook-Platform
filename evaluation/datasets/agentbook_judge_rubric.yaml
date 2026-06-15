@@ -1,0 +1,90 @@
+# AgentBook Evaluation Judge Rubric v1.0
+# Used by: backend/scripts/judge_eval_with_gpt4o.py  (--rubric flag)
+# LLM judge scores each answer on 5 axes, each 0.0–1.0
+
+version: "1.0"
+model_default: "gpt-5.4-mini"
+
+axes:
+  groundedness:
+    description: >
+      Each factual claim in the answer must be supported by a cited source [N].
+      Penalise claims without citation markers and claims that exceed what the
+      cited source actually states.
+    scoring:
+      "1.0": All claims explicitly grounded in cited evidence.
+      "0.7": Most claims grounded; 1-2 minor claims without citation.
+      "0.4": Some claims grounded but several unsupported assertions present.
+      "0.1": Few or no claims grounded; answer appears to hallucinate.
+      "0.0": Answer contradicts evidence or fabricates facts entirely.
+
+  answer_relevance:
+    description: >
+      Does the answer address the question? Consider completeness (covers
+      required facts), conciseness (no irrelevant padding), and directness.
+    scoring:
+      "1.0": Complete, relevant, and directly addresses the query.
+      "0.7": Mostly relevant but misses some required facts.
+      "0.4": Partially addresses the query or is significantly incomplete.
+      "0.1": Tangential or mostly off-topic.
+      "0.0": Does not address the query at all.
+
+  citation_correctness:
+    description: >
+      Citation markers [N] must map to chunks that actually contain the
+      attributed claim. A citation is correct when the chunk text supports
+      the sentence it annotates.
+    scoring:
+      "1.0": All citations accurate, map to supporting evidence.
+      "0.7": Most citations correct; 1-2 point to slightly wrong evidence.
+      "0.4": Several citations mismatched or missing.
+      "0.1": Citations mostly wrong or all absent.
+      "0.0": No citations or all citations wrong.
+
+  refusal_correctness:
+    description: >
+      For expected_behavior=answer: the system should answer (not refuse).
+      For expected_behavior=refuse: the system should refuse (not answer).
+      Score is 1.0 when the system behaves as expected, 0.0 when it does not.
+    scoring:
+      "1.0": System correctly answered or correctly refused as expected.
+      "0.5": Partial answer when full expected, or soft refusal when answer expected.
+      "0.0": System refused when it should have answered, or vice versa.
+
+  vietnamese_quality:
+    description: >
+      For Vietnamese answers: grammatical correctness, complete diacritical
+      marks (tone marks, no missing), natural fluency, minimal unnecessary
+      English mixing.
+    scoring:
+      "1.0": Fluent, grammatically correct Vietnamese, no missing tone marks.
+      "0.7": Minor grammar issues or 1-2 missing tone marks; readable.
+      "0.4": Several tone marks missing or awkward phrasing; meaning still clear.
+      "0.1": Severely broken Vietnamese; hard to read.
+      "0.0": Not in Vietnamese when Vietnamese was required.
+
+thresholds:
+  smoke:
+    groundedness: 0.70
+    answer_relevance: 0.70
+    citation_correctness: 0.85
+    refusal_correctness: 0.85
+    vietnamese_quality: 0.90
+  dev:
+    groundedness: 0.80
+    answer_relevance: 0.80
+    citation_correctness: 0.92
+    refusal_correctness: 0.92
+    vietnamese_quality: 0.95
+  test_private:
+    groundedness: 0.90
+    answer_relevance: 0.85
+    citation_correctness: 0.95
+    refusal_correctness: 0.95
+    vietnamese_quality: 0.98
+
+system_prompt: >
+  You are an expert evaluator for a Vietnamese educational document Q&A system
+  called AgentBook. Evaluate system-generated answers against gold standard
+  evidence and these rubric criteria. Be strict, objective, and consistent.
+  Output only valid JSON — no markdown, no explanation outside the JSON object.

@@ -35,6 +35,59 @@ def _is_empty_figure_only(blocks: list[ParsedBlock]) -> bool:
     )
 
 
+def _is_garbled_vietnamese(blocks: list[ParsedBlock]) -> bool:
+    """True when Docling extracted text but Vietnamese diacritics are almost absent.
+
+    PDFs with non-standard font encoding (common in Vietnamese legal documents
+    produced by older software) yield text like "QUOc HQI CQNG HOA" instead of
+    "QUỐC HỘI CỘNG HÒA". The text layer exists but is garbled — OCR must run.
+
+    Heuristic: sample the first 400 characters of page text; if < 3% are
+    Vietnamese tone/diacritic characters the page is considered garbled.
+    The 3% threshold is loaded from config (ocr_garbled_vi_diacritic_ratio).
+    """
+    import unicodedata
+
+    text = " ".join((b.content or "") for b in blocks)[:400]
+    if not text.strip():
+        return False
+
+    vi_chars = sum(
+        1 for ch in text
+        if unicodedata.category(ch) == "Ll" and unicodedata.combining(ch) == 0
+        and ord(ch) > 127  # extended Latin — catches ă, â, ê, ô, ơ, ư + tones
+    )
+    total_alpha = sum(1 for ch in text if ch.isalpha())
+    if total_alpha == 0:
+        return False
+
+    from src.core.config import get_settings as _get_settings
+    threshold = _get_settings().ocr_garbled_vi_diacritic_ratio
+    return (vi_chars / total_alpha) < threshold
+
+
+def _has_vietnamese_content(blocks: list[ParsedBlock]) -> bool:
+    """True when blocks contain meaningful Vietnamese diacritic text (ratio > 5%).
+
+    Used to select VietOCR for OCR fallback pages in documents where Docling
+    extracted Vietnamese text correctly from most pages but crashed on a few
+    (std::bad_alloc in layout model). Those crashed pages get empty blocks →
+    OCR fallback → must still use VietOCR to preserve tone marks.
+    """
+    import unicodedata
+
+    text = " ".join((b.content or "") for b in blocks)[:800]
+    if not text.strip():
+        return False
+    vi_chars = sum(
+        1 for ch in text
+        if unicodedata.category(ch) == "Ll" and unicodedata.combining(ch) == 0
+        and ord(ch) > 127
+    )
+    total_alpha = sum(1 for ch in text if ch.isalpha())
+    return total_alpha > 0 and (vi_chars / total_alpha) > 0.05
+
+
 def _configure_docling_cache() -> None:
     os.environ.setdefault("USE_TF", "0")
     os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
@@ -312,7 +365,18 @@ class DoclingParser:
         from src.processing.ocr_engine import EasyOCREngine, VietOCRRecognizer
 
         settings = get_settings()
-        ocr_language = "vi" if language == "vi" else "en"
+        # Pre-scan existing blocks to determine OCR language for unknown documents:
+        #  - garbled: diacritics nearly absent → font encoding broken → force VietOCR
+        #  - has Vietnamese content: Docling text is fine but some pages crashed
+        #    (std::bad_alloc in layout model) → OCR fallback must still use VietOCR
+        _sample_blocks = [b for pg in pages_by_number.values() for b in pg]
+        _has_any_text = any((b.content or "").strip() for b in _sample_blocks)
+        _force_vi = language not in ("vi", "en") and (
+            not _has_any_text  # fully scanned PDF — no text layer at all → default vi
+            or _is_garbled_vietnamese(_sample_blocks)  # garbled font encoding
+            or _has_vietnamese_content(_sample_blocks)  # good text + crashed pages
+        )
+        ocr_language = "vi" if (language == "vi" or _force_vi) else "en"
         output_dir = _workspace_cache_dir("pdf_page_images")
         output_dir.mkdir(parents=True, exist_ok=True)
         # Best-of-breed for Vietnamese scanned pages: EasyOCR detection + VietOCR
@@ -338,7 +402,12 @@ class DoclingParser:
                 # must still go through EasyOCR — otherwise the page text is lost.
                 existing = pages_by_number.get(page_number, [])
                 if existing and not _is_empty_figure_only(existing):
-                    continue
+                    # For Vietnamese docs (explicit or auto-detected), also OCR when
+                    # Docling text is garbled (non-standard font → diacritics missing).
+                    if ocr_language != "vi" or not _is_garbled_vietnamese(existing):
+                        continue
+                    # Garbled page: clear Docling blocks and re-OCR.
+                    pages_by_number[page_number] = []
                 page = pdf[page_index]
                 try:
                     bitmap = page.render(scale=render_scale)
