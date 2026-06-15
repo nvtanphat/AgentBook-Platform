@@ -18,7 +18,8 @@ Each pipeline exposes a small set of *hooks* the orchestrator
 
   4. `post_generation(answer, context_chunks, response_parser, claim_verifier,
      refusal_policy)` — return `(maybe_modified_answer, should_refuse, reason)`.
-     FACTUAL runs Self-RAG hedging here; CLAIM_CHECK runs the NLI verifier.
+     CLAIM_CHECK runs the NLI verifier here; factual support checks now happen
+     in SLEC + quality gate.
 
 Pipelines are stateless w.r.t. requests; their constructors take only the
 shared collaborators (settings, claim_verifier, …). Hot-path hooks accept the

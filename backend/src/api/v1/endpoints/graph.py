@@ -17,7 +17,14 @@ from src.models.chunk import Chunk
 from src.models.knowledge_graph import Entity, Relation
 from src.models.material import Material, MaterialPageDocument
 from src.processing.reading_order import order_blocks_by_reading
-from src.rag.graph_builder import build_digraph, compute_communities, compute_degrees, compute_pagerank
+from src.processing.slug import entity_node_id as _entity_node_id
+from src.rag.graph_builder import (
+    build_digraph,
+    compute_communities,
+    compute_community_labels,
+    compute_degrees,
+    compute_pagerank,
+)
 from src.rag.structure_detector import (
     HeadingItem,
     build_citation_network,
@@ -33,17 +40,22 @@ router = APIRouter(prefix="/graph", tags=["graph"])
 
 _CROSS_MODAL_TYPES = frozenset({"table", "figure", "equation"})
 
-# Relation types that carry no concept-to-concept information and
-# pollute the concept-graph viz. Section nesting and entity-to-block
-# mentions are dropped; co_located_with / adjacent_context survive
-# because they at least connect two concept entities and are the only
-# signal available until LLM-based semantic relation extraction lands.
+# Layout / positional relation types that carry no concept-to-concept
+# knowledge and pollute the concept-graph viz. These come from the
+# structural (event_extractor) and cross-modal (cross_modal_linker) layers,
+# NOT the LLM semantic relation extractor. Now that LLM-based typed semantic
+# relations have landed (uses / extends / applies_to / …), the positional
+# co-occurrence edges (co_located_with / adjacent_context) are demoted to
+# this layout set so the knowledge graph shows real typed edges only.
 _STRUCTURAL_RELATION_TYPES = frozenset({
     "section_contains",      # block hierarchy, not concept relation
     "mentioned_in_block",    # entity → chunk, not entity → entity
     "mentioned_in_event",    # entity → event scaffold
     "has_caption",           # figure ↔ caption text
     "caption_of",            # caption text ↔ figure
+    "co_located_with",       # positional proximity to a table/figure, not knowledge
+    "adjacent_context",      # neighbouring blocks, not concept relation
+    "references",            # entity → figure/table ref, not entity → entity
 })
 _NOISY_ENTITY_LABELS = frozenset(
     {
@@ -121,7 +133,7 @@ _BAD_ENTITY_LABEL_RE = re.compile(
 _BAD_MINDMAP_LABEL_PATTERNS = tuple(
     re.compile(pattern, re.IGNORECASE)
     for pattern in (
-        r"\b(?:pdf|pptx|docx|png|jpg|jpeg|xlsx)\b.*\b(?:nguá»“n|nguon|source)\b",
+        r"\b(?:pdf|pptx|docx|png|jpg|jpeg|xlsx)\b.*\b(?:nguồn|nguon|source)\b",
         r"\b(?:docx|pdf|png|pptx|xlsx){2,}\b",
         r"\b(?:jocaled|dalch|uon|nornlalizal|regulariza)\b",
         r"\b(?:key points|metadata)\b$",
@@ -145,8 +157,7 @@ _THEME_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
 
 
 def _entity_slug(name: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "unknown"
-    return f"entity:{slug}"
+    return _entity_node_id(name)
 
 
 # Import synonym map from extraction layer for cross-document entity merging.
@@ -646,7 +657,7 @@ def _is_mindmap_label(label: str) -> bool:
     lower = normalized.lower()
     if any(pattern.search(normalized) for pattern in _BAD_MINDMAP_LABEL_PATTERNS):
         return False
-    if "nguá»“n" in lower or "nguon" in lower:
+    if "nguồn" in lower or "nguon" in lower:
         return False
     format_hits = sum(1 for word in _FORMAT_ENTITY_WORDS if re.search(rf"\b{re.escape(word)}\b", lower))
     if format_hits >= 2:
@@ -1062,8 +1073,19 @@ async def graph(
     display_entities = [entity for entity in raw_entities if _is_display_entity(entity)]
     # Cross-document dedup: merge "ML" + "Machine Learning" + "Học máy" → 1 entity
     deduped = _dedupe_and_merge_entities(display_entities)
-    # Fetch relations early so focus expansion can use them for 1-hop neighbors
-    relations = await Relation.find(relation_query).limit(settings.graph_max_relations_fetch).to_list()
+    # Fetch relations early so focus expansion can use them for 1-hop neighbors.
+    # Exclude layout/structural types AT THE DB LEVEL and sort by confidence so
+    # the fetch budget is spent on real typed knowledge edges — otherwise the
+    # thousands of block-level structural relations (inserted first) crowd the
+    # few typed semantic edges (inserted last) out of the limit, forcing the
+    # viz into the co-occurrence fallback.
+    relation_query["relation_type"] = {"$nin": list(_STRUCTURAL_RELATION_TYPES)}
+    relations = (
+        await Relation.find(relation_query)
+        .sort("-confidence")
+        .limit(settings.graph_max_relations_fetch)
+        .to_list()
+    )
 
     # ── Focus mode: filter to entities backing the last answer ──────────────
     # Strategy: ENTITY NAME MATCHING against query + answer text.
@@ -1142,9 +1164,27 @@ async def graph(
 
         deduped = primary
 
-    entities = sorted(deduped, key=lambda e: (len(e.mention_refs), e.confidence), reverse=True)[
-        : settings.graph_max_visible_nodes
-    ]
+    # ── Salience-aware node selection (KET-RAG skeleton idea) ────────────────
+    # Rank candidates by how many REAL typed knowledge edges touch them, not by
+    # raw mention_count. This demotes reference-list authors (0 typed edges) and
+    # promotes concept hubs, so the visible graph is knowledge-dense. Layout /
+    # positional edges are excluded so they cannot inflate salience.
+    knowledge_degree: dict[str, int] = defaultdict(int)
+    for r in relations:
+        if r.relation_type in _STRUCTURAL_RELATION_TYPES:
+            continue
+        if r.source_id.startswith("entity:") and r.target_id.startswith("entity:"):
+            knowledge_degree[r.source_id] += 1
+            knowledge_degree[r.target_id] += 1
+    entities = sorted(
+        deduped,
+        key=lambda e: (
+            knowledge_degree.get(_entity_slug(e.canonical_name), 0),
+            len(e.mention_refs),
+            e.confidence,
+        ),
+        reverse=True,
+    )[: settings.graph_max_visible_nodes]
     all_entities = entities
 
     # Collect all material_ids referenced by entities to batch-load names
@@ -1171,6 +1211,7 @@ async def graph(
             id=slug,
             label=_short_label(cleaned, limit=40),
             type=entity.entity_type,
+            description=getattr(entity, "description", None),
             confidence=entity.confidence,
             mention_count=len(entity.mention_refs),
             source_docs=list(dict.fromkeys(
@@ -1233,8 +1274,16 @@ async def graph(
                 evidence_text_chunk=evidence_text,
             )
         )
-    if not edges:
-        edges = _entity_cooccurrence_edges(all_entities)
+    # Typed knowledge edges are authoritative. Only supplement with positional
+    # co-occurrence edges when there are too few typed edges to form a useful
+    # graph — and even then, append (don't replace) so real knowledge always
+    # shows. Above the threshold, co-occurrence noise is suppressed entirely.
+    typed_edge_count = len(edges)
+    if typed_edge_count < settings.graph_min_knowledge_edges_for_no_fallback:
+        existing = {(e.source, e.target) for e in edges}
+        for co in _entity_cooccurrence_edges(all_entities):
+            if (co.source, co.target) not in existing and (co.target, co.source) not in existing:
+                edges.append(co)
     edges.sort(key=lambda edge: ((edge.evidence_count or 0), edge.confidence or 0), reverse=True)
 
     # ── Enrich nodes with centrality + community structure ──────────────────
@@ -1246,6 +1295,13 @@ async def graph(
     degree_map = compute_degrees(G)
     pagerank_map = compute_pagerank(G)
     community_map = compute_communities(G)
+    # Deterministic community labels from top-PageRank members (GraphRAG-style,
+    # zero LLM cost). Lets the UI name each topic cluster instead of "Cụm 3".
+    community_labels = compute_community_labels(
+        community_map,
+        {nid: n.label for nid, n in nodes_by_id.items()},
+        pagerank_map,
+    )
 
     # Normalize PageRank to [0, 1] for easier UI consumption
     max_pr = max(pagerank_map.values()) if pagerank_map else 1.0
@@ -1262,11 +1318,13 @@ async def graph(
         # In focus mode, suppress hub status — user wants Dropout-centric view,
         # not global "accuracy" hub. Hubs are misleading after subgraph filter.
         is_hub_global = pr >= hub_threshold and len(pagerank_map) >= 3
+        comm_id = community_map.get(node.id, 0)
         nodes.append(
             node.model_copy(update={
                 "degree": deg,
                 "importance": pr / max_pr if max_pr > 0 else 0.0,
-                "community": community_map.get(node.id, 0),
+                "community": comm_id,
+                "community_label": community_labels.get(comm_id),
                 "is_hub": is_primary if is_focus_mode else is_hub_global,
                 "is_focused": is_primary,
             })
@@ -1403,7 +1461,16 @@ async def auto_viz(
         page_query["material_id"] = {"$in": material_oids}
 
     entities = await Entity.find(entity_query).limit(settings.graph_max_entities_fetch).to_list()
-    relations = await Relation.find(relation_query).limit(settings.graph_max_relations_fetch).to_list()
+    # Exclude layout/structural relations and prioritise high-confidence typed
+    # edges so the fetch budget isn't consumed by block-level noise (same reason
+    # as POST /graph above).
+    relation_query["relation_type"] = {"$nin": list(_STRUCTURAL_RELATION_TYPES)}
+    relations = (
+        await Relation.find(relation_query)
+        .sort("-confidence")
+        .limit(settings.graph_max_relations_fetch)
+        .to_list()
+    )
     pages = await MaterialPageDocument.find(page_query).to_list()
 
     # Collect headings (ordered) + all block texts for the signal computations.

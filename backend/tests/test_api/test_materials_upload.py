@@ -254,3 +254,110 @@ def test_upload_marks_failed_when_enqueue_fails(monkeypatch, tmp_path) -> None:
 
     assert material.status == PipelineStatus.FAILED.value
     assert material.stage == PipelineStatus.FAILED.value
+
+
+def test_upload_from_temp_saves_file_and_material_scope(monkeypatch, tmp_path) -> None:
+    settings = get_settings()
+    settings.data_dir = tmp_path
+    settings.raw_data_dir = tmp_path / "raw"
+    settings.processed_data_dir = tmp_path / "processed"
+
+    service = MaterialService(settings)
+    created: dict[str, object] = {}
+    collection_id = PydanticObjectId("65f000000000000000000002")
+    material_id = PydanticObjectId("65f000000000000000000001")
+    payload = b"%PDF-1.4\nbody\n%%EOF\n"
+    temp_path = tmp_path / "upload.tmp"
+    temp_path.write_bytes(payload)
+
+    async def save_collection():
+        return None
+
+    collection = SimpleNamespace(
+        id=collection_id,
+        material_ids=[],
+        updated_at=None,
+        save=save_collection,
+    )
+
+    async def fake_resolve_collection(_metadata):
+        return collection
+
+    async def fake_noop(*args, **kwargs):
+        return None
+
+    async def fake_enqueue_parse_index(**kwargs):
+        created["enqueue"] = kwargs
+
+    class FakeMaterial:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+            self.id = None
+            self.created_at = utc_now()
+
+        async def insert(self):
+            self.id = material_id
+            created["material"] = self
+
+        async def save(self):
+            created["saved_material"] = self
+
+    class FakePipelineJob:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+        async def insert(self):
+            created["job"] = self
+
+        async def save(self):
+            created["saved_job"] = self
+
+    monkeypatch.setattr(service, "_resolve_collection", fake_resolve_collection)
+    monkeypatch.setattr(service, "_ensure_not_duplicate", fake_noop)
+    monkeypatch.setattr(service, "_enqueue_parse_index", fake_enqueue_parse_index)
+    monkeypatch.setattr(material_service_module, "Material", FakeMaterial)
+    monkeypatch.setattr(material_service_module, "PipelineJob", FakePipelineJob)
+
+    from src.schemas.material import MaterialUploadMetadata
+
+    response = asyncio.run(
+        service.upload_material_from_temp(
+            metadata=MaterialUploadMetadata.model_validate(
+                {
+                    "owner_id": "user_demo",
+                    "collection_id": str(collection_id),
+                    "subject": "Machine Learning",
+                    "language": "en",
+                    "modality": "mixed",
+                    "version": "v1.0",
+                }
+            ),
+            original_filename="lecture.pdf",
+            content_type="Application/PDF; charset=binary",
+            temp_path=temp_path,
+            file_size_bytes=len(payload),
+            checksum_sha256="b" * 64,
+            head=payload,
+        )
+    )
+
+    material = created["material"]
+    job = created["job"]
+    saved_path = tmp_path / response.storage_path
+
+    assert response.status == PipelineStatus.UPLOADED.value
+    assert response.stage == PipelineStatus.UPLOADED.value
+    assert response.collection_id == str(collection_id)
+    assert response.file_size_bytes == len(payload)
+    assert temp_path.exists() is False
+    assert saved_path.exists()
+    assert saved_path.read_bytes() == payload
+    assert saved_path.relative_to(settings.raw_data_dir)
+    assert material.owner_id == "user_demo"
+    assert material.collection_id == collection_id
+    assert material.status == PipelineStatus.UPLOADED.value
+    assert material.file_type == "pdf"
+    assert material.storage_path == response.storage_path
+    assert collection.material_ids == [material_id]
+    assert job.status == PipelineStatus.UPLOADED.value
+    assert job.stage == PipelineStatus.UPLOADED.value

@@ -7,13 +7,21 @@ STRICT SEPARATION:
 - Only facts inside <EVIDENCE id="..."> blocks may be used as factual material.
 
 CITATION RULES:
-1. Every factual sentence must end with a valid citation marker before the period, like "...[1]."
+1. EVERY factual sentence MUST end with [N] INLINE before the period — NOT in a reference list at the end.
+   - Count your sentences and count your [N] markers — they must match exactly.
 2. Valid citation numbers are [1] through [{num_sources}] only.
 3. Do not invent citations and do not cite instruction text.
-4. Maximum 5 sentences.
+4. Maximum 5 sentences. No reference sections at the end.
 5. Start with the specific techniques, steps, or ideas being summarized.
-6. No markdown tables, headers, numbered lists, or bullet lists.
+6. No markdown tables, headers, numbered lists, bullet lists, or reference lists.
 7. Always summarize using the evidence provided. If coverage is partial, summarize what IS present and note gaps briefly — never refuse to answer when evidence exists.
+
+CITATION FORMAT — FOLLOW EXACTLY:
+✓ CORRECT (3 sentences): "Bước đầu tiên là thu thập dữ liệu [1]. Tiếp theo là tiền xử lý [2]. Cuối cùng là huấn luyện mô hình [1]."
+✓ CORRECT (5 sentences): "A dùng kỹ thuật X [1]. B áp dụng Y [2]. C kết hợp cả hai [3]. Hiệu quả đạt 90% [1]. Giới hạn là Z [2]."
+✗ WRONG: "Bước đầu tiên là thu thập dữ liệu. Tiếp theo là tiền xử lý.\n[1] source"
+✗ WRONG: "Câu đầu có citation [1]. Câu hai không có. Câu ba không có."
+The [N] marker goes INSIDE each sentence, right before the period. Every sentence needs one.
 
 <EVIDENCE_SET>
 {evidence}

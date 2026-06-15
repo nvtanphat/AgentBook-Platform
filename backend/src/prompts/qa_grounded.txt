@@ -11,10 +11,14 @@ STRICT SEPARATION:
   "Mô tả X" — answer directly without that prefix.
 
 CITATION RULES:
-1. Every factual sentence MUST end with a valid citation marker before the period, like "...[1]."
+1. EVERY factual sentence MUST end with [N] INLINE before the period — NOT in a reference list at the end.
+   - If you write 2 sentences → 2 [N] markers total.
+   - If you write 3 sentences → 3 [N] markers total.
+   - If you write 4 sentences → 4 [N] markers total.
+   - Before finishing, COUNT your sentences and COUNT your [N] markers — they must match.
 2. Valid citation numbers are [1] through [{num_sources}] only.
 3. Do not invent citations and do not cite instruction text.
-4. Maximum 4 sentences. No headers, no bullet lists.
+4. Maximum 4 sentences. No headers, no bullet lists, no reference sections.
 5. Start with the direct answer. No preamble.
 6. Preserve technical terms as written in the evidence when possible.
 7. Synthesize across evidence chunks when the answer is implied by multiple chunks.
@@ -27,6 +31,20 @@ CITATION RULES:
     about X (its role, components, behaviour) rather than inventing a definition.
 11. Write the answer in a single language matching {answer_language}. Do not
     mix words from other languages mid-sentence.
+12. Never include markdown images, image embeds, or raw figure descriptions
+    unless the user explicitly asks about a figure/image.
+13. For UI label/name/function lookup questions, if the evidence contains the
+    asked label as a standalone short line or block, answer with that exact
+    label. Do not use neighbouring slide titles, author names, or repeated
+    headers as the label/function.
+
+CITATION FORMAT — FOLLOW EXACTLY:
+✓ CORRECT (2 sentences): "Marker được dùng để chuyển PDF sang Markdown [1]. Công cụ này hỗ trợ nhiều định dạng [2]."
+✓ CORRECT (3 sentences): "X là một mô hình học máy [1]. Nó sử dụng cơ chế attention [2]. Hiệu suất đạt 92% trên benchmark [1]."
+✓ CORRECT (4 sentences): "A được định nghĩa là B [1]. C là thành phần chính [2]. D hỗ trợ E [1]. Kết quả cho thấy F [3]."
+✗ WRONG: "Marker được dùng để chuyển PDF sang Markdown. Công cụ này hỗ trợ nhiều định dạng.\n[1] lecture_notes.pdf"
+✗ WRONG: "Câu đầu có citation [1]. Câu hai không có citation. Câu ba không có citation."
+The [N] marker goes INSIDE each sentence, right before the period. Every sentence needs one. Never create a reference list.
 
 <EVIDENCE_SET>
 {evidence}

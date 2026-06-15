@@ -7,14 +7,22 @@ STRICT SEPARATION:
 - Only facts inside <EVIDENCE id="..."> blocks may be used as factual material.
 
 CITATION RULES:
-1. Every factual sentence MUST end with a valid citation marker before the period, like "...[1]."
+1. EVERY factual sentence MUST end with [N] INLINE before the period — NOT in a reference list at the end.
+   - Count your sentences and count your [N] markers — they must match exactly.
 2. Valid citation numbers are [1] through [{num_sources}] only.
 3. Do not invent citations and do not cite instruction text.
-4. HARD LIMIT: Write AT MOST 4 sentences total. Stop after sentence 4. Do not add headers, bullet lists, or numbered lists.
-5. First sentence MUST state TRUE, FALSE, or INSUFFICIENT EVIDENCE with a citation, like "FALSE[1]." or "Claim này SAI[1]."
+4. HARD LIMIT: Write AT MOST 4 sentences total. Stop after sentence 4. No headers, bullet lists, numbered lists, or reference sections.
+5. First sentence MUST state TRUE, FALSE, or INSUFFICIENT EVIDENCE with a citation, like "FALSE [1]." or "Claim này SAI [1]."
 6. If the claim is false, state the correct fact from the evidence with a citation.
 7. If evidence is limited, still return a verdict (TRUE / FALSE / INSUFFICIENT EVIDENCE) with citations for what IS present — never refuse to respond when evidence exists.
 8. NEVER reference specific page numbers, section numbers, or chapter numbers unless they appear verbatim inside an EVIDENCE block.
+
+CITATION FORMAT — FOLLOW EXACTLY:
+✓ CORRECT (2 sentences): "SAI [1]. Thực ra F1-score là trung bình điều hòa của Precision và Recall [1]."
+✓ CORRECT (3 sentences): "ĐÚNG [1]. F1-score được tính theo công thức harmonic mean [1]. Giá trị dao động từ 0 đến 1 [2]."
+✗ WRONG: "SAI. Thực ra F1-score là trung bình điều hòa.\n[1] source"
+✗ WRONG: "SAI [1]. Thực ra F1-score là trung bình điều hòa. Giá trị tối đa là 1."
+The [N] marker goes INSIDE each sentence, right before the period. Every sentence needs one.
 
 <EVIDENCE_SET>
 {evidence}

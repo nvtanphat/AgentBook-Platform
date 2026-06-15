@@ -1,9 +1,9 @@
-"""FACTUAL route — tight grounded QA with Self-RAG hedging.
+"""FACTUAL route — tight grounded QA.
 
 Behaviour vs. baseline:
   - No material-coverage forcing (one strong chunk beats five mediocre).
   - Standard refusal policy (don't relax — we want hard refusals on no-evidence).
-  - Self-RAG reflection enabled to hedge sentences not fully supported.
+  - No LLM-based Self-RAG reflection; SLEC + quality gate handle support checks.
 """
 
 from __future__ import annotations
@@ -25,10 +25,8 @@ class FactualPipeline(BaseRoutePipeline):
     DEFAULT_FORCE_MATERIAL_COVERAGE = False
     DEFAULT_RELAX_REFUSAL = False
     DEFAULT_SKIP_LLM_RETRY = False
-    DEFAULT_ENABLE_SELF_RAG = True
+    DEFAULT_ENABLE_SELF_RAG = False
     DEFAULT_ENABLE_CLAIM_VERIFIER = False
 
-    # The Self-RAG reflection step lives in InferenceEngine._self_reflect_claims;
-    # the pipeline just signals via `hooks.enable_self_rag` and the orchestrator
-    # invokes the existing implementation. Keeping the heavy LLM call there
-    # avoids duplicating prompt + retry logic across pipelines.
+    # Self-RAG used to live behind this hook, but it adds a second LLM call on the
+    # hot path. Leave it disabled now that SLEC + quality gate cover support.

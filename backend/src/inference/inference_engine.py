@@ -5,13 +5,18 @@ import json
 import math
 import logging
 import re
+import time
 from collections import defaultdict
 from typing import AsyncGenerator
 
 from src.core.base_llm import BaseLLM
 from src.core.config import Settings, project_root
+from src.core.trace import RequestTrace
 from src.core.model_factory import build_llm
+from src.guardrails.citation_aligner import CitationAligner
 from src.guardrails.claim_verifier import ClaimVerifier
+from src.guardrails.evidence_validator import EvidenceValidator
+from src.guardrails.quality_gate import QualityGate
 from src.guardrails.refusal_policy import RefusalPolicy, RefusalRule
 from src.guardrails.sentence_coverage import SentenceCoverageGate
 from src.inference.route_pipelines import get_pipeline
@@ -25,7 +30,7 @@ from src.rag.embedding_factory import build_visual_provider
 from src.rag.embedding_provider import VisualEmbeddingProvider
 from src.rag.graph_retriever import GraphRetriever
 from src.rag.query_processor import ProcessedQuery, QueryProcessor
-from src.rag.query_router import QueryRouter, RouteDecision, RouteType
+from src.rag.query_router import PreferredModality, QueryRouter, RouteDecision, RouteType, TableQueryType
 from src.rag.retriever import HybridRetriever, dedupe_retrieved_chunks
 from src.rag.reranker import CrossEncoderReranker
 from src.rag.smart_reranker import SmartReranker
@@ -90,6 +95,9 @@ class InferenceEngine:
         )
         self.intent_classifier = IntentClassifier(llm=self.llm)
         self.refusal_policy = RefusalPolicy()
+        self.evidence_validator = EvidenceValidator(self.refusal_policy)
+        self.citation_aligner = CitationAligner()
+        self.quality_gate = QualityGate()
         self._rerank_fallback_semaphore = asyncio.Semaphore(1)
         self.visual_provider: VisualEmbeddingProvider | None = (
             visual_provider if visual_provider is not None else build_visual_provider(settings)
@@ -113,17 +121,26 @@ class InferenceEngine:
             self._semantic_cache = None
 
     @staticmethod
-    def _prune_to_cited(answer: str, citations: list, coverage_report=None):
+    def _prune_to_cited(
+        answer: str,
+        citations: list,
+        coverage_report=None,
+        *,
+        chunks: list | None = None,
+    ):
         """Keep only citations the answer actually references, renumbered 1..k.
 
         Reranked context often includes off-topic low-rank chunks the LLM never
         cites; surfacing them as "citations" is misleading. We keep exactly the
         referenced ones, rewrite the answer's [N] markers, and remap SLEC sentence
-        citation_refs so every consumer stays consistent. Returns
-        (answer, citations, coverage_report) unchanged when nothing to prune.
+        citation_refs so every consumer stays consistent.
+
+        Optional `chunks`: when provided, the same 1-based index filter is applied
+        so the returned chunk list stays aligned with the returned citations.
+        Returns (answer, citations, coverage_report, pruned_chunks).
         """
         if not citations:
-            return answer, citations, coverage_report
+            return answer, citations, coverage_report, chunks or []
         used = sorted({
             n
             for m in re.finditer(r"\[(\d+(?:\s*,\s*\d+)*)\]", answer or "")
@@ -131,9 +148,10 @@ class InferenceEngine:
             if 1 <= n <= len(citations)
         })
         if not used or len(used) == len(citations):
-            return answer, citations, coverage_report
+            return answer, citations, coverage_report, chunks or []
         remap = {old: new for new, old in enumerate(used, start=1)}
         new_citations = [citations[old - 1] for old in used]
+        new_chunks = [chunks[old - 1] for old in used] if chunks is not None else []
 
         def _repl(m):
             kept = [str(remap[n]) for n in (int(x) for x in re.findall(r"\d+", m.group(1))) if n in remap]
@@ -145,7 +163,134 @@ class InferenceEngine:
                 refs = getattr(s, "citation_refs", None)
                 if refs:
                     s.citation_refs = [remap[r] for r in refs if r in remap]
-        return new_answer, new_citations, coverage_report
+        return new_answer, new_citations, coverage_report, new_chunks
+
+    @staticmethod
+    def _refine_citation_blocks(
+        citations: list,
+        chunks: list[RetrievedChunk],
+        coverage_report,
+    ) -> list:
+        """Override each citation's primary block with the block SLEC identified
+        as actually supporting the sentences that cite [N].
+
+        citations_from_chunks() picks the primary evidence block by query-token
+        overlap — "best match with query" ≠ "best support for the answer sentence".
+        SLEC's supporting_block_ids are scored against the *generated* sentences,
+        so they are a stronger signal for which block to show in the citation.
+
+        Only block_id and snippet_original are overridden; page, doc_id, and all
+        provenance fields are unchanged to preserve evidence trace integrity.
+        citations[i] ↔ chunks[i] — same ordering as the LLM prompt.
+        """
+        if not coverage_report or not getattr(coverage_report, "sentences", None):
+            return citations
+
+        # Collect supporting block_ids from SLEC per citation index (0-based).
+        from collections import defaultdict
+        citation_sup: dict[int, list[str]] = defaultdict(list)
+        for sent in coverage_report.sentences:
+            refs: list[int] = getattr(sent, "citation_refs", []) or []
+            sup_ids: list[str] = getattr(sent, "supporting_block_ids", []) or []
+            for ref in refs:
+                zero_idx = ref - 1  # citation_refs are 1-based
+                if 0 <= zero_idx < len(citations) and sup_ids:
+                    citation_sup[zero_idx].extend(sup_ids)
+
+        refined = list(citations)
+        for cit_idx, sup_block_ids in citation_sup.items():
+            if cit_idx >= len(chunks):
+                continue
+            chunk = chunks[cit_idx]
+            # Map block_id → evidence for this chunk only.
+            ev_by_id = {(ev.block_id or ""): ev for ev in (chunk.evidence or []) if ev.block_id}
+            current_bid = getattr(refined[cit_idx], "block_id", None) or ""
+            for bid in sup_block_ids:
+                if not bid or bid not in ev_by_id or bid == current_bid:
+                    continue
+                ev = ev_by_id[bid]
+                snippet = (ev.snippet_original or "").strip()
+                if len(snippet) < 30:
+                    continue
+                bbox = None
+                if ev.bbox is not None:
+                    from src.schemas.evidence import BoundingBoxSchema
+                    bbox = BoundingBoxSchema.model_validate(ev.bbox.model_dump())
+                # model_copy is the Pydantic v2 safe way to produce an updated copy.
+                refined[cit_idx] = refined[cit_idx].model_copy(
+                    update={
+                        "doc_id": ev.material_id,
+                        "doc_name": ev.document_name,
+                        "page": ev.page,
+                        "block_id": bid,
+                        "block_type": ev.block_type,
+                        "snippet_original": snippet,
+                        "bbox": bbox,
+                        "source_language": ev.source_language,
+                    }
+                )
+                break  # first matching supporting block wins
+
+        return refined
+
+    @staticmethod
+    def _allows_visual_answer_content(route_decision: RouteDecision | PreferredModality | str | None) -> bool:
+        """Only figure-routed queries may put visual markdown/content in answers."""
+        return InferenceEngine._modality_str(route_decision) == PreferredModality.FIGURE.value
+
+    @staticmethod
+    def _strip_inline_image_markdown(answer: str) -> str:
+        """Remove markdown image blocks from non-figure answers.
+
+        Inline visual retrieval is useful for figure questions, but factual text
+        answers must not inherit unrelated image captions as visible answer text.
+        """
+        if not answer or "![" not in answer:
+            return answer
+        cleaned = re.sub(r"!\[[^\]]*\]\([^)]+\)", "", answer)
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+        return cleaned.strip()
+
+    @staticmethod
+    def _maybe_answer_standalone_label_query(
+        *,
+        query: str,
+        chunks: list[RetrievedChunk],
+        answer_language: str,
+    ) -> str | None:
+        """Deterministic guard for OCR/UI label lookup questions.
+
+        Slides often contain a short standalone UI label next to repeated course
+        headers. Small LLMs can answer with the neighbouring header instead of
+        the label. When the question itself quotes a candidate label and that
+        exact label exists as a short evidence block, return it directly.
+        """
+        lowered = query.lower()
+        if not re.search(r"\b(nhãn|chức năng|label|function)\b", lowered, re.IGNORECASE):
+            return None
+        quoted = re.findall(r"[\"“”']([^\"“”']{2,80})[\"“”']", query)
+        if not quoted:
+            return None
+
+        import unicodedata
+
+        def fold(value: str) -> str:
+            normalized = unicodedata.normalize("NFD", value or "")
+            return "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn").lower()
+
+        candidates = [(raw.strip(), fold(raw.strip())) for raw in quoted if raw.strip()]
+        for idx, chunk in enumerate(chunks, start=1):
+            for ev in chunk.evidence or []:
+                snippet = (ev.snippet_original or "").strip()
+                if not snippet or len(snippet) > 90:
+                    continue
+                folded_snippet = fold(snippet)
+                for raw, folded_raw in candidates:
+                    if folded_snippet == folded_raw:
+                        if answer_language == "en":
+                            return f'The label/function is "{raw}" [{idx}].'
+                        return f'Chức năng/nhãn được nêu là “{raw}” [{idx}].'
+        return None
 
     @staticmethod
     def _build_retrieval_queries(processed: ProcessedQuery, use_multi_query: bool) -> list[str]:
@@ -175,7 +320,10 @@ class InferenceEngine:
         rag_flags: dict[str, bool] | None = None,
     ) -> QueryResponse:
         flags = rag_flags or {}
-        intent = await self.intent_classifier.classify(query)
+        trace = RequestTrace()
+        _t_total = time.perf_counter()
+        with trace.stage("intent"):
+            intent = await self.intent_classifier.classify(query)
         if intent == QueryIntent.CHITCHAT:
             return await self._answer_chitchat(query)
         if intent == QueryIntent.OFF_TOPIC:
@@ -201,16 +349,35 @@ class InferenceEngine:
                     if cached is not None:
                         logger.info("Semantic cache HIT — returning cached response")
                         try:
-                            return QueryResponse.model_validate(cached)
+                            cached_response = QueryResponse.model_validate(cached)
+                            cache_route = self.query_router.route(query)
+                            if not self._allows_visual_answer_content(cache_route):
+                                cached_response = cached_response.model_copy(
+                                    update={
+                                        "answer": self._strip_inline_image_markdown(cached_response.answer),
+                                        "citations": [
+                                            c for c in cached_response.citations
+                                            if getattr(c, "role", None) != "visual_match"
+                                        ],
+                                    }
+                                )
+                            return cached_response
                         except Exception as exc:
                             logger.warning("Cached response parse failed; falling back", extra={"error": str(exc)})
             except Exception as exc:
                 logger.warning("Semantic cache pre-fetch failed", extra={"error": str(exc)})
 
-        route_decision = (
-            await self.query_router.route_with_llm(query, llm=self.llm)
-            if self.settings.llm_router_enabled
-            else self.query_router.route(query)
+        with trace.stage("route"):
+            route_decision = (
+                await self.query_router.route_with_llm(query, llm=self.llm)
+                if self.settings.llm_router_enabled
+                else self.query_router.route(query)
+            )
+        trace.update(
+            route=route_decision.route_type.value,
+            modality=self._modality_str(route_decision),
+            difficulty=getattr(getattr(route_decision, "difficulty", None), "value", None),
+            table_query_type=getattr(getattr(route_decision, "table_query_type", None), "value", None),
         )
         retrieval_limit = self._scaled_limit(self.settings.rerank_input_k, route_decision)
         final_limit = self._scaled_limit(top_k or self.settings.final_top_k, route_decision)
@@ -250,26 +417,26 @@ class InferenceEngine:
             if dense_only and self.retriever.fast_path_eligible(chunks=dense_only, settings=self.settings):
                 fast_path_taken = True
                 retrieved = dense_only
+                # fused_score (RRF-normalised) is the actual signal — dense_score is
+                # not stored post-indexing and would always read 0.
                 logger.info(
-                    "Adaptive fast-path: dense-only retrieval sufficient",
+                    "Adaptive fast-path: hybrid retrieval sufficient (reranker skipped)",
                     extra={
                         "owner_id": scope.owner_id,
                         "route": route_decision.route_type.value,
                         "hits": len(dense_only),
-                        "top_score": round(max((c.dense_score or 0.0) for c in dense_only), 3),
+                        "top_fused": round(max((c.fused_score or 0.0) for c in dense_only), 3),
                     },
                 )
             elif dense_only:
-                # Probe ran but bundle wasn't strong enough; capture scores so we
-                # can calibrate dense_skip_threshold against real workloads.
-                _scores = sorted(((c.dense_score or 0.0) for c in dense_only), reverse=True)
+                _scores = sorted((c.fused_score or 0.0 for c in dense_only), reverse=True)
                 _strong = sum(1 for s in _scores if s >= self.settings.adaptive_strong_hit_min_score)
                 logger.info(
-                    "Adaptive fast-path: bundle too weak, falling back to hybrid",
+                    "Adaptive fast-path: bundle too weak, falling back to full hybrid",
                     extra={
                         "owner_id": scope.owner_id,
                         "route": route_decision.route_type.value,
-                        "top_score": round(_scores[0], 3) if _scores else 0,
+                        "top_fused": round(_scores[0], 3) if _scores else 0,
                         "strong_count": _strong,
                         "threshold": self.settings.adaptive_dense_skip_threshold,
                         "required": self.settings.adaptive_strong_hits_required,
@@ -277,10 +444,14 @@ class InferenceEngine:
                 )
 
         _GRAPH_TIMEOUT = self.settings.inference_graph_timeout_seconds
+        _t_retrieve = time.perf_counter()
         try:
             if not fast_path_taken:
                 retrieval_tasks = [
-                    self.retriever.retrieve(query=retrieval_query, scope=scope, limit=retrieval_limit)
+                    self.retriever.retrieve(
+                        query=retrieval_query, scope=scope, limit=retrieval_limit,
+                        preferred_modality=self._modality_str(route_decision),
+                    )
                     for retrieval_query in retrieval_inputs
                 ]
                 graph_task = (
@@ -332,7 +503,13 @@ class InferenceEngine:
                 refusal_reason=PUBLIC_RETRIEVAL_ERROR,
             )
 
-        visual_chunks = await self._retrieve_visual_chunks(query=query, scope=scope)
+        trace.latency_by_stage["retrieve"] = int((time.perf_counter() - _t_retrieve) * 1000)
+
+        visual_chunks = (
+            await self._retrieve_visual_chunks(query=query, scope=scope)
+            if self._allows_visual_answer_content(route_decision)
+            else []
+        )
         base_order = (graph_chunks + retrieved) if route_decision.graph_priority else (retrieved + graph_chunks)
         candidates = dedupe_retrieved_chunks(base_order + visual_chunks)
         use_reranker = flags.get("reranker_enabled", self.settings.reranker_enabled)
@@ -368,12 +545,44 @@ class InferenceEngine:
                 ensure_material_coverage_fn=self._ensure_material_coverage,
             )
 
-        substantive = self._filter_substantive_chunks(reranked)
+        trace.set("retrieved_chunk_ids", [c.chunk_id for c in reranked])
+        trace.set("rerank_scores", [
+            round(c.rerank_score, 4) for c in reranked if c.rerank_score is not None
+        ])
+
+        # ── Deterministic table aggregation (Stage 5) ───────────────────────
+        # For sum/avg/max/min/count over a table, compute the exact answer from
+        # the FULL column instead of letting RAG guess from top-k rows. None ⇒
+        # fall through to the normal generation path (no regression).
+        if (
+            route_decision.preferred_modality == PreferredModality.TABLE
+            and route_decision.table_query_type == TableQueryType.AGGREGATION
+        ):
+            with trace.stage("table_executor"):
+                agg_response = await self._try_table_aggregation(
+                    query=query, reranked=reranked, processed=processed, trace=trace, _t_total=_t_total,
+                )
+            if agg_response is not None:
+                return agg_response
+
+        substantive = self._filter_substantive_chunks(
+            reranked, preferred_modality=self._modality_str(route_decision)
+        )
         context_chunks = self._pack_context_chunks(substantive)
-        confidence = self.confidence_scorer.score(reranked)
-        _ev_decision = self.refusal_policy.check_evidence(reranked, query, aux_query=processed.translated_query or "")
+        # Confidence and evidence gate operate on context_chunks — what actually
+        # goes into the prompt. Using reranked here caused a signal/prompt mismatch:
+        # _filter_substantive_chunks could drop key evidence after the gate passed.
+        confidence = self.confidence_scorer.score(context_chunks)
+        with trace.stage("validate"):
+            _ev_decision = self.evidence_validator.validate(
+                query=query,
+                chunks=context_chunks,
+                preferred_modality=self._modality_str(route_decision),
+                aux_query=processed.translated_query or "",
+            )
         should_refuse = _ev_decision.should_refuse
         refusal_reason = _ev_decision.reason
+        trace.set("validator_result", _ev_decision.model_dump(mode="json"))
 
         # Per-route refusal relaxation — pipelines opt in via `hooks.relax_refusal`.
         # SUMMARIZATION / CLAIM_CHECK / COMPARISON / GRAPH_RELATION all relax;
@@ -398,8 +607,12 @@ class InferenceEngine:
                 if refusal_reason not in (None, "partial_confidence"):
                     refusal_reason = None
 
-        citations = self.response_parser.citations_from_chunks(context_chunks, focus_text=query)
+        citations = self.response_parser.citations_from_chunks(
+            context_chunks, focus_text=query,
+            owner_id=scope.owner_id, api_v1_prefix=self.settings.api_v1_prefix,
+        )
         if should_refuse:
+            trace.latency_by_stage["total"] = int((time.perf_counter() - _t_total) * 1000)
             return QueryResponse(
                 answer=REFUSAL_ANSWER,
                 answer_language=processed.answer_language,
@@ -410,6 +623,8 @@ class InferenceEngine:
                 confidence=confidence,
                 was_refused=True,
                 refusal_reason=refusal_reason,
+                query_id=trace.query_id,
+                trace=trace.to_dict(),
             )
 
         prompt = self._build_prompt(
@@ -418,9 +633,12 @@ class InferenceEngine:
             answer_language=processed.answer_language,
             memory_context=memory_context or "",
             route_type=route_decision.route_type,
+            preferred_modality=self._modality_str(route_decision),
+            trace=trace,
         )
         try:
-            answer = await self.llm.generate(prompt=prompt)
+            with trace.stage("generate"):
+                answer = await self.llm.generate(prompt=prompt)
         except Exception as exc:
             logger.error(
                 "LLM generation failed",
@@ -487,6 +705,13 @@ class InferenceEngine:
         if not should_refuse:
             answer = self.response_parser.strip_unverified_acronym_expansions(answer, context_chunks)
             answer = self.response_parser.inject_citations(answer, context_chunks)
+            label_answer = self._maybe_answer_standalone_label_query(
+                query=query,
+                chunks=context_chunks,
+                answer_language=processed.answer_language,
+            )
+            if label_answer is not None:
+                answer = label_answer
             invalid_citations = self.response_parser.invalid_citation_numbers(answer, len(context_chunks))
             if invalid_citations:
                 logger.warning(
@@ -570,6 +795,7 @@ class InferenceEngine:
             and self.visual_provider is not None
             and self.settings.visual_embedding_enabled
             and context_chunks
+            and self._allows_visual_answer_content(route_decision)
         ):
             try:
                 visual_inline_hits = await self.retriever.retrieve_visual(
@@ -595,6 +821,8 @@ class InferenceEngine:
                     visual_hits=visual_inline_hits,
                     owner_id=scope.owner_id,
                 )
+        elif not self._allows_visual_answer_content(route_decision):
+            answer = self._strip_inline_image_markdown(answer)
 
         # Build reasoning path for transparency
         reasoning_path = await build_reasoning_path(
@@ -605,16 +833,26 @@ class InferenceEngine:
             use_graph=route_decision.use_graph,
         )
 
+        # Refine each citation's primary block using SLEC's per-sentence
+        # supporting_block_ids — better than query-token overlap for surfacing
+        # the exact block that backs what the answer actually says.
+        if not should_refuse and sentence_coverage_report and context_chunks:
+            citations = self._refine_citation_blocks(
+                citations, context_chunks, sentence_coverage_report
+            )
+
         # Keep only citations the answer actually cites (drops off-topic low-rank
         # context), renumbering markers + SLEC refs in lockstep. Done before the
         # visual-hit append so figure citations are preserved.
-        answer, citations, sentence_coverage_report = self._prune_to_cited(
-            answer, citations, sentence_coverage_report
+        # Pass context_chunks so pruned_chunks stays aligned with pruned citations
+        # (citation aligner needs the correct chunk[ref-1] after renumbering).
+        answer, citations, sentence_coverage_report, pruned_chunks = self._prune_to_cited(
+            answer, citations, sentence_coverage_report, chunks=context_chunks
         )
 
         # Visual hits become citations too so the frontend VisualCitationStrip
         # can surface them next to the inline figures.
-        if visual_inline_hits:
+        if visual_inline_hits and self._allows_visual_answer_content(route_decision):
             existing = {(c.doc_id, c.page, c.block_id) for c in citations}
             for h in visual_inline_hits:
                 key = (h.material_id, h.page or None, h.block_id or None)
@@ -630,6 +868,47 @@ class InferenceEngine:
                 if eid and eid not in used_entity_ids:
                     used_entity_ids.append(eid)
 
+        # ── Citation aligner + Quality gate (Phase 5) ─────────────────────────
+        # Run after _prune_to_cited so citation numbering is stable.
+        # Non-blocking: exceptions fall through without changing the answer.
+        if not should_refuse and answer and pruned_chunks:
+            try:
+                _modality_str = self._modality_str(route_decision.preferred_modality)
+                _alignment = self.citation_aligner.align(
+                    answer=answer,
+                    chunks=pruned_chunks,  # aligned with post-prune [N] numbering
+                    slec_report=sentence_coverage_report,
+                    preferred_modality=_modality_str,
+                )
+                _gate = self.quality_gate.evaluate(
+                    slec_report=sentence_coverage_report,
+                    alignment=_alignment,
+                    confidence=confidence,
+                )
+                trace.set("quality_stage_verdicts", _gate.verdicts_dict())
+                trace.set("citation_error_count", _alignment.invalid_citation_count)
+                trace.set(
+                    "claim_count",
+                    sentence_coverage_report.total_sentences if sentence_coverage_report else 0,
+                )
+                if _alignment.invalid_citation_count > 0:
+                    # Use corrected answer (invalid [N] markers stripped) silently
+                    answer = _alignment.corrected_answer
+                # Enforce gate: refuse when 2+ quality stages FAIL
+                if _gate.should_refuse and not should_refuse:
+                    should_refuse = True
+                    refusal_reason = "quality_gate_multi_stage_fail"
+                    answer = REFUSAL_ANSWER
+            except Exception as _exc:
+                logger.warning(
+                    "Quality gate failed — keeping original answer",
+                    extra={"owner_id": scope.owner_id, "error": str(_exc)},
+                )
+
+        if not self._allows_visual_answer_content(route_decision):
+            answer = self._strip_inline_image_markdown(answer)
+
+        trace.latency_by_stage["total"] = int((time.perf_counter() - _t_total) * 1000)
         final_response = QueryResponse(
             answer=answer,
             answer_language=processed.answer_language,
@@ -643,6 +922,8 @@ class InferenceEngine:
             reasoning_path=reasoning_path,
             sentence_coverage=sentence_coverage_report,
             used_entity_ids=used_entity_ids,
+            query_id=trace.query_id,
+            trace=trace.to_dict(),
         )
 
         # Store in semantic cache for future similar queries (skip when refused)
@@ -748,7 +1029,7 @@ class InferenceEngine:
                         "owner_id": scope.owner_id,
                         "route": route_decision.route_type.value,
                         "hits": len(dense_only),
-                        "top_score": round(max((c.dense_score or 0.0) for c in dense_only), 3),
+                        "top_score": round(max((c.fused_score or 0.0) for c in dense_only), 3),
                     },
                 )
 
@@ -757,7 +1038,10 @@ class InferenceEngine:
         try:
             if not fast_path_taken_stream:
                 retrieval_tasks = [
-                    self.retriever.retrieve(query=rq, scope=scope, limit=retrieval_limit)
+                    self.retriever.retrieve(
+                        query=rq, scope=scope, limit=retrieval_limit,
+                        preferred_modality=self._modality_str(route_decision),
+                    )
                     for rq in retrieval_inputs
                 ]
                 graph_task = (
@@ -793,7 +1077,11 @@ class InferenceEngine:
             yield f"event: error\ndata: {err}\n\n"
             return
 
-        visual_chunks = await self._retrieve_visual_chunks(query=query, scope=scope)
+        visual_chunks = (
+            await self._retrieve_visual_chunks(query=query, scope=scope)
+            if self._allows_visual_answer_content(route_decision)
+            else []
+        )
         base_order = (graph_chunks + retrieved) if route_decision.graph_priority else (retrieved + graph_chunks)
         candidates = dedupe_retrieved_chunks(base_order + visual_chunks)
         if fast_path_taken_stream:
@@ -818,10 +1106,17 @@ class InferenceEngine:
 
         # Phase C — pipeline dispatch (stream parity).
         pipeline_stream = get_pipeline(route_decision.route_type)
-        substantive = self._filter_substantive_chunks(reranked)
+        substantive = self._filter_substantive_chunks(
+            reranked, preferred_modality=self._modality_str(route_decision)
+        )
         context_chunks = self._pack_context_chunks(substantive)
-        confidence = self.confidence_scorer.score(reranked)
-        _ev_decision = self.refusal_policy.check_evidence(reranked, query, aux_query=processed.translated_query or "")
+        confidence = self.confidence_scorer.score(context_chunks)
+        _ev_decision = self.evidence_validator.validate(
+            query=query,
+            chunks=context_chunks,
+            preferred_modality=self._modality_str(route_decision),
+            aux_query=processed.translated_query or "",
+        )
         should_refuse = _ev_decision.should_refuse
         refusal_reason = _ev_decision.reason
         if pipeline_stream.hooks.relax_refusal and reranked:
@@ -836,7 +1131,10 @@ class InferenceEngine:
                 if refusal_reason not in (None, "partial_confidence"):
                     refusal_reason = None
 
-        citations = self.response_parser.citations_from_chunks(context_chunks, focus_text=query)
+        citations = self.response_parser.citations_from_chunks(
+            context_chunks, focus_text=query,
+            owner_id=scope.owner_id, api_v1_prefix=self.settings.api_v1_prefix,
+        )
 
         if should_refuse:
             response = QueryResponse(
@@ -860,6 +1158,7 @@ class InferenceEngine:
             answer_language=processed.answer_language,
             memory_context=memory_context or "",
             route_type=route_decision.route_type,
+            preferred_modality=self._modality_str(route_decision),
         )
         accumulated = ""
         try:
@@ -941,6 +1240,49 @@ class InferenceEngine:
                     extra={"owner_id": scope.owner_id, "error": str(exc)},
                 )
                 sentence_coverage_report = None
+
+        # Mirror non-stream: refine citation blocks using SLEC supporting_block_ids
+        if not should_refuse and sentence_coverage_report and context_chunks:
+            citations = self._refine_citation_blocks(
+                citations, context_chunks, sentence_coverage_report
+            )
+
+        # Mirror non-stream: prune to only cited chunks and renumber markers
+        pruned_chunks_stream: list[RetrievedChunk] = []
+        if not should_refuse:
+            answer, citations, sentence_coverage_report, pruned_chunks_stream = self._prune_to_cited(
+                answer, citations, sentence_coverage_report, chunks=context_chunks
+            )
+
+        # Citation aligner + quality gate (stream path — no trace in streaming)
+        if not should_refuse and answer and (pruned_chunks_stream or context_chunks):
+            try:
+                _modality_str = self._modality_str(route_decision.preferred_modality)
+                _alignment = self.citation_aligner.align(
+                    answer=answer,
+                    chunks=pruned_chunks_stream or context_chunks,
+                    slec_report=sentence_coverage_report,
+                    preferred_modality=_modality_str,
+                )
+                _gate_stream = self.quality_gate.evaluate(
+                    slec_report=sentence_coverage_report,
+                    alignment=_alignment,
+                    confidence=confidence,
+                )
+                if _gate_stream.should_refuse and not should_refuse:
+                    should_refuse = True
+                    refusal_reason = "quality_gate_multi_stage_fail"
+                    answer = REFUSAL_ANSWER
+                elif _alignment.invalid_citation_count > 0:
+                    answer = _alignment.corrected_answer
+            except Exception as _exc:
+                logger.warning(
+                    "Citation aligner / quality gate failed in stream",
+                    extra={"owner_id": scope.owner_id, "error": str(_exc)},
+                )
+
+        if not self._allows_visual_answer_content(route_decision):
+            answer = self._strip_inline_image_markdown(answer)
 
         response = QueryResponse(
             answer=answer,
@@ -1199,6 +1541,103 @@ Output:\
             logger.warning("Self-RAG reflection failed", extra={"error": str(exc)})
             return answer
 
+    @staticmethod
+    def _modality_str(route_decision: RouteDecision | PreferredModality | str | None) -> str | None:
+        """Modality value for retrieval/prompt dispatch, or None for plain text.
+
+        Accepts either a full RouteDecision or the modality value itself. Some
+        post-generation callers only have `route_decision.preferred_modality`;
+        treating that enum like a RouteDecision silently returned None and
+        disabled modality-specific citation validation.
+        """
+        if route_decision is None:
+            return None
+        if isinstance(route_decision, str):
+            return None if route_decision == "none" else route_decision
+        if isinstance(route_decision, PreferredModality):
+            return None if route_decision == PreferredModality.NONE else route_decision.value
+        modality = getattr(route_decision, "preferred_modality", PreferredModality.NONE)
+        return None if modality == PreferredModality.NONE else modality.value
+
+    async def _try_table_aggregation(
+        self, *, query: str, reranked: list[RetrievedChunk], processed, trace: RequestTrace, _t_total: float,
+    ) -> "QueryResponse | None":
+        """Deterministically answer a table aggregation from the full column.
+
+        Returns a grounded QueryResponse on success, or None to fall back to RAG.
+        """
+        from beanie import PydanticObjectId
+
+        from src.models.material import MaterialPageDocument
+        from src.processing import table_executor
+
+        # A table is in scope if any retrieved chunk references a sheet — this
+        # covers both the HTML grid chunk (modality="table") and the verbalized
+        # row chunks (modality="text"); the executor reloads the full grid from
+        # Mongo either way.
+        tbl = next((c for c in reranked if (c.metadata or {}).get("sheet_names")), None)
+        if tbl is None:
+            tbl = next((c for c in reranked if c.modality == "table"), None)
+        if tbl is None:
+            return None
+        sheets = (tbl.metadata or {}).get("sheet_names") or []
+        sheet = sheets[0] if sheets else None
+        try:
+            pages = await MaterialPageDocument.find(
+                {"material_id": PydanticObjectId(tbl.material_id)}
+            ).to_list()
+        except Exception:
+            return None
+        blocks = [b for page in pages for b in page.blocks]
+        result = table_executor.execute(blocks=blocks, query=query, sheet_name=sheet)
+        if result is None:
+            return None
+
+        answer = self._format_aggregation_answer(result, processed.answer_language)
+        citations = self.response_parser.citations_from_chunks([tbl], focus_text=query)
+        trace.update(table_aggregation=result.operation, table_value=result.value, table_n_rows=result.n_rows)
+        trace.latency_by_stage["total"] = int((time.perf_counter() - _t_total) * 1000)
+        logger.info(
+            "Table aggregation answered deterministically",
+            extra={"op": result.operation, "column": result.column, "n_rows": result.n_rows},
+        )
+        return QueryResponse(
+            answer=answer,
+            answer_language=processed.answer_language,
+            query_language=processed.query_language,
+            translated_query=processed.translated_query,
+            source_languages=sorted({c.source_language for c in citations}),
+            citations=citations,
+            confidence=0.95,
+            was_refused=False,
+            query_id=trace.query_id,
+            trace=trace.to_dict(),
+        )
+
+    @staticmethod
+    def _format_aggregation_answer(result, language: str) -> str:
+        """Render a one-sentence grounded answer with an inline [1] citation."""
+        value = result.value
+        num = f"{int(value):,}".replace(",", ".") if float(value).is_integer() else f"{value:,.2f}"
+        col = result.column
+        if language == "en":
+            tmpl = {
+                "sum": f"The total {col} is {num} [1].",
+                "avg": f"The average {col} is {num} [1].",
+                "max": f"{result.arg_label} has the highest {col} at {num} [1].",
+                "min": f"{result.arg_label} has the lowest {col} at {num} [1].",
+                "count": f"There are {int(value)} rows in the table [1].",
+            }
+        else:
+            tmpl = {
+                "sum": f"Tổng {col} là {num} [1].",
+                "avg": f"{col} trung bình là {num} [1].",
+                "max": f"{result.arg_label} có {col} cao nhất, là {num} [1].",
+                "min": f"{result.arg_label} có {col} thấp nhất, là {num} [1].",
+                "count": f"Bảng có tất cả {int(value)} dòng [1].",
+            }
+        return tmpl.get(result.operation, f"{col}: {num} [1].")
+
     def _build_prompt(
         self,
         *,
@@ -1208,13 +1647,24 @@ Output:\
         memory_context: str = "",
         route_type: RouteType = RouteType.GENERAL,
         plan_type: str | None = None,
+        preferred_modality: str | None = None,
+        trace: RequestTrace | None = None,
     ) -> str:
         if plan_type == "multi_source_general":
             prompt_file = self.settings.inference_multi_source_prompt_file
+        elif preferred_modality in ("table", "figure"):
+            # Modality-specific prompt overrides the intent-route prompt: a table
+            # question needs grid-reasoning instructions regardless of route_type.
+            prompt_file = self.settings.inference_route_prompt_map.get(
+                preferred_modality,
+                "qa_table.txt" if preferred_modality == "table" else "qa_figure.txt",
+            )
         else:
             prompt_file = self.settings.inference_route_prompt_map.get(
                 route_type.value, self.settings.inference_default_prompt_file
             )
+        if trace is not None:
+            trace.set("prompt_file", prompt_file)
         template_path = project_root() / "backend" / "src" / "prompts" / prompt_file
         template = template_path.read_text(encoding="utf-8")
         lang_name = self.settings.inference_language_names.get(answer_language, answer_language)
@@ -1266,29 +1716,39 @@ Output:\
     def _scaled_limit(base: int, decision: RouteDecision) -> int:
         return max(1, math.ceil(base * decision.top_k_multiplier))
 
-    def _filter_substantive_chunks(self, chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
-        """Remove TOC entries, table metadata, resource tips, and content-free chunks."""
+    def _filter_substantive_chunks(
+        self, chunks: list[RetrievedChunk], *, preferred_modality: str | None = None
+    ) -> list[RetrievedChunk]:
+        """Remove TOC entries, table metadata, resource tips, and content-free chunks.
+
+        When the query is table-routed we KEEP table content (verbalized rows + the
+        HTML/markdown grid) — dropping it is exactly what broke table reasoning. For
+        every other route the behaviour is byte-identical to before.
+        """
         _TOC_NUM_RE = re.compile(r"^\d+\.\s+\d+\.\s")
-        _TABLE_ROW_RE = re.compile(r"^Hàng \d+", re.IGNORECASE)
+        # "Hàng N" / "Row N" verbalized table rows
+        _TABLE_ROW_RE = re.compile(r"^(?:Hàng|Row)\s+\d+", re.IGNORECASE)
         _TOC_CHAPTER_RE = re.compile(r"^trang\s+\d+", re.IGNORECASE)
-        _MARKDOWN_TABLE_RE = re.compile(r"^\|")
+        # markdown pipe rows OR the structured HTML grid
+        _TABLE_GRID_RE = re.compile(r"^(?:\||<table)", re.IGNORECASE)
         prefixes = self.settings.inference_substantive_chunk_filter_prefixes
         _RESOURCE_TIP_RE = re.compile(
             r"^(" + "|".join(re.escape(p) for p in prefixes) + r")",
             re.IGNORECASE,
         )
         min_chars = self.settings.inference_min_chunk_chars
+        keep_tables = preferred_modality == "table"
 
         filtered = []
         for chunk in chunks:
             text = chunk.content.strip()
             if _TOC_NUM_RE.match(text):
                 continue
-            if _TABLE_ROW_RE.match(text):
+            if not keep_tables and _TABLE_ROW_RE.match(text):
                 continue
             if _TOC_CHAPTER_RE.match(text):
                 continue
-            if _MARKDOWN_TABLE_RE.match(text):
+            if not keep_tables and _TABLE_GRID_RE.match(text):
                 continue
             if _RESOURCE_TIP_RE.match(text):
                 continue

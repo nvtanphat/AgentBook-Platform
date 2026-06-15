@@ -69,7 +69,9 @@ class GuardrailsAgent(BaseAgent):
 
         if cross_lingual:
             nli_enabled = getattr(getattr(self.verifier_tool, "verifier", None), "nli_enabled", False)
-            if not nli_enabled:
+            from src.rag.query_router import RouteType
+            is_claim_check = bool(state.route and state.route.route_type == RouteType.CLAIM_CHECK)
+            if not nli_enabled and not is_claim_check:
                 # Grounding check only — citation marker validity and unsupported
                 # paragraph detection are both language-agnostic structural checks.
                 unsupported, invalid = self._grounding_report(

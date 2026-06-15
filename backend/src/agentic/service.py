@@ -101,7 +101,7 @@ class AgenticCoordinatingEngine:
         self.engine = engine
         self.planner = AgenticPlanner()
         self._rerank_fallback_semaphore = asyncio.Semaphore(1)
-        _pattern = engine.settings.extraction_anaphora_pattern or (
+        _pattern = getattr(engine.settings, "extraction_anaphora_pattern", None) or (
             r"\b(nó|chúng|họ|điều này|điều đó|vấn đề này|khái niệm này|cái này|cái đó|"
             r"it|they|them|this|that|these|those|"
             r"the concept|the topic|the above|the same|the latter|the former)\b"
@@ -160,6 +160,21 @@ class AgenticCoordinatingEngine:
             anaphora_resolution_enabled=bool(getattr(engine.settings, "agentic_anaphora_resolution_enabled", True)),
             planner_llm_enabled=bool(getattr(engine.settings, "agentic_planner_llm_enabled", False)),
         )
+
+    def _clean_answer_text(
+        self,
+        answer: str,
+        chunks: list[RetrievedChunk],
+        answer_language: str | None,
+    ) -> str:
+        """Apply optional response-parser cleanup hooks when available."""
+        strip_acronyms = getattr(self.engine.response_parser, "strip_unverified_acronym_expansions", None)
+        if callable(strip_acronyms):
+            answer = strip_acronyms(answer, chunks)
+        strip_language_drift = getattr(self.engine.response_parser, "strip_language_drift", None)
+        if callable(strip_language_drift):
+            answer = strip_language_drift(answer, answer_language)
+        return answer
 
     # ── Public entrypoint ────────────────────────────────────────────────
     async def answer(
@@ -307,25 +322,16 @@ class AgenticCoordinatingEngine:
         # ── Rerank cleaned evidence + finalise context ──────────────────
         candidates = state.cleaned_evidence or state.raw_evidence
         if candidates:
-            # Skip second rerank when evidence came from a single retrieval pass
-            # (no sub-questions, no per-source splits). HybridTextSearchTool already
-            # reranked internally — running _arerank again doubles embedding latency
-            # (~27s) with identical results for FACTUAL/GENERAL single-hop queries.
-            single_pass = (
-                not state.sub_questions
-                and not state.use_per_source
-                and len(state.retrieval_queries) <= 1
+            # Always rerank: HybridTextSearchTool only calls retriever.retrieve()
+            # (RRF fusion, no cross-encoder). Skipping here means raw fused-score
+            # order becomes final context — reranker is the main quality signal.
+            reranked = await self._arerank(
+                query=state.resolved_query,
+                queries=state.retrieval_queries,
+                chunks=candidates,
+                limit=final_limit,
+                use_mmr=route.use_mmr,
             )
-            if single_pass:
-                reranked = candidates[:final_limit]
-            else:
-                reranked = await self._arerank(
-                    query=state.resolved_query,
-                    queries=state.retrieval_queries,
-                    chunks=candidates,
-                    limit=final_limit,
-                    use_mmr=route.use_mmr,
-                )
             reranked = self._ensure_context_coverage(
                 selected=reranked, candidates=candidates,
                 expected_material_ids=state.expected_material_ids, limit=final_limit,
@@ -375,8 +381,11 @@ class AgenticCoordinatingEngine:
             state.was_refused = True
             state.refusal_reason = "LLM returned an empty grounded answer"
             return await self._build_query_response(state, processed=processed, route=route, answer=REFUSAL_ANSWER)
-        answer = self.engine.response_parser.strip_unverified_acronym_expansions(answer, state.context_chunks)
-        answer = self.engine.response_parser.strip_language_drift(answer, state.answer_language or processed.answer_language)
+        answer = self._clean_answer_text(
+            answer,
+            state.context_chunks,
+            state.answer_language or processed.answer_language,
+        )
         answer = self.engine.response_parser.inject_citations(answer, state.context_chunks)
         state.draft_answer = answer
         state.final_answer = answer
@@ -409,8 +418,11 @@ class AgenticCoordinatingEngine:
                 ),
             )
             if repaired.strip():
-                repaired = self.engine.response_parser.strip_unverified_acronym_expansions(repaired, state.context_chunks)
-                repaired = self.engine.response_parser.strip_language_drift(repaired, state.answer_language or processed.answer_language)
+                repaired = self._clean_answer_text(
+                    repaired,
+                    state.context_chunks,
+                    state.answer_language or processed.answer_language,
+                )
                 state.final_answer = self.engine.response_parser.inject_citations(repaired, state.context_chunks)
                 await self.agent_guardrails.act(state)
                 guard = state.guardrail_report
@@ -499,17 +511,21 @@ class AgenticCoordinatingEngine:
             await self._emit_step(state.steps_history[-1], on_step)
             if critic_verdict.verdict == "refine" and critic_verdict.follow_up_queries:
                 extras: list[RetrievedChunk] = []
-                for fq in critic_verdict.follow_up_queries[:self.engine.settings.agentic_critic_max_follow_ups]:
+                max_follow_ups = int(getattr(self.engine.settings, "agentic_critic_max_follow_ups", 2))
+                for fq in critic_verdict.follow_up_queries[:max_follow_ups]:
                     result = await self.text_tool.run(query=fq, scope=scope, limit=4)
                     if result.success and result.data:
                         extras.extend(result.data)
                 if extras:
-                    augmented = dedupe_retrieved_chunks(state.context_chunks + extras)[: final_limit + self.engine.settings.agentic_critic_context_buffer]
+                    context_buffer = int(getattr(self.engine.settings, "agentic_critic_context_buffer", 4))
+                    augmented = dedupe_retrieved_chunks(state.context_chunks + extras)[: final_limit + context_buffer]
                     state.context_chunks = augmented
                     await self.agent_synthesizer.act(state, mode="repair")
                     if state.final_answer.strip():
-                        state.final_answer = self.engine.response_parser.strip_unverified_acronym_expansions(
-                            state.final_answer, augmented,
+                        state.final_answer = self._clean_answer_text(
+                            state.final_answer,
+                            augmented,
+                            state.answer_language or processed.answer_language,
                         )
                         state.final_answer = self.engine.response_parser.inject_citations(
                             state.final_answer, augmented,
@@ -531,7 +547,7 @@ class AgenticCoordinatingEngine:
         # chunks that merely mention the query topic without grounding it.
         if (
             not should_refuse
-            and self.engine.settings.slec_enabled
+            and bool(getattr(self.engine.settings, "slec_enabled", False))
             and state.context_chunks
             and state.final_answer.strip()
             and state.final_answer != REFUSAL_ANSWER
@@ -761,8 +777,8 @@ class AgenticCoordinatingEngine:
         )
         # Keep only citations the answer cites (same policy as the direct engine
         # path) — drops off-topic low-rank context, renumbers markers + SLEC refs.
-        answer, state.citations, state.sentence_coverage_report = InferenceEngine._prune_to_cited(
-            answer, state.citations, state.sentence_coverage_report
+        answer, state.citations, state.sentence_coverage_report, _ = InferenceEngine._prune_to_cited(
+            answer, state.citations, state.sentence_coverage_report, chunks=state.context_chunks
         )
         return QueryResponse(
             answer=answer,

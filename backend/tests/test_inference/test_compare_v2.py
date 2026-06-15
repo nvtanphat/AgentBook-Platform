@@ -42,7 +42,7 @@ def _chunk(material_id: str, dimension: str) -> RetrievedChunk:
 
 
 class FakeRetriever:
-    async def retrieve(self, *, query: str, scope: RetrievalScope, limit: int | None = None):
+    async def retrieve(self, *, query: str, scope: RetrievalScope, limit: int | None = None, preferred_modality: str | None = None):
         material_id = scope.material_ids[0]
         if material_id == "source_b" and "hạn chế" in query:
             return []
@@ -51,7 +51,7 @@ class FakeRetriever:
 
 
 class OSErrorRetriever:
-    async def retrieve(self, *, query: str, scope: RetrievalScope, limit: int | None = None):
+    async def retrieve(self, *, query: str, scope: RetrievalScope, limit: int | None = None, preferred_modality: str | None = None):
         raise OSError(22, "Invalid argument")
 
 

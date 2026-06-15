@@ -272,7 +272,7 @@ class RetrieverDirectorAgent(BaseAgent):
         # ── Merge + dedup ──────────────────────────────────────────────────────
         all_chunks = [*text_chunks, *per_source_chunks, *graph_chunks]
         merged = dedupe_retrieved_chunks(all_chunks)
-        if self.semantic_dedup_threshold < 1.0:
+        if self.semantic_dedup_threshold < 1.0 and not state.requires_coverage:
             merged = semantic_dedupe_chunks(merged, threshold=self.semantic_dedup_threshold)
 
         state.raw_evidence = merged
@@ -289,4 +289,3 @@ class RetrieverDirectorAgent(BaseAgent):
             },
         )
         return state
-

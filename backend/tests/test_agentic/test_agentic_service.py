@@ -61,7 +61,7 @@ class FakeRetriever:
     def __init__(self) -> None:
         self.calls: list[tuple[str, list[str]]] = []
 
-    async def retrieve(self, *, query: str, scope: RetrievalScope, limit: int | None = None):
+    async def retrieve(self, *, query: str, scope: RetrievalScope, limit: int | None = None, preferred_modality: str | None = None):
         self.calls.append((query, list(scope.material_ids)))
         material_ids = scope.material_ids or ["65f000000000000000000001", "65f000000000000000000002"]
         return [_chunk(material_id) for material_id in material_ids[: max(1, min(len(material_ids), limit or 2))]]

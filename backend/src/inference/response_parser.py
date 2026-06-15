@@ -113,11 +113,49 @@ class ResponseParser:
             )
         return "\n\n".join(lines)
 
-    def citations_from_chunks(self, chunks: list[RetrievedChunk], *, focus_text: str | None = None) -> list[CitationSchema]:
+    @classmethod
+    def _extract_cited_span(cls, snippet: str, focus_text: str | None) -> str | None:
+        """Extract the single sentence from snippet most relevant to focus_text.
+
+        Splits the snippet into sentences, scores each by token overlap with
+        focus_text, returns the best if its score > 0 and it's meaningfully
+        shorter than the full snippet (otherwise the whole snippet IS the span).
+        """
+        if not snippet or not focus_text:
+            return None
+        sentences = [s.strip() for s in re.split(r"(?<=[.!?…])\s+", snippet.strip()) if s.strip()]
+        if len(sentences) <= 1:
+            return None
+        focus_tokens = cls._token_set(focus_text)
+        if not focus_tokens:
+            return None
+        best_sent, best_score = None, 0
+        for sent in sentences:
+            score = len(focus_tokens & cls._token_set(sent))
+            if score > best_score:
+                best_score, best_sent = score, sent
+        if best_score == 0 or best_sent is None:
+            return None
+        # Only return span when it's meaningfully shorter than the full snippet
+        if len(best_sent) / max(1, len(snippet)) > 0.85:
+            return None
+        return best_sent
+
+    def citations_from_chunks(
+        self,
+        chunks: list[RetrievedChunk],
+        *,
+        focus_text: str | None = None,
+        owner_id: str | None = None,
+        api_v1_prefix: str = "/api/v1",
+    ) -> list[CitationSchema]:
         """One citation per chunk — index N in this list matches [N] in the LLM answer.
 
         Chunk order must match the order used in format_evidence_for_prompt so that
         [1]…[N] markers in the LLM answer map to citations[0]…[N-1].
+
+        Pass owner_id + api_v1_prefix to enable figure_image_url population on
+        figure-type evidence blocks (so frontend can render actual figure images).
         """
         citations: list[CitationSchema] = []
         for i, chunk in enumerate(chunks):
@@ -125,11 +163,10 @@ class ResponseParser:
             pages = sorted({e.page for e in evs}) if evs else sorted(set(chunk.source_pages))
             page = pages[0] if pages else None
             # Prefer the most substantive block — filter TOC entries ("Trang N - ..."),
-            # slide headers, and very short blocks; fall back to first block if needed.
+            # slide headers; keep short OCR labels because they may be the answer.
             substantive_evs = [
                 e for e in evs
-                if len(e.snippet_original.strip()) >= 40
-                and not _TOC_ENTRY_RE.match(e.snippet_original.strip())
+                if not _TOC_ENTRY_RE.match(e.snippet_original.strip())
             ]
             primary_ev = self._select_primary_evidence(
                 substantive_evs if substantive_evs else evs,
@@ -138,9 +175,17 @@ class ResponseParser:
 
             # All contributing blocks exposed for downstream spatial rendering.
             # Audio blocks carry start/end timestamps in metadata → forward for UI seek.
+            # Figure blocks carry figure_image_url when owner_id is available.
             evidence_blocks = []
             for e in evs:
                 meta = e.metadata or {}
+                fig_url: str | None = None
+                if owner_id and e.block_type == "figure" and meta.get("figure_image_path"):
+                    from urllib.parse import quote as _quote
+                    fig_url = (
+                        f"{api_v1_prefix}/evidence/figure/{e.material_id}"
+                        f"?block_id={_quote(e.block_id, safe='')}&owner_id={owner_id}"
+                    )
                 evidence_blocks.append(EvidenceBlockSchema(
                     block_id=e.block_id,
                     block_type=e.block_type,
@@ -154,11 +199,19 @@ class ResponseParser:
                     audio_start_seconds=meta.get("start_seconds"),
                     audio_end_seconds=meta.get("end_seconds"),
                     audio_file=meta.get("audio_file"),
+                    figure_image_url=fig_url,
                 ))
 
             # Use the specific evidence block's page so block_id and page are consistent.
             # Fallback to pages[0] only when no primary_ev is available.
             citation_page = primary_ev.page if primary_ev else page
+            citation_snippet = self._citation_snippet(
+                primary_ev=primary_ev,
+                evidence=evs,
+                focus_text=focus_text,
+                modality=chunk.modality,
+            ) if primary_ev else chunk.content[:500]
+            cited_span = self._extract_cited_span(citation_snippet, focus_text)
             citations.append(
                 CitationSchema(
                     doc_id=primary_ev.material_id if primary_ev else chunk.material_id,
@@ -167,8 +220,8 @@ class ResponseParser:
                     pages=pages,
                     block_id=primary_ev.block_id if primary_ev else None,
                     block_type=primary_ev.block_type if primary_ev else None,
-                    # Block-level snippet is more precise than full chunk content (500-token cap as fallback)
-                    snippet_original=primary_ev.snippet_original if primary_ev else chunk.content[:500],
+                    snippet_original=citation_snippet,
+                    cited_span=cited_span,
                     bbox=BoundingBoxSchema.model_validate(primary_ev.bbox.model_dump()) if primary_ev and primary_ev.bbox else None,
                     role="primary" if i == 0 else "supporting",
                     source_language=chunk.language,
@@ -188,15 +241,101 @@ class ResponseParser:
         focus_tokens = self._token_set(focus_text or "")
         if not focus_tokens:
             return evidence[0]
+        visual_focus = bool(re.search(
+            r"\b(image|figure|picture|photo|chart|diagram|hình|ảnh|biểu đồ|sơ đồ)\b",
+            focus_text or "",
+            re.IGNORECASE,
+        ))
 
-        def score(ev) -> tuple[int, float, int]:
+        def score(ev) -> tuple[int, int, float, int]:
             ev_tokens = self._token_set(ev.snippet_original)
             overlap = len(focus_tokens & ev_tokens)
             confidence = float(ev.confidence or 0.0)
-            return (overlap, confidence, len(ev.snippet_original or ""))
+            block_type = (ev.block_type or "").lower()
+            is_visual_block = block_type in {"figure", "picture", "image"}
+            non_visual_bonus = 0 if (visual_focus or is_visual_block) else 1
+            return (overlap, non_visual_bonus, confidence, -len(ev.snippet_original or ""))
 
         best = max(evidence, key=score)
         return best if score(best)[0] > 0 else evidence[0]
+
+    def _citation_snippet(self, *, primary_ev, evidence: list, focus_text: str | None, modality: str | None) -> str:
+        """Build a judge/user-visible snippet for one citation.
+
+        Slide/OCR chunks often split one logical answer across several adjacent
+        short blocks. Keep the primary block id precise, but expose nearby blocks
+        in the snippet so the cited text actually proves the full sentence.
+        """
+        primary = (primary_ev.snippet_original or "").strip()
+        if not primary:
+            return ""
+        focus = (focus_text or "").lower()
+        if re.search(r"\b(nhãn|nhan|chức năng|chuc nang|label|function)\b", focus, re.IGNORECASE):
+            return primary
+        if len(primary) >= 900:
+            return self._focused_snippet_window(primary, focus_text=focus_text)
+        if modality not in {"heading", "mixed", "figure"} or len(primary) >= 220:
+            return primary
+
+        try:
+            start = next(
+                i for i, ev in enumerate(evidence)
+                if (ev.block_id or "") == (primary_ev.block_id or "")
+                and ev.page == primary_ev.page
+            )
+        except StopIteration:
+            return primary
+
+        parts: list[str] = []
+        seen: set[str] = set()
+        for ev in evidence[start:start + 5]:
+            snippet = (ev.snippet_original or "").strip()
+            if not snippet or _TOC_ENTRY_RE.match(snippet):
+                continue
+            if snippet in seen:
+                continue
+            seen.add(snippet)
+            parts.append(snippet)
+            if sum(len(p) for p in parts) >= 650:
+                break
+        return "\n".join(parts) if parts else primary
+
+    @staticmethod
+    def _focused_snippet_window(text: str, *, focus_text: str | None, max_chars: int = 1000) -> str:
+        """Trim long OCR/text blocks to the part most likely to prove the answer."""
+        clean = re.sub(r"\s+", " ", (text or "")).strip()
+        if len(clean) <= max_chars:
+            return clean
+
+        stopwords = {
+            "the", "and", "with", "from", "this", "that", "what", "which", "how",
+            "trong", "doan", "trich", "theo", "duoc", "nhung", "nao", "đoạn",
+            "trích", "được", "những", "nào",
+        }
+        tokens = [
+            token.lower()
+            for token in re.findall(r"[A-Za-z0-9À-ỹ]{4,}", focus_text or "")
+            if token.lower() not in stopwords
+        ]
+        lowered = clean.lower()
+        hit_positions: list[int] = []
+        for token in sorted(set(tokens), key=len, reverse=True):
+            pos = lowered.find(token)
+            if pos >= 0:
+                hit_positions.append(pos)
+        if not hit_positions:
+            return clean[:max_chars].rstrip()
+
+        center = min(hit_positions)
+        start = max(0, center - 300)
+        end = min(len(clean), start + max_chars)
+        start = max(0, end - max_chars)
+        snippet = clean[start:end].strip()
+        if start > 0:
+            snippet = "... " + snippet
+        if end < len(clean):
+            snippet = snippet + " ..."
+        return snippet
 
     def inject_citations(self, answer: str, chunks: list[RetrievedChunk]) -> str:
         """Ensure every sentence has a valid [N] citation.

@@ -24,7 +24,14 @@ _DOMAIN_SIGNALS = re.compile(
     r"difference|relationship|example|summarize|outline|prove|calculate|"
     r"tài liệu|chương|phần|trang|bài|slide|sách|giáo trình|đề cương|bài giảng|"
     r"tom tat|tong quan|tong hop|khai quat|trinh bay|phan tich|giai thich|"
-    r"so sanh|phan biet|khac voi|so voi|lien quan|dinh nghia|huong dan|mo ta|tai lieu|bai giang"
+    r"so sanh|phan biet|khac voi|so voi|lien quan|dinh nghia|huong dan|mo ta|tai lieu|bai giang|"
+    # Data / table / figure lookup intents — multi-domain (product, finance, legal…),
+    # not just academic. A "how much / how many / which row" question over an
+    # uploaded table is a knowledge query, not off-topic.
+    r"bao nhiêu|bao nhieu|giá|gia tien|gia ban|số lượng|so luong|danh sách|danh sach|liệt kê|liet ke|"
+    r"bảng|bang|cột|cot|hàng nào|dòng nào|giá trị|gia tri|"
+    r"tổng|tong|trung bình|trung binh|lớn nhất|lon nhat|nhỏ nhất|nho nhat|cao nhất|cao nhat|thấp nhất|thap nhat|"
+    r"how much|how many|list|total|average|sum|maximum|minimum|highest|lowest|price|cost|value|column|row"
     r")\b",
     re.IGNORECASE,
 )

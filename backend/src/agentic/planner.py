@@ -230,8 +230,8 @@ class AgenticPlanner:
         if route.route_type == RouteType.CLAIM_CHECK:
             return self._cap(
                 [
-                    AgenticSubQuestion(text=f"bằng chứng ủng hộ: {text}"),
-                    AgenticSubQuestion(text=f"bằng chứng phản bác: {text}"),
+                    AgenticSubQuestion(text=f"supporting evidence / bằng chứng ủng hộ: {text}"),
+                    AgenticSubQuestion(text=f"evidence that contradicts / bằng chứng phản bác: {text}"),
                 ]
             )
         if route.route_type == RouteType.SUMMARIZATION:
