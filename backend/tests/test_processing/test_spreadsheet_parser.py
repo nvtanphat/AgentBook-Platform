@@ -28,9 +28,11 @@ def test_csv_parser_converts_rows_to_table_blocks(tmp_path: Path) -> None:
 
     assert len(by_kind["table_block"]) == 2
     for block in by_kind["table_block"]:
-        assert "| student | score |" in block.content
+        assert block.content.startswith("<table><tr><th>student</th><th>score</th></tr>")
         assert block.block_type == "table"
+        assert block.extra["n_cols"] == 2 and block.extra["n_rows"] == 1
     assert by_kind["table_block"][0].extra["row_start"] == 2
+    assert "<td>An</td><td>9.5</td>" in by_kind["table_block"][0].content
 
     assert len(by_kind["table_row"]) == 2
     assert "Hàng 2" in by_kind["table_row"][0].content
@@ -56,7 +58,8 @@ def test_xlsx_parser_preserves_sheet_metadata(tmp_path: Path) -> None:
     table_blocks = [b for b in parsed.pages[0].blocks if b.block_type == "table"]
     assert table_blocks
     assert table_blocks[0].extra["sheet_name"] == "Metrics"
-    assert "| baseline | 0.42 |" in table_blocks[0].content
+    assert table_blocks[0].content.startswith("<table><tr><th>model</th><th>mse</th></tr>")
+    assert "<td>baseline</td><td>0.42</td>" in table_blocks[0].content
 
     summaries = [b for b in parsed.pages[0].blocks if b.extra.get("block_kind") == "table_summary"]
     assert summaries and "2 rows × 2 columns" in summaries[0].content

@@ -434,11 +434,19 @@ class EasyOCREngine:
         page_confidence = (
             sum(page_confidence_values) / len(page_confidence_values) if page_confidence_values else None
         )
+        img_w: int | None = None
+        img_h: int | None = None
+        try:
+            from PIL import Image as _PIL
+            with _PIL.open(str(image_path)) as _img:
+                img_w, img_h = _img.size
+        except Exception:
+            pass
         return ParsedDocument(
             source_path=str(image_path),
             file_type=image_path.suffix.lower().lstrip("."),
             language=language,
-            pages=[ParsedPage(page_number=1, ocr_confidence=page_confidence, blocks=blocks)],
+            pages=[ParsedPage(page_number=1, ocr_confidence=page_confidence, blocks=blocks, width=img_w, height=img_h)],
             extra={"parser": "easyocr", "ocr_lang": self.lang, **meta},
         )
 

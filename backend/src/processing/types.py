@@ -132,6 +132,7 @@ class ExtractedEntity(BaseModel):
     entity_type: str
     mention_refs: list[EvidenceBlock] = Field(default_factory=list)
     normalized_value: str | None = None
+    description: str | None = None
     confidence: float
 
 

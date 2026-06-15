@@ -16,6 +16,7 @@ import re
 import logging
 from collections import defaultdict
 
+from src.processing.slug import slugify
 from src.processing.types import EvidenceBlock, EvidenceMap, ExtractedEntity, ExtractedRelation
 
 logger = logging.getLogger(__name__)
@@ -36,7 +37,7 @@ _REF_PATTERNS: list[tuple[re.Pattern, str]] = [
 
 
 def _slug(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-") or "unknown"
+    return slugify(value)
 
 
 def _canonical_name(block: EvidenceBlock) -> str:

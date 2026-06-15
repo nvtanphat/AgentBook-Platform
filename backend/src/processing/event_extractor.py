@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import logging
 
+from src.processing.slug import slugify
 from src.processing.types import EvidenceBlock, EvidenceMap, ExtractedEntity, ExtractedEvent, ExtractedRelation
 
 logger = logging.getLogger(__name__)
@@ -193,6 +194,4 @@ class EventExtractor:
 
     @staticmethod
     def _slug(value: str) -> str:
-        lowered = value.lower()
-        slug = re.sub(r"[^a-z0-9]+", "-", lowered).strip("-")
-        return slug or "unknown"
+        return slugify(value)

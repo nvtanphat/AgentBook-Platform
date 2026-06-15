@@ -6,6 +6,7 @@ from datetime import date, datetime
 from pathlib import Path
 from uuid import NAMESPACE_URL, uuid5
 
+from src.processing import table_serializer
 from src.processing.types import BlockType, DependencyUnavailableError, ParsedBlock, ParsedDocument, ParsedPage
 
 
@@ -242,20 +243,22 @@ class SpreadsheetParser:
         if summary_block is not None:
             blocks.append(summary_block)
 
-        # Markdown table blocks (batched to keep chunks manageable)
+        # Structured HTML table blocks (batched to keep chunks manageable).
+        # HTML preserves the row/column grid so the LLM can do lookup / compare /
+        # aggregate; the per-row verbalized blocks below carry the keyword form.
         for start in range(0, len(data_rows), self.max_rows_per_block):
             row_batch = data_rows[start : start + self.max_rows_per_block]
-            markdown = self._to_markdown(header, row_batch)
-            if not markdown.strip():
+            grid_html = table_serializer.to_html(header, row_batch)
+            if not grid_html.strip() or not row_batch:
                 continue
             row_start = row_numbers[header_idx + 1 + start]
             row_end = row_numbers[header_idx + 1 + start + len(row_batch) - 1]
             blocks.append(
                 ParsedBlock(
-                    block_id=self._block_id(file_path, sheet_name, row_start, row_end, markdown),
+                    block_id=self._block_id(file_path, sheet_name, row_start, row_end, grid_html),
                     block_index=len(blocks),
                     block_type=BlockType.TABLE.value,
-                    content=markdown,
+                    content=grid_html,
                     page_number=page_number,
                     language=language,
                     reading_order=len(blocks),
@@ -266,6 +269,7 @@ class SpreadsheetParser:
                         "row_start": row_start,
                         "row_end": row_end,
                         "columns": header,
+                        **table_serializer.structured_meta(header, row_batch),
                     },
                 )
             )

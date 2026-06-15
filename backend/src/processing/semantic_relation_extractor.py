@@ -1,32 +1,24 @@
 """LLM-based semantic relation extractor.
 
-The regex-based RelationExtractor in this folder only catches surface-level
-verbal patterns and almost never produces concept-to-concept relations on
-mixed VI/EN scientific text. Most relations that end up in the DB are
-structural (`section_contains`, `mentioned_in_block`, `co_located_with`),
-which leaves the concept graph visually rich but semantically poor.
+Implements the SOTA hybrid 3-tier architecture described in
+sota_entity_relation_extraction.md:
 
-This module asks the LLM to enumerate typed relations between *already-
-extracted* concept entities, grounded in evidence passages. The output is a
-list of `ExtractedRelation` records ready to be persisted alongside the
-structural ones.
-
-Design notes:
-- Per-material call (not per-chunk) — one LLM invocation produces many
-  relations, keeping ingestion cost bounded.
-- Strictly typed vocabulary (see `_RELATION_VOCAB`) so downstream filters
-  and the viz layer can rely on consistent labels.
-- Skipped automatically when the LLM is unavailable or the material has
-  fewer than 2 concept entities (nothing to relate).
+  P1.3 — Pydantic-validated output (zero JSON retry waste, Instructor pattern)
+  P2.1 — Joint relation + missed-entity gleaning in a single LLM call
+  P2.2 — Ontology-guided filtering: prune relations outside valid type pairs
+  P2.3 — CoDe-KG sentence decomposition before passage selection
+  P3.1 — KET-RAG entity importance scoring for passage selection
 """
 
 from __future__ import annotations
 
-import json
 import logging
-import re
+from functools import lru_cache
 from typing import TYPE_CHECKING
 
+from pydantic import BaseModel, field_validator, model_validator
+
+from src.processing.sentence_decomposer import decompose_blocks
 from src.processing.types import EvidenceBlock, EvidenceMap, ExtractedEntity, ExtractedRelation
 
 if TYPE_CHECKING:
@@ -35,65 +27,240 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# Entity types whose pairwise interactions we want to capture as semantic
-# edges. Authors, organisations, locations are explicitly excluded.
-_CONCEPT_TYPES = frozenset({
+# Fallback graph entity types — used when config is missing or empty.
+# Covers all 8 universal types plus common technical variants so the pipeline
+# works across ML, law, history, medicine etc. without any code change.
+_DEFAULT_GRAPH_ENTITY_TYPES: frozenset[str] = frozenset({
     "concept", "model", "algorithm", "metric", "dataset",
     "framework", "method", "technology", "field",
+    "artifact", "person", "organization", "event", "location",
 })
 
-# Controlled vocabulary for semantic relations. Kept short so the LLM
-# is forced to commit to a clear type instead of free-form phrases.
-_RELATION_VOCAB = (
-    "uses",          # A applies/employs B as a component
-    "extends",       # A is built on top of B
-    "replaces",      # A is proposed in place of B
-    "improves",      # A enhances B's behaviour or performance
-    "compared_with", # A is benchmarked against B (peer baseline)
-    "evaluates_on",  # A is measured on B (model on dataset)
-    "depends_on",    # A requires B to function
-    "part_of",       # A is a sub-component of B
-    "contradicts",   # A presents a different finding from B
-    "related_to",    # generic fallback when the link is real but not above
+# Fallback relation vocabulary — used when config is missing or empty.
+_DEFAULT_RELATION_VOCAB: tuple[str, ...] = (
+    "uses", "extends", "replaces", "improves",
+    "compared_with", "evaluates_on", "depends_on", "part_of",
+    "contradicts", "governs", "applies_to", "created_by",
+    "located_in", "occurred_at", "related_to",
 )
 
-# Limits live in retrieval_config.yaml → graph.semantic_relation.*
-# Defaults below are only used by tests / standalone runs that don't pass a
-# Settings instance through the pipeline.
+
+@lru_cache(maxsize=1)
+def _get_graph_entity_types() -> frozenset[str]:
+    """Load graph-eligible entity types from config; fall back to defaults."""
+    try:
+        from src.core.config import get_settings
+        types = get_settings().extraction_graph_entity_types
+        if types:
+            return frozenset(t.lower() for t in types)
+    except Exception:
+        pass
+    return _DEFAULT_GRAPH_ENTITY_TYPES
+
+
+@lru_cache(maxsize=1)
+def _get_relation_vocab() -> tuple[tuple[str, ...], frozenset[str]]:
+    """Load relation vocabulary from config; fall back to defaults."""
+    try:
+        from src.core.config import get_settings
+        types = get_settings().extraction_relation_types
+        if types:
+            vocab = tuple(t.lower() for t in types)
+            return vocab, frozenset(vocab)
+    except Exception:
+        pass
+    return _DEFAULT_RELATION_VOCAB, frozenset(_DEFAULT_RELATION_VOCAB)
+
 _DEFAULT_MAX_CONCEPTS = 25
 _DEFAULT_MAX_PASSAGES = 18
 _DEFAULT_MAX_PASSAGE_CHARS = 600
 
 
-def _entity_slug(name: str) -> str:
-    """Match graph_quality_gate._slug + endpoint _entity_slug prefix scheme."""
-    body = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "unknown"
-    return f"entity:{body}"
+# ── P1.3: Pydantic-validated output schemas ──────────────────────────────────
+
+class _RelationItem(BaseModel):
+    source: str
+    target: str
+    type: str
+    passage_index: int = -1
+    confidence: float = 0.6
+
+    @field_validator("type", mode="before")
+    @classmethod
+    def validate_type(cls, v: str) -> str:
+        v = str(v).strip().lower()
+        if v not in _get_relation_vocab()[1]:
+            raise ValueError(f"Invalid relation type: {v!r}")
+        return v
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def clamp_confidence(cls, v) -> float:
+        return max(0.0, min(1.0, float(v)))
+
+    @model_validator(mode="after")
+    def non_empty_names(self) -> "_RelationItem":
+        if not self.source.strip() or not self.target.strip():
+            raise ValueError("source and target must be non-empty")
+        return self
 
 
-_PROMPT_TEMPLATE = """Bạn là người trích quan hệ ngữ nghĩa giữa các khái niệm khoa học từ tài liệu học thuật.
+class _MissedEntity(BaseModel):
+    name: str
+    type: str
+    confidence: float = 0.7
 
-Cho danh sách KHÁI NIỆM đã biết và các ĐOẠN VĂN có chứa chúng, hãy liệt kê tất cả các quan hệ có ý nghĩa giữa các khái niệm — chỉ dùng các loại quan hệ trong từ vựng dưới đây.
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def clamp(cls, v) -> float:
+        return max(0.0, min(1.0, float(v)))
 
-Từ vựng quan hệ hợp lệ (chọn đúng một loại cho mỗi cặp):
-{vocab}
+
+# ── P2.2: Ontology filter ────────────────────────────────────────────────────
+
+def _load_ontology() -> dict[str, set[str]]:
+    """Return entity-type → valid relation types from extraction_config.yaml."""
+    try:
+        from src.core.config import get_settings
+        settings = get_settings()
+        raw = getattr(settings, "extraction_ontology", {}) or {}
+        return {k: set(v) for k, v in raw.items()}
+    except Exception:
+        return {}
+
+_ONTOLOGY: dict[str, set[str]] | None = None
+
+
+def _get_ontology() -> dict[str, set[str]]:
+    global _ONTOLOGY
+    if _ONTOLOGY is None:
+        _ONTOLOGY = _load_ontology()
+    return _ONTOLOGY
+
+
+def _relation_allowed(source_type: str, rel_type: str, ontology: dict[str, set[str]]) -> bool:
+    """Return True when no ontology constraint exists or the pair is explicitly allowed."""
+    if not ontology:
+        return True
+    allowed = ontology.get(source_type.lower())
+    if allowed is None:
+        return True  # unknown type — permit
+    return rel_type in allowed
+
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+from src.processing.slug import entity_node_id as _entity_slug
+
+
+# ── P3.1: KET-RAG passage importance scoring ─────────────────────────────────
+
+def _score_passage(block: EvidenceBlock, concept_names_lower: set[str]) -> tuple[int, int]:
+    """Return (co_mention_count, unique_entity_count) for a block."""
+    text_lower = (block.snippet_original or "").lower()
+    hits = [name for name in concept_names_lower if name in text_lower]
+    return len(hits), len(set(hits))
+
+
+def _select_passages(
+    *,
+    blocks: list[EvidenceBlock],
+    concept_names_lower: set[str],
+    max_passages: int,
+) -> list[EvidenceBlock]:
+    """Pick the top-scoring passages by entity co-mention importance (KET-RAG).
+
+    Scores each block on (co_mention_count, unique_entity_count). Blocks that
+    mention only one concept cannot produce a relation and are excluded.
+    This mirrors the KET-RAG skeleton approach: focus LLM attention on the
+    information-dense passages only.
+    """
+    scored: list[tuple[int, int, EvidenceBlock]] = []
+    for block in blocks:
+        co, uniq = _score_passage(block, concept_names_lower)
+        if co >= 2:  # at least two entity mentions → potential relation
+            scored.append((co, uniq, block))
+    scored.sort(key=lambda t: (t[0], t[1]), reverse=True)
+    return [block for _, _, block in scored[:max_passages]]
+
+
+# ── Prompt ───────────────────────────────────────────────────────────────────
+
+_PROMPT_TEMPLATE = """Bạn là người trích xuất quan hệ ngữ nghĩa từ tài liệu học thuật.
+
+Cho KHÁI NIỆM đã biết và ĐOẠN VĂN, hãy:
+1. Liệt kê các quan hệ có ý nghĩa giữa các khái niệm.
+2. Nếu có khái niệm quan trọng bị thiếu trong danh sách, hãy bổ sung vào "missed_entities".
+
+Từ vựng quan hệ hợp lệ: {vocab}
 
 KHÁI NIỆM:
 {entity_list}
 
-ĐOẠN VĂN TƯỞNG ỨNG (đánh số):
+ĐOẠN VĂN:
 {passages}
 
-Yêu cầu đầu ra: chỉ trả về JSON array, không thêm văn bản nào khác. Mỗi phần tử có dạng:
-{{"source": "<khái niệm A>", "target": "<khái niệm B>", "type": "<loại quan hệ>", "passage_index": <số đoạn văn>, "confidence": <0.0-1.0>}}
-
 Quy tắc:
-- "source" và "target" PHẢI khớp chính xác canonical_name trong danh sách KHÁI NIỆM (sao chép nguyên văn).
-- Không bịa ra khái niệm hoặc quan hệ không có trong đoạn văn.
-- Bỏ qua các quan hệ chỉ là "xuất hiện cùng đoạn" mà không có nghĩa rõ ràng.
-- Tối đa 30 quan hệ.
+- "source" và "target" PHẢI là canonical_name chính xác từ danh sách KHÁI NIỆM (sao chép nguyên văn).
+- Không bịa quan hệ không có trong đoạn văn.
+- Hãy TRÍCH ĐẦY ĐỦ: với mỗi cặp khái niệm có liên hệ trong đoạn văn, tạo một quan hệ.
+- Tối đa 50 quan hệ, tối đa 10 missed_entities.
+
+Trả về CHỈ JSON, không thêm văn bản nào:
+{{"relations": [{{"source": "A", "target": "B", "type": "uses", "passage_index": 0, "confidence": 0.85}}], "missed_entities": [{{"name": "X", "type": "concept", "confidence": 0.8}}]}}
 
 JSON:"""
+
+
+# GraphRAG-style gleaning pass: shows what was already found and asks ONLY for
+# additional relations the first pass missed. Boosts recall ~15-30%.
+_GLEANING_TEMPLATE = """Bạn vừa trích xuất quan hệ ngữ nghĩa nhưng có thể đã BỎ SÓT.
+
+Từ vựng quan hệ hợp lệ: {vocab}
+
+KHÁI NIỆM:
+{entity_list}
+
+ĐOẠN VĂN:
+{passages}
+
+QUAN HỆ ĐÃ TÌM (đừng lặp lại):
+{found}
+
+Hãy tìm THÊM các quan hệ CÓ TRONG ĐOẠN VĂN mà danh sách trên còn thiếu.
+Quy tắc:
+- "source"/"target" PHẢI khớp chính xác canonical_name trong danh sách KHÁI NIỆM.
+- Chỉ thêm quan hệ thật sự có căn cứ trong đoạn văn; không bịa.
+- Nếu không còn quan hệ nào, trả về {{"relations": []}}.
+
+Trả về CHỈ JSON:
+{{"relations": [{{"source": "A", "target": "B", "type": "uses", "passage_index": 0, "confidence": 0.8}}], "missed_entities": []}}
+
+JSON:"""
+
+
+def _build_gleaning_prompt(
+    *,
+    concepts: list[ExtractedEntity],
+    passages: list[EvidenceBlock],
+    found: list[ExtractedRelation],
+    max_passage_chars: int,
+) -> str:
+    entity_list = "\n".join(f"- {e.canonical_name} [{e.entity_type}]" for e in concepts)
+    passage_text = "\n\n".join(
+        f"[{i}] {p.snippet_original[:max_passage_chars].strip()}"
+        for i, p in enumerate(passages)
+    )
+    found_lines = "\n".join(
+        f"- {r.source_id.replace('entity:', '')} -[{r.relation_type}]-> {r.target_id.replace('entity:', '')}"
+        for r in found[:60]
+    ) or "(chưa có)"
+    return _GLEANING_TEMPLATE.format(
+        vocab=", ".join(_get_relation_vocab()[0]),
+        entity_list=entity_list,
+        passages=passage_text,
+        found=found_lines,
+    )
 
 
 def _build_prompt(
@@ -102,36 +269,22 @@ def _build_prompt(
     passages: list[EvidenceBlock],
     max_passage_chars: int,
 ) -> str:
-    entity_list = "\n".join(
-        f"- {e.canonical_name} [{e.entity_type}]" for e in concepts
-    )
+    entity_list = "\n".join(f"- {e.canonical_name} [{e.entity_type}]" for e in concepts)
     passage_text = "\n\n".join(
         f"[{i}] {p.snippet_original[:max_passage_chars].strip()}"
         for i, p in enumerate(passages)
     )
-    vocab = ", ".join(_RELATION_VOCAB)
     return _PROMPT_TEMPLATE.format(
-        vocab=vocab,
+        vocab=", ".join(_get_relation_vocab()[0]),
         entity_list=entity_list,
         passages=passage_text,
     )
 
 
-def _select_passages(
-    *, blocks: list[EvidenceBlock], concept_names_lower: set[str], max_passages: int,
-) -> list[EvidenceBlock]:
-    """Pick blocks that mention at least two concept entities — these are
-    the only ones that can yield a relation."""
-    selected: list[tuple[int, EvidenceBlock]] = []
-    for block in blocks:
-        text_lower = (block.snippet_original or "").lower()
-        if not text_lower:
-            continue
-        hits = sum(1 for name in concept_names_lower if name in text_lower)
-        if hits >= 2:
-            selected.append((hits, block))
-    selected.sort(key=lambda item: item[0], reverse=True)
-    return [block for _, block in selected[:max_passages]]
+# ── P1.3: Pydantic-validated response parsing ────────────────────────────────
+
+import json as _json
+import re as _re
 
 
 def _parse_response(
@@ -140,73 +293,103 @@ def _parse_response(
     concept_by_lower_name: dict[str, ExtractedEntity],
     passages: list[EvidenceBlock],
     max_passage_chars: int,
-) -> list[ExtractedRelation]:
-    cleaned = raw.strip()
-    cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned, flags=re.IGNORECASE | re.MULTILINE).strip()
-    start = cleaned.find("[")
-    end = cleaned.rfind("]")
-    if start == -1 or end == -1 or end <= start:
-        return []
-    try:
-        items = json.loads(cleaned[start : end + 1])
-    except json.JSONDecodeError as exc:
-        logger.debug("Semantic relation parse failed: %s", exc)
-        return []
-    if not isinstance(items, list):
-        return []
+    ontology: dict[str, set[str]],
+) -> tuple[list[ExtractedRelation], list[tuple[str, str, float]]]:
+    """Parse LLM output with Pydantic validation. Returns (relations, missed_entities).
 
+    P1.3: Eliminates retry waste — Pydantic validates each item individually;
+    invalid items are logged and dropped rather than triggering a full retry.
+    """
+    cleaned = raw.strip()
+    cleaned = _re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned, flags=_re.MULTILINE).strip()
+
+    # Extract the outermost {...} block
+    brace_start = cleaned.find("{")
+    brace_end = cleaned.rfind("}")
+    if brace_start == -1 or brace_end <= brace_start:
+        logger.debug("Semantic relation: no JSON object found in LLM output")
+        return [], []
+
+    try:
+        payload = _json.loads(cleaned[brace_start:brace_end + 1])
+    except _json.JSONDecodeError as exc:
+        logger.debug("Semantic relation: JSON decode failed: %s", exc)
+        return [], []
+
+    if not isinstance(payload, dict):
+        return [], []
+
+    # ── Parse relations ──
+    raw_relations = payload.get("relations") or []
     relations: list[ExtractedRelation] = []
     seen: set[tuple[str, str, str]] = set()
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        source_name = str(item.get("source") or "").strip()
-        target_name = str(item.get("target") or "").strip()
-        rel_type = str(item.get("type") or "").strip().lower()
-        if not source_name or not target_name or not rel_type:
-            continue
-        if rel_type not in _RELATION_VOCAB:
-            continue
-        source = concept_by_lower_name.get(source_name.lower())
-        target = concept_by_lower_name.get(target_name.lower())
-        if source is None or target is None or source.canonical_name == target.canonical_name:
-            continue
+
+    for item in raw_relations if isinstance(raw_relations, list) else []:
         try:
-            confidence = float(item.get("confidence", 0.6))
-        except (TypeError, ValueError):
-            confidence = 0.6
-        confidence = max(0.0, min(1.0, confidence))
-        try:
-            passage_idx = int(item.get("passage_index", -1))
-        except (TypeError, ValueError):
-            passage_idx = -1
-        evidence_refs: list[EvidenceBlock] = []
-        if 0 <= passage_idx < len(passages):
-            evidence_refs = [passages[passage_idx]]
-        key = (source.canonical_name, rel_type, target.canonical_name)
+            rel = _RelationItem.model_validate(item)
+        except Exception as exc:
+            logger.debug("Dropping invalid relation item: %s — %s", item, exc)
+            continue
+
+        source = concept_by_lower_name.get(rel.source.lower())
+        target = concept_by_lower_name.get(rel.target.lower())
+        if source is None or target is None:
+            continue
+        if source.canonical_name == target.canonical_name:
+            continue
+
+        # P2.2: ontology filter
+        if not _relation_allowed(source.entity_type, rel.type, ontology):
+            logger.debug(
+                "Dropping relation %s -[%s]-> %s: not in ontology for type %s",
+                source.canonical_name, rel.type, target.canonical_name, source.entity_type,
+            )
+            continue
+
+        key = (source.canonical_name, rel.type, target.canonical_name)
         if key in seen:
             continue
         seen.add(key)
-        evidence_text = (
-            evidence_refs[0].snippet_original[:max_passage_chars]
-            if evidence_refs
-            else None
-        )
-        relations.append(
-            ExtractedRelation(
-                source_id=_entity_slug(source.canonical_name),
-                target_id=_entity_slug(target.canonical_name),
-                relation_type=rel_type,
-                evidence_refs=evidence_refs,
-                evidence_text_chunk=evidence_text,
-                confidence=confidence,
-            )
-        )
-    return relations
 
+        evidence_refs: list[EvidenceBlock] = []
+        if 0 <= rel.passage_index < len(passages):
+            evidence_refs = [passages[rel.passage_index]]
+
+        relations.append(ExtractedRelation(
+            source_id=_entity_slug(source.canonical_name),
+            target_id=_entity_slug(target.canonical_name),
+            relation_type=rel.type,
+            evidence_refs=evidence_refs,
+            evidence_text_chunk=(
+                evidence_refs[0].snippet_original[:max_passage_chars] if evidence_refs else None
+            ),
+            confidence=rel.confidence,
+        ))
+
+    # ── P2.1: parse missed entities ──
+    raw_missed = payload.get("missed_entities") or []
+    missed: list[tuple[str, str, float]] = []
+    for item in raw_missed if isinstance(raw_missed, list) else []:
+        try:
+            me = _MissedEntity.model_validate(item)
+            name = me.name.strip()
+            if name and name.lower() not in concept_by_lower_name:
+                missed.append((name, me.type, me.confidence))
+        except Exception:
+            pass
+
+    return relations, missed
+
+
+# ── Main extractor class ─────────────────────────────────────────────────────
 
 class LLMSemanticRelationExtractor:
-    """LLM-driven typed-relation extractor over concept entities."""
+    """LLM-driven typed-relation extractor with SOTA cost optimisations.
+
+    Single LLM call per material. Uses Pydantic validation (P1.3), joint
+    missed-entity gleaning (P2.1), ontology filtering (P2.2), sentence
+    decomposition (P2.3), and KET-RAG passage scoring (P3.1).
+    """
 
     def __init__(
         self,
@@ -215,11 +398,13 @@ class LLMSemanticRelationExtractor:
         max_concepts: int = _DEFAULT_MAX_CONCEPTS,
         max_passages: int = _DEFAULT_MAX_PASSAGES,
         max_passage_chars: int = _DEFAULT_MAX_PASSAGE_CHARS,
+        gleaning: bool = False,
     ) -> None:
         self._llm = llm
         self._max_concepts = max_concepts
         self._max_passages = max_passages
         self._max_passage_chars = max_passage_chars
+        self._gleaning = gleaning
 
     async def extract_async(
         self,
@@ -229,20 +414,22 @@ class LLMSemanticRelationExtractor:
         if self._llm is None or not entities:
             return []
 
-        concepts = [e for e in entities if (e.entity_type or "").lower() in _CONCEPT_TYPES]
+        concepts = [e for e in entities if (e.entity_type or "").lower() in _get_graph_entity_types()]
         if len(concepts) < 2:
             return []
 
-        # Cap concept list to keep the prompt bounded; keep highest-confidence
-        # entities first so the LLM works with the most reliable signals.
         concepts.sort(key=lambda e: (e.confidence, len(e.mention_refs)), reverse=True)
         concepts = concepts[: self._max_concepts]
 
         concept_names_lower = {e.canonical_name.lower() for e in concepts}
         concept_by_lower_name = {e.canonical_name.lower(): e for e in concepts}
 
+        # P2.3: decompose compound sentences before passage selection
+        decomposed_blocks = decompose_blocks(evidence_map.blocks)
+
+        # P3.1: KET-RAG importance scoring — only pass co-mention passages
         passages = _select_passages(
-            blocks=evidence_map.blocks,
+            blocks=decomposed_blocks,
             concept_names_lower=concept_names_lower,
             max_passages=self._max_passages,
         )
@@ -250,7 +437,9 @@ class LLMSemanticRelationExtractor:
             return []
 
         prompt = _build_prompt(
-            concepts=concepts, passages=passages, max_passage_chars=self._max_passage_chars,
+            concepts=concepts,
+            passages=passages,
+            max_passage_chars=self._max_passage_chars,
         )
         try:
             raw = await self._llm.generate(prompt=prompt)
@@ -261,15 +450,63 @@ class LLMSemanticRelationExtractor:
             )
             return []
 
-        relations = _parse_response(
+        ontology = _get_ontology()
+        relations, missed = _parse_response(
             raw=raw,
             concept_by_lower_name=concept_by_lower_name,
             passages=passages,
             max_passage_chars=self._max_passage_chars,
+            ontology=ontology,
         )
+
+        # GraphRAG gleaning pass: re-prompt for relations the first pass missed.
+        gleaned_count = 0
+        if self._gleaning:
+            try:
+                glean_prompt = _build_gleaning_prompt(
+                    concepts=concepts,
+                    passages=passages,
+                    found=relations,
+                    max_passage_chars=self._max_passage_chars,
+                )
+                glean_raw = await self._llm.generate(prompt=glean_prompt)
+                extra_relations, extra_missed = _parse_response(
+                    raw=glean_raw,
+                    concept_by_lower_name=concept_by_lower_name,
+                    passages=passages,
+                    max_passage_chars=self._max_passage_chars,
+                    ontology=ontology,
+                )
+                seen = {(r.source_id, r.relation_type, r.target_id) for r in relations}
+                for r in extra_relations:
+                    key = (r.source_id, r.relation_type, r.target_id)
+                    if key not in seen:
+                        seen.add(key)
+                        relations.append(r)
+                        gleaned_count += 1
+                if extra_missed:
+                    missed = list(missed) + list(extra_missed)
+            except Exception as exc:
+                logger.warning(
+                    "Relation gleaning pass failed (non-fatal)",
+                    extra={"error": str(exc), "error_type": type(exc).__name__},
+                )
+
+        if missed:
+            logger.info(
+                "Joint gleaning found %d missed entities (not yet persisted — caller must merge)",
+                len(missed),
+                extra={"missed": [m[0] for m in missed[:5]]},
+            )
+
         logger.info(
-            "LLM semantic relation extraction produced %d relations",
-            len(relations),
-            extra={"concept_count": len(concepts), "passage_count": len(passages)},
+            "LLM semantic relation extraction completed",
+            extra={
+                "relations": len(relations),
+                "gleaned_relations": gleaned_count,
+                "missed_entities": len(missed),
+                "concepts": len(concepts),
+                "passages": len(passages),
+            },
         )
         return relations

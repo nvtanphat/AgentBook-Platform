@@ -5,6 +5,7 @@ import logging
 import unicodedata
 from collections import defaultdict
 
+from src.processing.slug import slugify
 from src.processing.types import ExtractedEntity, ExtractedRelation
 
 logger = logging.getLogger(__name__)
@@ -282,7 +283,7 @@ class GraphQualityGate:
 
     @staticmethod
     def _slug(value: str) -> str:
-        return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-") or "unknown"
+        return slugify(value)
 
 
 # ---------------------------------------------------------------------------

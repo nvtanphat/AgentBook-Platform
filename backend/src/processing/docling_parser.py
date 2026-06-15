@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
+from src.processing import table_serializer
 from src.processing.types import BBox, BlockType, DependencyUnavailableError, ParsedBlock, ParsedDocument, ParsedPage
 
 SUPPORTED_DOCLING_EXTENSIONS = {"pdf", "pptx", "docx"}
@@ -166,8 +167,15 @@ class DoclingParser:
             self._add_easyocr_pages(pages_by_number, file_path=file_path, language=language)
         if not pages_by_number:
             return [ParsedPage(page_number=1, blocks=[])]
+        page_widths = getattr(self, "_page_widths", {})
+        page_heights = getattr(self, "_page_heights", {})
         return [
-            ParsedPage(page_number=page_number, blocks=sorted(page_blocks, key=lambda block: block.reading_order))
+            ParsedPage(
+                page_number=page_number,
+                blocks=sorted(page_blocks, key=lambda block: block.reading_order),
+                width=int(page_widths[page_number]) if page_number in page_widths else None,
+                height=int(page_heights[page_number]) if page_number in page_heights else None,
+            )
             for page_number, page_blocks in sorted(pages_by_number.items())
         ]
 
@@ -373,6 +381,26 @@ class DoclingParser:
         figure_nodes = self._collect_figure_nodes(data)
         blocks: list[ParsedBlock] = []
 
+        # Extract page dimensions from Docling export for y-axis normalisation.
+        # Docling uses PDF coordinate space: origin bottom-left, units = points.
+        # We flip the y-axis so all downstream consumers use top-left origin.
+        page_heights: dict[int, float] = {}
+        self._page_widths: dict[int, float] = {}
+        self._page_heights: dict[int, float] = {}
+        for k, v in (data.get("pages") or {}).items():
+            try:
+                pnum = int(k)
+                size = (v.get("size") or {}) if isinstance(v, dict) else {}
+                w = size.get("width")
+                h = size.get("height")
+                if w is not None:
+                    self._page_widths[pnum] = float(w)
+                if h is not None:
+                    page_heights[pnum] = float(h)
+                    self._page_heights[pnum] = float(h)
+            except (ValueError, TypeError, AttributeError):
+                pass
+
         for index, node in enumerate(candidates):
             text = self._node_text(node)
             if not text:
@@ -381,6 +409,7 @@ class DoclingParser:
             if label in {"page_footer", "page_header"}:
                 continue
             page_number = self._node_page(node)
+            raw_bbox = self._node_bbox(node)
             blocks.append(
                 ParsedBlock(
                     block_id=node.get("self_ref") or self._stable_block_id(Path("docling"), page_number, index, text[:80]),
@@ -389,7 +418,7 @@ class DoclingParser:
                     content=text,
                     page_number=page_number,
                     language=language,
-                    bbox=self._node_bbox(node),
+                    bbox=self._flip_bbox_y(raw_bbox, page_heights.get(page_number)),
                     reading_order=len(blocks),
                     source="docling",
                     extra={"label": str(node.get("label") or node.get("type") or "")},
@@ -399,8 +428,9 @@ class DoclingParser:
         # Add placeholder blocks for figures/pictures that have no caption/text.
         # For DOCX/PPTX exports, Docling often exposes embedded pictures without bbox.
         for fig_index, node in enumerate(figure_nodes):
-            bbox = self._node_bbox(node)
+            raw_bbox = self._node_bbox(node)
             page_number = self._node_page(node)
+            bbox = self._flip_bbox_y(raw_bbox, page_heights.get(page_number))
             image_meta = node.get("image") if isinstance(node.get("image"), dict) else {}
             image_uri = image_meta.get("uri") if isinstance(image_meta, dict) else None
             block_id = node.get("self_ref") or self._stable_block_id(
@@ -431,7 +461,66 @@ class DoclingParser:
                 )
             )
 
-        return sorted(blocks, key=lambda b: (b.page_number, b.reading_order))
+        ordered = sorted(blocks, key=lambda b: (b.page_number, b.reading_order))
+        return self._enrich_table_blocks(ordered, language=language)
+
+    def _enrich_table_blocks(self, blocks: list[ParsedBlock], *, language: str) -> list[ParsedBlock]:
+        """Upgrade markdown TABLE blocks to a structured HTML grid + verbalized rows.
+
+        docling's PDF/markdown export emits pipe tables as the TABLE block content
+        and no per-row blocks. We re-parse the grid, store HTML (LLM reads the
+        row/column structure), and emit one verbalized paragraph per row for
+        keyword/value retrieval. Already-HTML tables and non-tables pass through.
+        """
+        out: list[ParsedBlock] = []
+        for block in blocks:
+            out.append(block)
+            if block.block_type != BlockType.TABLE.value:
+                continue
+            content = (block.content or "").strip()
+            if content.startswith("<table"):
+                continue  # already structured (e.g. spreadsheet/docx path)
+            grid = table_serializer.parse_markdown_table(content)
+            if grid is None:
+                continue
+            header, body = grid
+            if not body:
+                continue
+            table_name = (block.extra.get("sheet_name") if block.extra else None) or f"table_p{block.page_number}"
+            block.content = table_serializer.to_html(header, body)
+            block.extra = {
+                **(block.extra or {}),
+                "block_kind": "table_block",
+                "sheet_name": table_name,
+                "columns": header,
+                **table_serializer.structured_meta(header, body),
+            }
+            for row_index, sentence in table_serializer.verbalize_rows(
+                header, body, table_name=table_name, language=language
+            ):
+                out.append(
+                    ParsedBlock(
+                        block_id=self._stable_block_id(
+                            Path("docling"), block.page_number,
+                            30000 + row_index, sentence[:60],
+                        ),
+                        block_index=len(out),
+                        block_type=BlockType.PARAGRAPH.value,
+                        content=sentence,
+                        page_number=block.page_number,
+                        language=language,
+                        bbox=block.bbox,
+                        reading_order=block.reading_order,
+                        source="docling",
+                        extra={
+                            "block_kind": "table_row",
+                            "sheet_name": table_name,
+                            "row_index": row_index,
+                            "columns": header,
+                        },
+                    )
+                )
+        return out
 
     def _docx_table_blocks(self, *, file_path: Path, language: str, reading_order_offset: int) -> list[ParsedBlock]:
         try:
@@ -454,22 +543,55 @@ class DoclingParser:
             rows = [row for row in rows if any(cell for cell in row)]
             if len(rows) < 2 or max((len(row) for row in rows), default=0) < 2:
                 continue
-            markdown = self._rows_to_markdown_table(rows)
-            if not markdown:
+            header, body = rows[0], rows[1:]
+            grid_html = table_serializer.to_html(header, body)
+            if not grid_html:
                 continue
+            table_name = f"docx_table_{table_index + 1}"
             blocks.append(
                 ParsedBlock(
-                    block_id=self._stable_block_id(file_path, 1, 20000 + table_index, markdown[:80]),
+                    block_id=self._stable_block_id(file_path, 1, 20000 + table_index, grid_html[:80]),
                     block_index=reading_order_offset + len(blocks),
                     block_type=BlockType.TABLE.value,
-                    content=markdown,
+                    content=grid_html,
                     page_number=1,
                     language=language,
                     reading_order=reading_order_offset + len(blocks),
                     source="python_docx",
-                    extra={"label": "docx_table", "table_index": table_index},
+                    extra={
+                        "label": "docx_table",
+                        "table_index": table_index,
+                        "block_kind": "table_block",
+                        "sheet_name": table_name,
+                        "columns": header,
+                        **table_serializer.structured_meta(header, body),
+                    },
                 )
             )
+            # Verbalized rows → keyword/value retrieval (PDF/DOCX tables had none)
+            for row_index, sentence in table_serializer.verbalize_rows(
+                header, body, table_name=table_name, language=language
+            ):
+                blocks.append(
+                    ParsedBlock(
+                        block_id=self._stable_block_id(
+                            file_path, 1, 21000 + table_index * 100 + row_index, sentence[:60]
+                        ),
+                        block_index=reading_order_offset + len(blocks),
+                        block_type=BlockType.PARAGRAPH.value,
+                        content=sentence,
+                        page_number=1,
+                        language=language,
+                        reading_order=reading_order_offset + len(blocks),
+                        source="python_docx",
+                        extra={
+                            "block_kind": "table_row",
+                            "sheet_name": table_name,
+                            "row_index": row_index,
+                            "columns": header,
+                        },
+                    )
+                )
         return blocks
 
     @staticmethod
@@ -555,6 +677,20 @@ class DoclingParser:
             if all(value is not None for value in (left, top, right, bottom)):
                 return BBox(x1=float(left), y1=float(top), x2=float(right), y2=float(bottom))
         return None
+
+    @staticmethod
+    def _flip_bbox_y(bbox: BBox | None, page_height: float | None) -> BBox | None:
+        """Convert Docling PDF bbox (origin bottom-left) to screen coords (origin top-left).
+
+        Docling's prov bbox uses `t` (top) and `b` (bottom) measured from the page bottom
+        in points. We store them as y1=t, y2=b, so after the flip:
+          y1_screen = page_height - bbox.y1   (top edge in screen space)
+          y2_screen = page_height - bbox.y2   (bottom edge in screen space)
+        Result always has y1 < y2, consistent with EasyOCR pixel coords.
+        """
+        if bbox is None or page_height is None or page_height <= 0:
+            return bbox
+        return BBox(x1=bbox.x1, y1=page_height - bbox.y1, x2=bbox.x2, y2=page_height - bbox.y2)
 
     @staticmethod
     def _classify_node(node: dict[str, Any], text: str) -> str:

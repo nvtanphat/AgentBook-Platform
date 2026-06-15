@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 import logging
 from collections import OrderedDict
@@ -7,6 +8,30 @@ from collections import OrderedDict
 from src.processing.types import ExtractedEntity
 
 logger = logging.getLogger(__name__)
+
+# BGE-M3 cosine similarity thresholds for entity dedup.
+#   _EMBEDDING_MERGE_THRESHOLD       — cross-TYPE pairs (stricter; avoids merging
+#                                      a concept into a person, etc.)
+#   _CROSS_LINGUAL_MERGE_THRESHOLD   — same-TYPE pairs (looser; catches
+#                                      cross-lingual synonyms like
+#                                      "Machine Learning" ↔ "Học máy" whose
+#                                      BGE-M3 cosine sits ~0.72-0.80, below the
+#                                      0.82 used for safe cross-type merges).
+# Overridable from config (extraction_config.yaml → resolution.*).
+_EMBEDDING_MERGE_THRESHOLD = 0.82
+_CROSS_LINGUAL_MERGE_THRESHOLD = 0.74
+
+
+def _load_merge_thresholds() -> tuple[float, float]:
+    """Return (cross_type, same_type) merge thresholds from config; fall back."""
+    try:
+        from src.core.config import get_settings
+        s = get_settings()
+        cross = float(getattr(s, "extraction_merge_threshold", 0.0) or _EMBEDDING_MERGE_THRESHOLD)
+        same = float(getattr(s, "extraction_cross_lingual_merge_threshold", 0.0) or _CROSS_LINGUAL_MERGE_THRESHOLD)
+        return cross, same
+    except Exception:
+        return _EMBEDDING_MERGE_THRESHOLD, _CROSS_LINGUAL_MERGE_THRESHOLD
 
 # ---------------------------------------------------------------------------
 # Synonym knowledge base
@@ -103,6 +128,107 @@ class EntityResolver:
             extra={"before": len(entities), "after": len(result_list)},
         )
         return result_list
+
+    # ------------------------------------------------------------------
+    # Pass 4 — BGE-M3 embedding merge (async, zero extra cost)
+    # ------------------------------------------------------------------
+
+    async def resolve_async(
+        self,
+        entities: list[ExtractedEntity],
+        *,
+        embedder=None,
+    ) -> list[ExtractedEntity]:
+        """Sync resolve (passes 1-3) + optional BGE-M3 embedding merge (pass 4).
+
+        Pass 4 catches cross-lingual pairs like "Học máy" ↔ "Machine Learning"
+        that fuzzy string match misses. Uses the existing BGEM3Embedder already
+        in memory from the indexer — zero extra model loading cost.
+        """
+        result = self.resolve(entities)
+        if embedder is None or len(result) < 2:
+            return result
+        try:
+            result = await self._embedding_merge(result, embedder)
+        except Exception as exc:
+            logger.warning(
+                "BGE-M3 embedding merge failed, using fuzzy-only result",
+                extra={"error": str(exc), "error_type": type(exc).__name__},
+            )
+        return result
+
+    @staticmethod
+    async def _embedding_merge(
+        entities: list[ExtractedEntity],
+        embedder,
+    ) -> list[ExtractedEntity]:
+        """Union-find merge on BGE-M3 dense cosine similarity.
+
+        Same entity_type pairs use a looser threshold so cross-lingual synonyms
+        ("Machine Learning" ↔ "Học máy") merge; cross-type pairs use the stricter
+        threshold to avoid collapsing distinct kinds of entities.
+        """
+        import numpy as np
+
+        cross_type_thr, same_type_thr = _load_merge_thresholds()
+
+        names = [e.canonical_name for e in entities]
+        types = [(e.entity_type or "").lower() for e in entities]
+        embedded = await asyncio.to_thread(embedder.encode, names)
+        dense = [e.dense for e in embedded]
+
+        parent = list(range(len(entities)))
+
+        def find(i: int) -> int:
+            while parent[i] != i:
+                parent[i] = parent[parent[i]]
+                i = parent[i]
+            return i
+
+        def union(i: int, j: int) -> None:
+            pi, pj = find(i), find(j)
+            if pi != pj:
+                if entities[pi].confidence >= entities[pj].confidence:
+                    parent[pj] = pi
+                else:
+                    parent[pi] = pj
+
+        vecs = [np.array(d, dtype=np.float32) for d in dense]
+        norms = [float(np.linalg.norm(v)) for v in vecs]
+
+        for i in range(len(entities)):
+            if norms[i] < 1e-8:
+                continue
+            for j in range(i + 1, len(entities)):
+                if find(i) == find(j) or norms[j] < 1e-8:
+                    continue
+                sim = float(np.dot(vecs[i], vecs[j]) / (norms[i] * norms[j]))
+                threshold = same_type_thr if types[i] == types[j] else cross_type_thr
+                if sim >= threshold:
+                    union(i, j)
+
+        groups: dict[int, list[int]] = {}
+        for i in range(len(entities)):
+            groups.setdefault(find(i), []).append(i)
+
+        resolved: list[ExtractedEntity] = []
+        for root, indices in groups.items():
+            if len(indices) == 1:
+                resolved.append(entities[indices[0]])
+                continue
+            indices.sort(key=lambda k: entities[k].confidence, reverse=True)
+            base = entities[indices[0]]
+            for k in indices[1:]:
+                base = _merge(base, entities[k], base.canonical_name)
+            resolved.append(base)
+
+        merged_count = len(entities) - len(resolved)
+        if merged_count > 0:
+            logger.info(
+                "BGE-M3 embedding merge resolved %d cross-lingual entity pairs",
+                merged_count,
+            )
+        return resolved
 
     # ------------------------------------------------------------------
     # Fuzzy merge pass
