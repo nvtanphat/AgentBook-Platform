@@ -22,11 +22,12 @@ AgentBook turns heterogeneous documents into a queryable, citation-backed knowle
 
 - **Multi-format ingestion** — PDF, DOCX, PPTX, XLSX, CSV, PNG/JPG (printed + handwritten), and audio (MP3/WAV/M4A/FLAC/OGG/WebM) flow through a single block-level evidence schema. Bounding boxes for text/figures, page numbers, table row/column anchors, and audio start/end timestamps are preserved end-to-end so every citation can be rendered visually.
 - **Hybrid retrieval** — BGE-M3 produces dense + sparse vectors in one pass; both are queried against Qdrant and fused with Reciprocal Rank Fusion (RRF). A BGE cross-encoder reranks the top-30 candidates. Multi-query rewriting kicks in for hard-recall questions, and graph traversal kicks in when the query mentions relations (`liên quan`, `tác động`, `phụ thuộc`, `causes`, `depends on`, …).
-- **Agentic reasoning** — A bounded state-machine pipeline (Planner → Director → CRAG Critic → Reranker → Synthesizer → Guardrails → Sentence-Level Coverage Gate) replaces free-form ReAct. Each stage has a single responsibility, a typed contract, and a measurable verdict written back to the shared `AgentState` blackboard, which is what the UI renders as the *Agent Trace* panel.
+- **Agentic reasoning** — A bounded state-machine pipeline (Planner → Director → CRAG Critic → Reranker → Synthesizer → Guardrails → Sentence-Level Coverage Gate → Quality Gate) replaces free-form ReAct. Each stage has a single responsibility, a typed contract, and a measurable verdict written back to the shared `AgentState` blackboard, which is what the UI renders as the *Agent Trace* panel.
+- **Deterministic table aggregation** — Bypasses typical RAG chunking constraints and LLM mathematical reasoning limitations. For queries asking for aggregations (`sum`, `avg`, `max`, `min`, `count`) over tables, the system dynamically reconstructs the full table columns from stored blocks and calculates the exact value deterministically in Python.
 - **Cross-lingual support** — Native VI↔EN routing: original-language query keeps recall, a translated variant catches paraphrases, RRF fuses both. The claim verifier auto-skips when answer-language ≠ chunk-language (token-overlap NLI is meaningless across languages), so EN queries over a VN corpus return grounded EN answers instead of spurious refusals.
 - **Calibrated refusal** — Off-topic and chitchat are refused in 2–10 s via an intent-classifier shortcut. On-topic questions with weak grounding surface a *partial* badge through the SLEC gate instead of being silently fabricated; only the floor case (weighted SLEC < `refuse_below`) becomes a hard refusal.
 - **Evidence UI** — Citations carry `doc_id`, `page`, `block_id`, `bbox`, `snippet_original` and (optionally) `snippet_translated`. Clicking `[1]` scrolls the PDF / slide viewer to the exact region, plays an audio segment, or highlights a table row.
-- **Anti-hallucination post-processing** — Acronym expansions invented by the LLM are stripped when not verbatim in evidence (catches both `RAG (Relevant Answer Generation)` and `RAG là viết tắt của …` patterns). Sentences whose detected language drifts away from the requested answer language are dropped before citation injection.
+- **Anti-hallucination & Citation Alignment** — Modality-aware citation alignment ensuring citations match the expected modality (e.g. table queries must cite table chunks, figures must have bounding boxes). LLM acronym expansions not found in evidence are stripped, invalid citations are pruned, and sentences with language drift are dropped before final response generation.
 - **Knowledge graph + mindmap** — Entities (concept / model / dataset / metric / framework) and typed relations (`references`, `mentioned_in_block`, `co_located_with`, `section_contains`) are extracted at ingestion. A concept graph and an LLM-summarised topical mindmap are derived from this layer per collection.
 
 ---
@@ -83,16 +84,18 @@ Each step writes a typed `AgentTraceStep` to the shared state and is visible in 
 | Step | Owner | Decision |
 |---|---|---|
 | `classify_intent` | `IntentClassifier` | knowledge / chitchat / off-topic — off-topic short-circuits to a refusal in ≈2 s |
-| `process_query` | `QueryProcessor` | Language detect, anaphora resolution, optional translation (gated when output would lose VN diacritics), build retrieval-query list |
-| `plan_query` | `PlannerAgent` | Plan type (general / comparison / summarization / claim_check / relation_trace), optional sub-questions, multi-query flag |
-| `retrieve_evidence` | `RetrieverDirector` | Routes each query to hybrid text search, per-source search, or graph traversal; merges + dedupes |
-| `crag_triage` | `CRAGCriticAgent` | Pass-through when only RRF scores are available; tags candidates as CORRECT / AMBIGUOUS / INCORRECT once rerank scores exist |
-| `rerank_evidence` | `CrossEncoderReranker` | BGE reranker (optional MMR) trims to `final_top_k` |
-| `synthesize_answer` | `SynthesizerAgent` | Grounded answer with `[N]` citation markers; followed by acronym-strip and language-drift-strip postprocessing |
-| `verify_claims` | `GuardrailsAgent` (NLI) | SUPPORTED / NOT_ENOUGH_EVIDENCE / CONTRADICTED — auto-skipped on cross-lingual answers |
-| `repair_answer` | `SynthesizerAgent` (repair mode) | Re-synthesize with explicit warning when guardrails flag grounding gaps |
-| `slec_gate` | `SentenceCoverageGate` | Per-sentence rerank-style score; drops UNSUPPORTED, hedges PARTIAL, refuses if weighted coverage < floor |
-| `build_response` | `ResponseParser` | Inject missing citations, drop orphan `[N]` markers, finalize evidence list |
+| `process_query` | `QueryProcessor` | Language detect, anaphora resolution, optional translation, build query variants |
+| `route_query` | `QueryRouter` | Dynamic LLM or rule-based route (factual, comparison, claim_check, relation_trace, summarization) |
+| `retrieve_evidence` | `RetrieverDirector` | Routes queries to hybrid text, graph, or visual search tools; gathers candidates |
+| `rerank_evidence` | `CrossEncoderReranker` | BGE reranker (with optional MMR) trims candidate bundle |
+| `table_executor` | `TableExecutor` | Hot-path for table aggregations (`sum`, `avg`, `max`, `min`, `count`); calculates deterministically in Python (None ⇒ normal RAG) |
+| `validate_evidence` | `EvidenceValidator` | Pre-generation validation wrapping checks and verifying preferred modality alignment (e.g. table questions have table evidence) |
+| `synthesize_answer` | `SynthesizerAgent` / LLM | Grounded answer draft with `[N]` citation markers |
+| `verify_claims` | `GuardrailsAgent` (NLI) | Self-RAG reflection + NLI claim verification (SUPPORTED / NOT_ENOUGH_EVIDENCE / CONTRADICTED) |
+| `slec_gate` | `SentenceCoverageGate` | Per-sentence evidence-support check; drops unsupported sentences, hedges partials, refuses if coverage < floor |
+| `citation_aligner` | `CitationAligner` | Modality-aware citation validation (prunes out-of-range tags and verifies table/figure/audio citation modalities) |
+| `quality_gate` | `QualityGate` | Post-generation quality check combining SLEC, Citation, and Confidence. Enforces a refusal when $\ge 2$ stages fail. |
+| `build_response` | `ResponseParser` | Renumber citations, prune unused chunks, inject visual overlays, build final `QueryResponse` |
 
 ### Evidence schema (citation payload)
 
@@ -318,10 +321,10 @@ The script boots Qdrant (Docker), the FastAPI backend on `:8000`, and the Vite d
 │   │   ├── api/v1/endpoints/     # FastAPI routes (query, materials, collections, graph, …)
 │   │   ├── core/                 # Settings, LLM factory, rate limit, security
 │   │   ├── evaluation/           # RAGAS evaluator (faithfulness, relevance, precision)
-│   │   ├── guardrails/           # Claim verifier, sentence-coverage gate, refusal policy
+│   │   ├── guardrails/           # Claim verifier, sentence-coverage (SLEC) gate, quality gate, citation aligner, evidence validator, refusal policy
 │   │   ├── inference/            # Inference engine, response parser, reasoning-path builder
 │   │   ├── models/               # Beanie documents (Material, Chunk, Entity, Relation, …)
-│   │   ├── processing/           # Docling, OCR, handwriting, chunking, entity / relation extraction
+│   │   ├── processing/           # Docling, OCR, handwriting, chunking, entity/relation extraction, table executor/serializer
 │   │   ├── prompts/              # System + task prompts (qa_grounded, summarization, claim_check, …)
 │   │   ├── rag/                  # Embedding, Qdrant store, hybrid retriever, rerankers, CRAG
 │   │   ├── schemas/              # Pydantic request / response schemas
@@ -351,11 +354,18 @@ All quality-affecting knobs live in [`config/*.yaml`](config/) and can be overri
 |---|---|---|
 | `retrieval_config.yaml` | `dense_top_k`, `sparse_top_k`, `rerank_input_k`, `final_top_k` | Recall / context width |
 | `retrieval_config.yaml` | `agentic_rag_enabled`, `agentic_critic_enabled`, `agentic_max_retrieval_iterations` | Agentic pipeline shape |
+| `retrieval_config.yaml` | `adaptive_retrieval.enabled` | Adaptive fast-path retrieval (disabled by default to guarantee cross-encoder reranking runs for citation precision) |
+| `retrieval_config.yaml` | `adaptive_retrieval.fused_skip_threshold` | Skip threshold based on hybrid fused-score (replaces legacy `dense_skip_threshold`) |
+| `retrieval_config.yaml` | `routing.modality.enabled` | Modality-aware routing (directing table, figure, and audio queries to filtered passes) |
+| `retrieval_config.yaml` | `routing.modality.table_boost_multiplier` | Fused-score boost added to table modality search results |
+| `retrieval_config.yaml` | `graph.semantic_relation.gleaning` | Enable a second "gleaning" pass during relation extraction to boost KG edge recall by 15-30% |
 | `retrieval_config.yaml` | `multi_query_enabled`, `crag.evaluator_enabled` | Query expansion + CRAG triage |
 | `guardrails_config.yaml` | `sentence_coverage.supported_threshold` | SLEC strictness |
 | `guardrails_config.yaml` | `claim_verification.contradicted_majority_fraction` | NLI tolerance |
 | `guardrails_config.yaml` | `refusal.min_rerank_score`, `min_confidence_threshold` | Refusal floors |
 | `model_config.yaml` | `local_model`, `provider`, `temperature` | LLM routing |
+| `model_config.yaml` | `llm.extraction_provider`, `llm.extraction_local_model` | Decoupled local LLM routing for extraction tasks |
+| `model_config.yaml` | `llm.self_rag_reflection_enabled` | Flag for self-reflection (disabled in favor of SLEC + quality gate pipeline checks) |
 
 ---
 
