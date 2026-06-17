@@ -1,422 +1,239 @@
-<div align="center">
-  <h1>🚀 AgentBook</h1>
-  <p><strong>Evidence-grounded multi-domain assistant for complex documents — agentic RAG with verified citations across PDFs, slides, tables, scans, handwriting, and audio.</strong></p>
+# 📚 AgentBook / Noelys
 
-  [![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
-  [![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-  [![Vite](https://img.shields.io/badge/Vite-646CFF?style=flat-square&logo=vite&logoColor=white)](https://vitejs.dev/)
-  [![React](https://img.shields.io/badge/React-20232A?style=flat-square&logo=react&logoColor=61DAFB)](https://react.dev/)
-  [![MongoDB](https://img.shields.io/badge/MongoDB-47A248?style=flat-square&logo=mongodb&logoColor=white)](https://www.mongodb.com/)
-  [![Qdrant](https://img.shields.io/badge/Qdrant-Vector_DB-EF4444?style=flat-square&logo=qdrant&logoColor=white)](https://qdrant.tech/)
-  [![Redis](https://img.shields.io/badge/Redis-DC382D?style=flat-square&logo=redis&logoColor=white)](https://redis.io/)
-  [![Ollama](https://img.shields.io/badge/Ollama-Local_LLM-white?style=flat-square&logo=ollama&logoColor=black)](https://ollama.com/)
-  [![License](https://img.shields.io/badge/License-Apache_2.0-green.svg?style=flat-square)](https://opensource.org/licenses/Apache-2.0)
-</div>
+> **AgentBook** is an enterprise-grade, multimodal, multi-model RAG (Retrieval-Augmented Generation) system designed for evidence-grounded question answering over complex heterogeneous learning materials.
 
-AgentBook turns heterogeneous documents into a queryable, citation-backed knowledge surface. Every sentence in an answer is traceable to a chunk on a specific page, block, or audio segment of the source document. The system is built for bilingual Vietnamese–English cross-domain settings: users can ask in Vietnamese over English documents (or vice versa) and receive grounded answers without losing the original-language evidence.
+```mermaid
+graph TD
+    %% Styling
+    classDef frontend fill:#1e293b,stroke:#3b82f6,stroke-width:2px,color:#f8fafc;
+    classDef router fill:#1e293b,stroke:#8b5cf6,stroke-width:2px,color:#f8fafc;
+    classDef process fill:#1e293b,stroke:#10b981,stroke-width:2px,color:#f8fafc;
+    classDef db fill:#1e293b,stroke:#f59e0b,stroke-width:2px,color:#f8fafc;
+    classDef guard fill:#1e293b,stroke:#ef4444,stroke-width:2px,color:#f8fafc;
 
+    subgraph UI [User Interface]
+        Client["💻 Noelys Web UI (React + TS)"]:::frontend
+    end
 
----
+    subgraph Routing [Modality & Intent Routing]
+        Router["🧠 Intent & Modality Router"]:::router
+    end
 
-## Highlights
+    subgraph DirectRAG [Fast Path: Direct RAG]
+        Retrieval["🔍 Hybrid Retrieval (Dense + Sparse BGE-M3)"]:::process
+        RRF["🔀 RRF Fusion & Reranking"]:::process
+        Gen["✍️ LLM Generator"]:::process
+    end
 
-- **Multi-format ingestion** — PDF, DOCX, PPTX, XLSX, CSV, PNG/JPG (printed + handwritten), and audio (MP3/WAV/M4A/FLAC/OGG/WebM) flow through a single block-level evidence schema. Bounding boxes for text/figures, page numbers, table row/column anchors, and audio start/end timestamps are preserved end-to-end so every citation can be rendered visually.
-- **Hybrid retrieval** — BGE-M3 produces dense + sparse vectors in one pass; both are queried against Qdrant and fused with Reciprocal Rank Fusion (RRF). A BGE cross-encoder reranks the top-30 candidates. Multi-query rewriting kicks in for hard-recall questions, and graph traversal kicks in when the query mentions relations (`liên quan`, `tác động`, `phụ thuộc`, `causes`, `depends on`, …).
-- **Agentic reasoning** — A bounded state-machine pipeline (Planner → Director → CRAG Critic → Reranker → Synthesizer → Guardrails → Sentence-Level Coverage Gate → Quality Gate) replaces free-form ReAct. Each stage has a single responsibility, a typed contract, and a measurable verdict written back to the shared `AgentState` blackboard, which is what the UI renders as the *Agent Trace* panel.
-- **Deterministic table aggregation** — Bypasses typical RAG chunking constraints and LLM mathematical reasoning limitations. For queries asking for aggregations (`sum`, `avg`, `max`, `min`, `count`) over tables, the system dynamically reconstructs the full table columns from stored blocks and calculates the exact value deterministically in Python.
-- **Cross-lingual support** — Native VI↔EN routing: original-language query keeps recall, a translated variant catches paraphrases, RRF fuses both. The claim verifier auto-skips when answer-language ≠ chunk-language (token-overlap NLI is meaningless across languages), so EN queries over a VN corpus return grounded EN answers instead of spurious refusals.
-- **Calibrated refusal** — Off-topic and chitchat are refused in 2–10 s via an intent-classifier shortcut. On-topic questions with weak grounding surface a *partial* badge through the SLEC gate instead of being silently fabricated; only the floor case (weighted SLEC < `refuse_below`) becomes a hard refusal.
-- **Evidence UI** — Citations carry `doc_id`, `page`, `block_id`, `bbox`, `snippet_original` and (optionally) `snippet_translated`. Clicking `[1]` scrolls the PDF / slide viewer to the exact region, plays an audio segment, or highlights a table row.
-- **Anti-hallucination & Citation Alignment** — Modality-aware citation alignment ensuring citations match the expected modality (e.g. table queries must cite table chunks, figures must have bounding boxes). LLM acronym expansions not found in evidence are stripped, invalid citations are pruned, and sentences with language drift are dropped before final response generation.
-- **Knowledge graph + mindmap** — Entities (concept / model / dataset / metric / framework) and typed relations (`references`, `mentioned_in_block`, `co_located_with`, `section_contains`) are extracted at ingestion. A concept graph and an LLM-summarised topical mindmap are derived from this layer per collection.
+    subgraph Agentic [Deep Path: Deep Reasoning]
+        Planner["📋 Multi-step Planner"]:::process
+        AgentSearch["🔄 Iterative Retriever"]:::process
+        CRAG["🛡️ CRAG Critic"]:::process
+    end
 
----
+    subgraph Deterministic [Deterministic Engine]
+        TableCalc["🔢 Python Table Executor (Excel Math)"]:::process
+    end
 
-## Architecture
+    subgraph Storage [Databases]
+        Mongo[("🍃 MongoDB (Metadata & Logs)")]:::db
+        Qdrant[("🎯 Qdrant Vector Store")]:::db
+    end
 
-```
-┌──────────────────────── Ingestion Ingest ────────────────────────┐
-│  Upload  →  Docling parse  →  OCR / handwriting / audio          │
-│           →  layout normalize  →  chunking (token-aware)         │
-│           →  contextual enrichment  →  entity + relation         │
-│             extraction  →  embedding (BGE-M3 dense+sparse)       │
-│           →  Qdrant index  +  Mongo evidence store               │
-└──────────────────────────────────────────────────────────────────┘
-                                │
-┌──────────────────────── Query Pipeline ──────────────────────────┐
-│                                                                  │
-│                        [User Query]                              │
-│                             │                                    │
-│                             ▼                                    │
-│             Intent Classifier (chitchat/off-topic)               │
-│                             │                                    │
-│             ┌───────────────┴───────────────────────┐            │
-│             ▼ (Sequential Direct Pipeline)          ▼ (Agentic Loop)
-│         Query Router                         Planner Agent       │
-│             │                                       │            │
-│         Retriever (Hybrid/Modality)          Director Agent      │
-│             │                                       │            │
-│         Smart Reranker                       CRAG Critic Agent   │
-│             │                                       │            │
-│         Table Executor                              │            │
-│             │                                       │            │
-│         Evidence Validator                          │            │
-│             │                                       │            │
-│         Synthesizer (Draft)                  Synthesizer (Draft) │
-│             │                                       │            │
-│         Claim Verifier (Self-RAG)            Guardrails Agent    │
-│             │                                       │            │
-│         SLEC Coverage Gate                   SLEC Coverage Gate  │
-│             │                                       │            │
-│         Citation Aligner                    (Critic / Re-plan)   │
-│             │                                       │            │
-│         Quality Gate                                │            │
-│             │                                       │            │
-│             └───────────────────────┬───────────────┘            │
-│                                     ▼                            │
-│                             [Final Response]                     │
-└──────────────────────────────────────────────────────────────────┘
+    subgraph Guardrails [Verification Gates]
+        SLEC["🛡️ Sentence-Level Evidence Coverage"]:::guard
+        Citation["🔗 Citation & Grounding Gate"]:::guard
+    end
+
+    %% Connections
+    Client -->|User Query| Router
+    
+    Router -->|Simple Query| Retrieval
+    Router -->|Complex / Multi-hop| Planner
+    Router -->|Table Math| TableCalc
+    
+    %% Fast Path Details
+    Retrieval --> RRF
+    Qdrant -.->|Vector Search| Retrieval
+    Mongo -.->|Metadata Filters| Retrieval
+    RRF --> Gen
+    
+    %% Deep Path Details
+    Planner --> AgentSearch
+    AgentSearch --> CRAG
+    CRAG -->|Verified Context| Gen
+    CRAG -->|Refine Retrieval| AgentSearch
+    
+    %% Endpoints
+    Gen --> SLEC
+    TableCalc --> Citation
+    SLEC --> Citation
+    Citation -->|Grounded Answer + Bounding Box Citations| Client
 ```
 
----
-
-## How It Works
-
-### Ingestion pipeline
-
-1. **Upload + safety gate** — MIME / magic-byte validation, path-traversal guard, per-owner storage scoping, configurable size limit (`max_file_size_mb`, currently 100 MB to accommodate audio).
-2. **Parse** — Docling handles PDF/DOCX/PPTX into typed blocks (text / table / figure / equation). Spreadsheets pass through a dedicated row-to-sentence parser. Audio is transcribed by Faster-Whisper with per-segment timestamps.
-3. **OCR / handwriting** — Scanned pages are routed to EasyOCR (printed) or a VLM fallback (handwriting). Image-quality and OCR-confidence gates label low-quality outputs so the answer pipeline can refuse instead of citing noise.
-4. **Layout normalize** — Reading order, multi-column merge, header/footer stripping, table-row deduplication, figure-caption pairing.
-5. **Chunking** — Token-aware semantic chunking (BGE-M3 tokenizer); chunks carry `source_block_ids`, `source_pages`, `bbox` aggregates, and `language`. A chunking QA pass drops empty / near-duplicate chunks.
-6. **Contextual enrichment** — Each chunk gets a one-sentence neighborhood summary prepended (improves recall on definitional queries).
-7. **Entity + relation extraction** — LLM-driven extractor produces typed entities (concept, model, dataset, metric, …) and relations (`references`, `co_located_with`, …) with evidence-block back-references. A quality gate drops single-char, all-numeric, or noise labels.
-8. **Embedding + index** — BGE-M3 dense (1024-d) + sparse (sparse-impact) vectors written to Qdrant in a single hybrid collection. Mongo holds the chunks, blocks, entities, relations, and material metadata.
-
-### Query pipelines
-
-AgentBook supports two query pipelines depending on difficulty, router confidence, and route type:
-
-#### 1. Bounded Agentic Pipeline (Multi-Agent State-Machine)
-The coordinator drives specialist agents over a shared `AgentState` blackboard. Each step writes a typed `AgentTraceStep` rendered in the UI's *Agent Trace* panel.
-
-| Step / Trace Stage | Specialist Agent / Owner | Responsibility |
-|---|---|---|
-| `classify_intent` | `IntentClassifier` | Chitchat/off-topic short-circuit (refuses in ≤ 2 s) |
-| `plan_query` | `PlannerAgent` | Dynamic plan building (general/comparison/summarization/claim_check/relation_trace), query decomposition, sub-question list |
-| `retrieve_evidence` | `RetrieverDirectorAgent` | Multi-source routing: dispatches sub-queries to Hybrid Text Search, Graph Search, or Visual Search tools |
-| `crag_triage` | `CRAGCriticAgent` | Evaluates retrieve results against CRAG thresholds, tagging them as CORRECT / AMBIGUOUS / INCORRECT |
-| `rerank_evidence` | `CrossEncoderReranker` | Cross-encoder reranks top candidates to match final context limit |
-| `synthesize_answer` | `SynthesizerAgent` | Grounded draft answer with `[N]` citation markers |
-| `verify_claims` | `GuardrailsAgent` | NLI-based verification scoring; triggers synthesizer repair mode if grounding errors or contradictions are found |
-| `repair_answer` | `SynthesizerAgent` | In-context revision when Guardrails flag grounding gaps |
-| `critic_review` | `CriticAgent` | Post-synthesis follow-up check (determines if additional retrieval loops are needed) |
-| `slec_gate` | `SentenceCoverageGate` | Per-sentence semantic-support scoring; drops unsupported text, hedges partials, refuses if weighted score < floor |
-
-#### 2. Sequential Direct Pipeline (Fast-Path Pipeline)
-Runs a linear sequence of modules optimized for speed on clear, factual queries.
-
-| Pipeline Phase | Module / Owner | Responsibility |
-|---|---|---|
-| **Intent Classification** | `IntentClassifier` | Identifies off-topic or chitchat queries instantly |
-| **Modality-Aware Routing** | `QueryRouter` | Classifies query modality (table/figure/audio) and determines whether to trigger a modality-filtered retrieval pass |
-| **Hybrid Retrieval** | `HybridRetriever` + `GraphRetriever` | Dense + sparse retrieval with optional K-hop KG traversal |
-| **Smart Reranking** | `SmartReranker` / `CrossEncoderReranker` | Rerank candidates; bypassable via `adaptive_retrieval` when RRF scores are exceptionally strong |
-| **Deterministic Aggregation** | `TableExecutor` | Hot-path aggregation (`sum`, `avg`, `max`, `min`, `count`) over full table data, avoiding RAG context boundaries and LLM errors |
-| **Evidence Validation** | `EvidenceValidator` | Gathers retrieval checks and modalities before generation to determine if evidence is sufficient |
-| **Answer Synthesis** | `LLM Generator` | Translates prompts and synthesizes citation-grounded response drafts |
-| **Self-RAG & Claim Verifier** | `Self-RAG` reflection + `ClaimVerifier` | Reflection loop + NLI claim check (supporting claim checking routes) |
-| **Coverage Adjudication** | `SentenceCoverageGate` (SLEC) | Sentences scored against chunks; prunes unsupported sentences, hedges partials, enforces coverage floor refusal |
-| **Citation Alignment** | `CitationAligner` | Validates citation modalities (e.g. table queries link to table chunks) and renumbers tags |
-| **Quality Gating** | `QualityGate` | Consolidates SLEC, citation, and confidence stage verdicts into PASS/CAUTION/FAIL; refuses when $\ge 2$ stages fail |
-| **Response Finalization** | `ResponseParser` | Post-processes acronym expansions, language-drift stripping, and outputs final `QueryResponse` |
-
-### Evidence schema (citation payload)
-
-```jsonc
-{
-  "doc_id": "6a1248b548a253a8162ee173",
-  "doc_name": "lecture_notes.pdf",
-  "page": 3,
-  "pages": [3],
-  "block_id": "b_034",
-  "block_type": "text",
-  "snippet_original": "WAPE được chọn làm chỉ số chính vì phù hợp hơn MAPE trong chuỗi có giá trị gần 0…",
-  "snippet_translated": null,
-  "bbox": { "x0": 72.4, "y0": 612.1, "x1": 540.0, "y1": 668.3 },
-  "role": "primary",
-  "source_language": "vi",
-  "confidence": 0.74,
-  "evidence_blocks": [ /* every block in the parent chunk, with its own bbox/page/audio segment */ ]
-}
-```
-
-### Refusal taxonomy
-
-| Trigger | Stage | Typical latency |
-|---|---|---|
-| Off-topic / chitchat | `IntentClassifier` shortcut | ≤ 10 s |
-| No / low-quality evidence | `RefusalPolicy` (`min_rerank_score`, `min_confidence_threshold`) | retrieval-time |
-| Majority-contradicted claims | `ClaimVerifier` (NLI) when ≥ `contradicted_majority_fraction` claims are flagged | post-synthesis |
-| Coverage floor | `SentenceCoverageGate` when weighted score < `refuse_below` | post-synthesis |
-| False premise | LLM emits `Tiền đề không chính xác:` prefix and corrects in-place | answers, not refuses |
+<p align="center">
+  <a href="https://fastapi.tiangolo.com"><img src="https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi" alt="FastAPI"></a>
+  <a href="https://reactjs.org"><img src="https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB" alt="React"></a>
+  <a href="https://www.typescriptlang.org"><img src="https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript"></a>
+  <a href="https://www.mongodb.com"><img src="https://img.shields.io/badge/MongoDB-4EA94B?style=for-the-badge&logo=mongodb&logoColor=white" alt="MongoDB"></a>
+  <a href="https://qdrant.tech"><img src="https://img.shields.io/badge/Qdrant-red?style=for-the-badge&logo=qdrant&logoColor=white" alt="Qdrant"></a>
+  <a href="https://redis.io"><img src="https://img.shields.io/badge/Redis-DC382D?style=for-the-badge&logo=redis&logoColor=white" alt="Redis"></a>
+  <a href="https://docs.celeryq.dev"><img src="https://img.shields.io/badge/Celery-37814A?style=for-the-badge&logo=celery&logoColor=white" alt="Celery"></a>
+  <img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=for-the-badge" alt="License">
+</p>
 
 ---
 
-## API Surface
+## ✨ Core Pillars
 
-All routes are mounted under `/api/v1` and rate-limited to **15 requests / minute / IP** (Slowapi). JSON responses follow `APIResponse[T]` with `success`, `message`, `data`, `error`.
+AgentBook is not a generic "vector search + LLM" wrapper. It is engineered from the ground up for strict citation grounding, deterministic data extraction, and modality-aware routing.
 
-### Query
-
-| Method | Path | Purpose |
-|---|---|---|
-| `POST` | `/query/ask` | Grounded Q&A (returns `QueryResponse` with answer, citations, agent trace, SLEC report) |
-| `POST` | `/query/ask-stream` | SSE-streamed version of `/ask` (emits `agent_step` events as the pipeline progresses) |
-| `POST` | `/query/ask-graph` | Graph-anchored query: caller supplies `entity_ids` / `relation_ids` as the retrieval seed |
-| `POST` | `/query/ask-image` | Multipart image-as-query (multimodal) |
-| `POST` | `/query/compare` | Cross-document comparison matrix on a given `topic` × `dimensions` |
-| `POST` | `/query/summarize` | Material-level grounded summary |
-| `POST` | `/query/study-guide` | Outline + key concepts + citations for review purposes |
-
-### Materials
-
-| Method | Path | Purpose |
-|---|---|---|
-| `GET` | `/materials?owner_id=…` | List materials for an owner / collection |
-| `POST` | `/materials/upload` | Multipart upload + auto-trigger ingestion |
-| `POST` | `/materials/batch_upload` | Multi-file upload (207 multi-status) |
-| `GET` | `/materials/{id}/status?owner_id=…` | Indexing status |
-| `GET` | `/materials/{id}/debug?owner_id=…` | Per-page blocks + chunks for inspection |
-| `GET` | `/materials/{id}/raw?owner_id=…` | Original file download |
-| `POST` | `/materials/{id}/retry` | Retry failed ingestion stages |
-| `DELETE` | `/materials/{id}?owner_id=…` | Delete material + cascade chunks/vectors |
-
-### Collections & graph
-
-| Method | Path | Purpose |
-|---|---|---|
-| `POST` / `GET` / `PATCH` / `DELETE` | `/collections[/…]` | Standard CRUD + dashboard |
-| `POST` | `/graph` | Concept graph (nodes + edges, scope-filtered) |
-| `GET` | `/graph/entity/{id}/subgraph` | K-hop subgraph around an entity |
-| `POST` | `/graph/mindmap` | LLM-summarised topical mindmap for a collection |
-| `GET` | `/evidence/{doc_id}/{page}` | Page-level evidence drilldown |
-
-### Auth, admin, evaluation
-
-`/auth/register`, `/auth/login`, `/auth/refresh`, `/auth/me` (JWT, only when `API_AUTH_ENABLED=true`).  
-`/admin/settings`, `/admin/metrics`, `/admin/feedback`.  
-`/evaluation/embed`, `/evaluation/ragas` (RAGAS faithfulness / answer-relevance / context-precision over a labelled set).
+*   📂 **Multimodal Ingestion**: Parses PDFs, Word (`.docx`), PowerPoints (`.pptx`), Spreadsheets (`.xlsx`, `.csv`), audio transcripts (`.mp3`, `.wav`), scanned pages, figures, and handwritten notes.
+*   🔍 **Hybrid Semantic Retrieval**: BGE-M3 dense and sparse hybrid search with Reciprocal Rank Fusion (RRF) and Cross-Encoder reranking.
+*   🧠 **Dynamic Routing & Agentic Reasoning**: Features a dual-mode engine:
+    *   **Fast RAG**: Direct, low-latency pipeline for straightforward queries.
+    *   **Deep Reasoning**: Dynamically activated state machine for multi-hop or complex queries.
+*   🔢 **Deterministic Table Execution**: Aggregates, filters, and calculates spreadsheet data programmatically in Python instead of relying on unreliable LLM arithmetic.
+*   🛡️ **Hallucination Guardrails**: Sentence-Level Evidence Coverage (SLEC) verifies every generated sentence against retrieved source coordinates (`bbox`, page, block ID) and automatically censors or flags unsupported claims.
+*   🇻🇳 **Cross-Lingual Alignment**: Accepts Vietnamese queries over English knowledge bases, performs cross-lingual retrieval, and returns sources in their original language.
 
 ---
 
-## Example Query
+## 🚀 Quick Start
 
-```bash
-curl -X POST http://localhost:8000/api/v1/query/ask \
-  -H "Content-Type: application/json; charset=utf-8" \
-  -d '{
-    "owner_id": "demo_user",
-    "collection_id": "6a0ed9e4455165de1b01120d",
-    "query": "Tại sao chọn WAPE thay vì MAPE?",
-    "top_k": 5
-  }'
-```
+### 📋 Prerequisites
+- **Python** >= 3.12
+- **Node.js** >= 18
+- **Docker Desktop** (for MongoDB, Qdrant, and Redis)
 
-```jsonc
-{
-  "success": true,
-  "data": {
-    "answer": "WAPE được chọn làm chỉ số chính thay vì MAPE vì dữ liệu phụ tải có những đoạn bằng 0 hoặc gần 0…[1] Ở MAPE, sai số tại mỗi thời điểm được chia cho giá trị thực tế…[1]",
-    "answer_language": "vi",
-    "query_language": "vi",
-    "citations": [ /* CitationSchema × 5 */ ],
-    "confidence": 0.68,
-    "was_refused": false,
-    "sentence_coverage": {
-      "enabled": true,
-      "weighted_score": 0.72,
-      "sentences": [
-        { "status": "supported", "score": 0.81, "text": "WAPE được chọn…" },
-        { "status": "supported", "score": 0.63, "text": "Ở MAPE, sai số…" }
-      ]
-    },
-    "agent_trace": {
-      "plan_type": "general",
-      "steps": [ /* AgentTraceStep × N */ ],
-      "verification": { "verdict": "supported", "confidence": 0.92 }
-    }
-  }
-}
-```
-
----
-
-## Performance & Limits
-
-| Aspect | Observed (Qwen 2.5 3B local, Ryzen / no GPU) |
-|---|---|
-| Cold start (model load) | ~10–15 s |
-| Single-PDF ingestion (≤ 10 pp.) | 30–120 s |
-| `/query/ask` end-to-end | 120–250 s typical, 2–10 s for off-topic refusal |
-| `/query/ask-stream` time-to-first-event | 1–3 s |
-| Hybrid retrieval (dense + sparse + RRF) | ≈ 0.3–0.6 s |
-| Cross-encoder rerank (20 candidates) | ≈ 25–45 s |
-| Concept graph / mindmap render | < 3 s |
-| Rate limit | 15 requests / minute / IP |
-| Per-file upload cap | 100 MB (`upload.max_file_size_mb`) |
-| Per-query input cap | 4 000 characters |
-
-Switching `AGENTBOOK_LLM_DEFAULT_PROVIDER=openai` and pointing at GPT-4o-mini / Claude reduces the synthesis stage from tens of seconds to ~1–3 s (the rest of the pipeline is unchanged).
-
----
-
-## Tech Stack
-
-| Layer | Components |
-|---|---|
-| **API** | FastAPI (async), Pydantic v2, Beanie ODM, Slowapi rate limiting, Python-Multipart, HTTPX |
-| **Storage** | MongoDB (documents + evidence + graph), Qdrant (hybrid vectors), Redis (cache + Celery broker) |
-| **Embeddings & Reranker** | BGE-M3 dense + sparse (FlagEmbedding), BGE reranker (SentenceTransformers) |
-| **Parsing & Processing** | Docling (PDF/DOCX/PPTX), EasyOCR (printed scans), VLM fallback (handwriting), Faster-Whisper (audio), PyPDF, openpyxl & xlrd (Excel spreadsheets), Pillow, OpenCV (image processing) |
-| **LLM** | Local Ollama (`qwen2.5:3b`, `qwen2.5-vl:7b`) with OpenAI-compatible cloud fallback |
-| **Orchestration & Graph** | NetworkX (backend graph structure), RapidFuzz (fuzzy text matching) |
-| **Background Queue** | Celery (eager mode supported for local dev), structured background tasks |
-| **Frontend UI** | React 18, TypeScript, Vite, TailwindCSS, React Flow (concept graph canvas), @dagrejs/dagre, Lucide React, React Resizable Panels, Zustand |
-| **Tooling & Testing** | Pytest (15 test suites), pytest-asyncio, Ruff, MyPy-friendly typing, Vitest & JSDOM (frontend unit testing) |
-
----
-
-## Quick Start
-
-### Prerequisites
-
-- Python 3.12 (3.11+ supported)
-- Node.js 18+
-- Docker Desktop (for Qdrant)
-- A MongoDB instance (local Docker or Atlas — connection string only)
-- [Ollama](https://ollama.com) running locally with the LLM models pulled:
-  ```bash
-  ollama pull qwen2.5:3b
-  ollama pull qwen2.5-vl:7b
-  ```
-  BGE-M3 embeddings and the BGE reranker download automatically on first use through FlagEmbedding.
-
-### 1. Configure environment
-
-Create `backend/.env` from `backend/.env.example` and set at least:
-
-```env
-MONGODB_URI=mongodb://localhost:27017      # or your Atlas URI
-AGENTBOOK_MONGODB_DATABASE=agentbook
-AGENTBOOK_QDRANT_URL=http://localhost:6333
-AGENTBOOK_LLM_DEFAULT_PROVIDER=local
-AGENTBOOK_LLM_LOCAL_MODEL=qwen2.5:3b
-AGENTBOOK_OLLAMA_BASE_URL=http://localhost:11434
-AGENTBOOK_CELERY_TASK_ALWAYS_EAGER=true    # run pipelines inline (no broker needed)
-```
-
-Per-feature thresholds, top-k, prompts, and routing live in [`config/*.yaml`](config/) — never edit them in code.
-
-### 2. Start the platform
-
+### ⚡ Start All Services
+Launch the entire system locally with a single PowerShell script:
 ```powershell
 .\start_all.ps1
 ```
 
-The script boots Qdrant (Docker), the FastAPI backend on `:8000`, and the Vite dev server on `:5173`.
-
-| Service | URL |
-|---|---|
-| Frontend | http://localhost:5173 |
-| API | http://localhost:8000 |
-| Swagger docs | http://localhost:8000/docs |
-| Qdrant dashboard | http://localhost:6333/dashboard |
-
-### 3. First query
-
-1. Open the frontend, create a collection, and upload a document.
-2. Wait for the status to flip to *indexed* (typically 30–120 s for a typical PDF on a laptop CPU).
-3. Ask a question — every claim in the answer carries a `[N]` marker linking back to the source chunk.
+Once up, the system is exposed at:
+- **Frontend App (Noelys)**: [http://localhost:5173](http://localhost:5173)
+- **Backend Swagger API Docs**: [http://localhost:8000/docs](http://localhost:8000/docs)
+- **Qdrant Vector DB Dashboard**: [http://localhost:6333/dashboard](http://localhost:6333/dashboard)
 
 ---
 
-## Repository Layout
+## 🛠️ Repository Layout
 
-```
+```text
 .
-├── backend/
+├── backend/                  # FastAPI Application
 │   ├── src/
-│   │   ├── agentic/              # Bounded multi-agent orchestration
-│   │   │   ├── agents/           # Planner, Director, CRAG Critic, Synthesizer, Guardrails, Critic
-│   │   │   ├── tools/            # Hybrid text search, graph search, NLI verifier
-│   │   │   ├── planner.py        # Rule-based plan builder
-│   │   │   ├── service.py        # Coordinator (state machine over the blackboard)
-│   │   │   └── state.py          # Shared AgentState
-│   │   ├── api/v1/endpoints/     # FastAPI routes (query, materials, collections, graph, …)
-│   │   ├── core/                 # Settings, LLM factory, rate limit, security
-│   │   ├── evaluation/           # RAGAS evaluator (faithfulness, relevance, precision)
-│   │   ├── guardrails/           # Claim verifier, sentence-coverage (SLEC) gate, quality gate, citation aligner, evidence validator, refusal policy
-│   │   ├── inference/            # Inference engine, response parser, reasoning-path builder
-│   │   ├── models/               # Beanie documents (Material, Chunk, Entity, Relation, …)
-│   │   ├── processing/           # Docling, OCR, handwriting, chunking, entity/relation extraction, table executor/serializer
-│   │   ├── prompts/              # System + task prompts (qa_grounded, summarization, claim_check, …)
-│   │   ├── rag/                  # Embedding, Qdrant store, hybrid retriever, rerankers, CRAG
-│   │   ├── schemas/              # Pydantic request / response schemas
-│   │   ├── services/             # Material / query / summary / study-guide / memory orchestration
-│   │   └── tasks/                # Celery task definitions
-│   └── tests/                    # Pytest: agentic, api, evaluation, guardrails, integration, …
-├── frontend/
+│   │   ├── agentic/          # Bounded agentic state-machine & planners
+│   │   ├── api/              # Thin FastAPI route handlers
+│   │   ├── core/             # App configs, security, LLM clients
+│   │   ├── guardrails/       # SLEC, citation alignment, quality gates
+│   │   ├── models/           # MongoDB Beanie ODM models
+│   │   ├── processing/       # Ingestion, OCR, handwriting readers, spreadsheets
+│   │   ├── rag/              # BGE-M3 embedding, Qdrant retrieval, RRF, reranking
+│   │   └── tasks/            # Celery async jobs
+│   └── tests/                # Comprehensive unit/integration tests
+├── frontend/                 # React 18, TypeScript, Vite, Tailwind CSS
 │   └── src/
-│       ├── api/                  # Typed API client
-│       ├── components/           # Workspace UI, GraphCanvas, AudioCitationPlayer, EvidencePanel, …
-│       ├── pages/                # WorkspacePage and route shells
-│       └── state/                # Workspace store
-├── config/                       # YAML configs (model, retrieval, guardrails, logging)
-├── scripts/                      # reindex_material.py, smoke_test_api.py
-├── data/test data/               # Sample corpora + scripted test scenarios
-├── docker-compose.yml            # Qdrant container
-└── start_all.ps1                 # Unified dev launcher
+│       ├── components/       # Studio, Workspace, Evidence & Graph panels
+│       └── pages/            # Core views and canvas workspaces
+├── config/                   # Centralized model, retrieval, & guardrails YAML configs
+└── docs/                     # Documentation, assets, and design roadmaps
 ```
 
 ---
 
-## Configuration Surface
+## ⚙️ Advanced Configuration & Guide
 
-All quality-affecting knobs live in [`config/*.yaml`](config/) and can be overridden by environment variables. The most relevant for tuning:
+<details>
+<summary><b>🔌 Environment Variables (<code>backend/.env</code>)</b></summary>
 
-| File | Knob | Purpose |
+Copy `backend/.env.example` to `backend/.env` and adjust the variables:
+
+```env
+AGENTBOOK_APP_ENV=development
+MONGODB_URI=mongodb://localhost:27017
+AGENTBOOK_MONGODB_DATABASE=agentbook
+AGENTBOOK_QDRANT_URL=http://localhost:6333
+AGENTBOOK_REDIS_URL=redis://localhost:6379/0
+
+# LLM Selection (local vs API)
+AGENTBOOK_LLM_DEFAULT_PROVIDER=local
+AGENTBOOK_LLM_LOCAL_MODEL=qwen2.5:7b
+AGENTBOOK_OLLAMA_BASE_URL=http://localhost:11434
+
+# For Cloud/OpenAI compatible models:
+# AGENTBOOK_LLM_DEFAULT_PROVIDER=openai_compatible
+# AGENTBOOK_OPENAI_BASE_URL=https://api.openai.com/v1
+# OPENAI_API_KEY=your_key_here
+# AGENTBOOK_OPENAI_MODEL=gpt-4o-mini
+```
+</details>
+
+<details>
+<summary><b>🎛️ Performance & RAG Tuning (<code>config/*.yaml</code>)</b></summary>
+
+All system thresholds and prompts live in the `config/` directory.
+
+- **`config/model_config.yaml`**: Configures Ollama, OpenAI-compatible APIs, embedding/reranking paths, OCR, visual models, and Whispers.
+- **`config/retrieval_config.yaml`**: Controls search width knobs (`dense_top_k`, `sparse_top_k`), routing parameters, table routing heuristics, and agentic reasoning thresholds.
+- **`config/guardrails_config.yaml`**: Establishes SLEC coverage thresholds, refusal gates, and claims evaluation.
+
+| Setting | Type | Description |
 |---|---|---|
-| `retrieval_config.yaml` | `dense_top_k`, `sparse_top_k`, `rerank_input_k`, `final_top_k` | Recall / context width |
-| `retrieval_config.yaml` | `agentic_rag_enabled`, `agentic_critic_enabled`, `agentic_max_retrieval_iterations` | Agentic pipeline shape |
-| `retrieval_config.yaml` | `adaptive_retrieval.enabled` | Adaptive fast-path retrieval (disabled by default to guarantee cross-encoder reranking runs for citation precision) |
-| `retrieval_config.yaml` | `adaptive_retrieval.fused_skip_threshold` | Skip threshold based on hybrid fused-score (replaces legacy `dense_skip_threshold`) |
-| `retrieval_config.yaml` | `routing.modality.enabled` | Modality-aware routing (directing table, figure, and audio queries to filtered passes) |
-| `retrieval_config.yaml` | `routing.modality.table_boost_multiplier` | Fused-score boost added to table modality search results |
-| `retrieval_config.yaml` | `graph.semantic_relation.gleaning` | Enable a second "gleaning" pass during relation extraction to boost KG edge recall by 15-30% |
-| `retrieval_config.yaml` | `multi_query_enabled`, `crag.evaluator_enabled` | Query expansion + CRAG triage |
-| `guardrails_config.yaml` | `sentence_coverage.supported_threshold` | SLEC strictness |
-| `guardrails_config.yaml` | `claim_verification.contradicted_majority_fraction` | NLI tolerance |
-| `guardrails_config.yaml` | `refusal.min_rerank_score`, `min_confidence_threshold` | Refusal floors |
-| `model_config.yaml` | `local_model`, `provider`, `temperature` | LLM routing |
-| `model_config.yaml` | `llm.extraction_provider`, `llm.extraction_local_model` | Decoupled local LLM routing for extraction tasks |
-| `model_config.yaml` | `llm.self_rag_reflection_enabled` | Flag for self-reflection (disabled in favor of SLEC + quality gate pipeline checks) |
+| `retrieval.agentic_rag_enabled` | Boolean | Global default toggle for Deep Reasoning availability |
+| `retrieval.dense_top_k` | Integer | Retrieval width for dense semantic search |
+| `retrieval.rerank_input_k` | Integer | Top candidates passed to cross-encoder |
+| `sentence_coverage.refuse_below` | Float | Fallback score below which a query is rejected |
+</details>
 
----
+<details>
+<summary><b>📮 Main API Endpoints</b></summary>
 
-## Testing
+API endpoints are versioned under `/api/v1`.
 
-```bash
-cd backend
-pytest                            # full suite
-pytest tests/test_agentic         # agentic-only
-pytest -k "test_retrieval"        # by name
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `POST` | `/query/ask` | Non-streaming grounded QA query |
+| `POST` | `/query/ask-stream` | Server-Sent Events (SSE) streaming query |
+| `POST` | `/query/ask-image` | Multimodal query using image input |
+| `POST` | `/query/ask-graph` | Graph-based conceptual retrieval query |
+| `POST` | `/materials/upload` | Upload a single training document |
+| `POST` | `/collections` | Create/group logical document collections |
+| `POST` | `/graph/mindmap` | Generate visual knowledge map |
+| `GET` | `/health` | Live backend health verification |
+</details>
+
+<details>
+<summary><b>🧪 Testing & Verification</b></summary>
+
+Run localized tests quickly:
+```powershell
+python -m pytest backend/tests/test_core backend/tests/test_guardrails/test_refusal_policy.py backend/tests/test_rag/test_query_router.py -q
 ```
 
-End-to-end API smoke and ablation scripts (LEGACY vs AGENTIC paths, multimodal coverage, refusal correctness) live in [`scripts/smoke_test_api.py`](scripts/smoke_test_api.py).
+Or execute the complete backend suite:
+```powershell
+python -m pytest backend/tests -q
+```
+
+To verify the production compilation of the React frontend:
+```powershell
+cd frontend
+npm run build
+```
+</details>
+
+<details>
+<summary><b>⚠️ Known Engineering Risks</b></summary>
+
+- **Resource Overheads**: Running BGE-M3 models, rerankers, OCR pipelines, and local LLMs requires a machine with dedicated VRAM. CPU-only execution will result in significant latency.
+- **Stale Cache / local DBs**: Do not commit local SQLite/Qdrant vector stores, database credentials, or generated files in the repository.
+- **Encoding Integrity**: Ensure all documents are UTF-8 clean. Corrupted characters will damage search accuracy and routing confidence.
+</details>
 
 ---
 
-## License
-
-Apache License 2.0.
+## 📄 License
+Licensed under the [Apache License 2.0](LICENSE).
