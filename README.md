@@ -95,7 +95,7 @@ graph TD
     Gen --> SLEC
     TableCalc --> Citation
     SLEC --> Citation
-    Citation -->|Grounded Answer + Evidence Sources (bbox, page, time)| Client
+    Citation -->|Grounded Answer + Bounding Box Citations| Client
 ```
 
 <p align="center">
