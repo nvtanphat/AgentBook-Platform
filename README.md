@@ -7,23 +7,51 @@
 ```mermaid
 graph TD
     %% Styling
+    classDef input fill:#1e293b,stroke:#a855f7,stroke-width:2px,color:#f8fafc;
+    classDef parse fill:#1e293b,stroke:#06b6d4,stroke-width:2px,color:#f8fafc;
     classDef frontend fill:#1e293b,stroke:#3b82f6,stroke-width:2px,color:#f8fafc;
     classDef router fill:#1e293b,stroke:#8b5cf6,stroke-width:2px,color:#f8fafc;
     classDef process fill:#1e293b,stroke:#10b981,stroke-width:2px,color:#f8fafc;
     classDef db fill:#1e293b,stroke:#f59e0b,stroke-width:2px,color:#f8fafc;
     classDef guard fill:#1e293b,stroke:#ef4444,stroke-width:2px,color:#f8fafc;
 
+    %% --- PIPELINE 1: MULTIMODAL INGESTION ---
+    subgraph Ingestion [1. Multimodal Ingestion Pipeline]
+        Files["📄 Heterogeneous Materials<br/>(PDF, DOCX, PPTX, XLSX, Images, Audio)"]:::input
+        
+        Parser["⚙️ Docling Document Parser"]:::parse
+        OCR["👁️ OCR & Handwriting Reader<br/>(EasyOCR & VLM Fallback)"]:::parse
+        Whisper["🔊 Faster-Whisper<br/>(Audio Transcriber)"]:::parse
+        Spreadsheet["📊 Tabular Processing<br/>(Pandas/JSON Serialization)"]:::parse
+    end
+
+    %% --- STORAGE ---
+    subgraph Storage [Databases & Indexing]
+        Mongo[("🍃 MongoDB<br/>(Metadata, Graph Entities, Chunks, Logs)")]:::db
+        Qdrant[("🎯 Qdrant Vector DB<br/>(BGE-M3 Dense + Sparse Vectors)")]:::db
+    end
+
+    %% Ingestion flow to storage
+    Files --> Parser
+    Files --> OCR
+    Files --> Whisper
+    Files --> Spreadsheet
+
+    Parser & OCR & Whisper & Spreadsheet -->|Structured Chunks + Bounding Box Metadata| Mongo
+    Parser & OCR & Whisper & Spreadsheet -->|Embeddings Generation| Qdrant
+
+    %% --- PIPELINE 2: RETRIEVAL & QUERY ANSWERING LOOP ---
     subgraph UI [User Interface]
         Client["💻 Noelys Web UI (React + TS)"]:::frontend
     end
 
-    subgraph Routing [Modality & Intent Routing]
-        Router["🧠 Intent & Modality Router"]:::router
+    subgraph Routing [Modality & Intent Router]
+        Router["🧠 Modality & Intent Router<br/>(Text | Table | Image | Audio)"]:::router
     end
 
     subgraph DirectRAG [Fast Path: Direct RAG]
-        Retrieval["🔍 Hybrid Retrieval (Dense + Sparse BGE-M3)"]:::process
-        RRF["🔀 RRF Fusion & Reranking"]:::process
+        Retrieval["🔍 Hybrid Retrieval<br/>(Dense + Sparse + Modality Payload Filters)"]:::process
+        RRF["🔀 RRF Fusion & BGE Reranker"]:::process
         Gen["✍️ LLM Generator"]:::process
     end
 
@@ -34,12 +62,7 @@ graph TD
     end
 
     subgraph Deterministic [Deterministic Engine]
-        TableCalc["🔢 Python Table Executor (Excel Math)"]:::process
-    end
-
-    subgraph Storage [Databases]
-        Mongo[("🍃 MongoDB (Metadata & Logs)")]:::db
-        Qdrant[("🎯 Qdrant Vector Store")]:::db
+        TableCalc["🔢 Python Table Executor<br/>(Excel Math & Aggregations)"]:::process
     end
 
     subgraph Guardrails [Verification Gates]
@@ -47,30 +70,32 @@ graph TD
         Citation["🔗 Citation & Grounding Gate"]:::guard
     end
 
-    %% Connections
-    Client -->|User Query| Router
+    %% QA flow connections
+    Client -->|User Query / Image Query| Router
     
-    Router -->|Simple Query| Retrieval
+    Router -->|Text / Simple Query| Retrieval
     Router -->|Complex / Multi-hop| Planner
-    Router -->|Table Math| TableCalc
+    Router -->|Table Aggregation| TableCalc
     
-    %% Fast Path Details
+    %% DB connections in Retrieval
+    Qdrant -.->|Hybrid Semantic Search| Retrieval
+    Mongo -.->|Modality & Collection Filters| Retrieval
+    
+    %% Fast Path execution
     Retrieval --> RRF
-    Qdrant -.->|Vector Search| Retrieval
-    Mongo -.->|Metadata Filters| Retrieval
     RRF --> Gen
     
-    %% Deep Path Details
+    %% Deep Path execution
     Planner --> AgentSearch
     AgentSearch --> CRAG
     CRAG -->|Verified Context| Gen
-    CRAG -->|Refine Retrieval| AgentSearch
+    CRAG -->|Refine Search| AgentSearch
     
-    %% Endpoints
+    %% Validation & output
     Gen --> SLEC
     TableCalc --> Citation
     SLEC --> Citation
-    Citation -->|Grounded Answer + Bounding Box Citations| Client
+    Citation -->|Grounded Answer + Evidence Sources (bbox, page, time)| Client
 ```
 
 <p align="center">
