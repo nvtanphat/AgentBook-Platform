@@ -1,6 +1,8 @@
-# 📚 AgentBook / Noelys
+<h1 align="center">📚 AgentBook / Noelys</h1>
 
-> **AgentBook** is an enterprise-grade, multimodal, multi-model RAG (Retrieval-Augmented Generation) system designed for evidence-grounded question answering over complex heterogeneous learning materials.
+<p align="center">
+  <strong>AgentBook</strong> is an enterprise-grade, multimodal, multi-model RAG (Retrieval-Augmented Generation) system designed for evidence-grounded question answering over complex heterogeneous learning materials.
+</p>
 
 ```mermaid
 graph TD
