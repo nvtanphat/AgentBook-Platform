@@ -23,6 +23,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.agentic.planner import AgenticSubQuestion
+from src.rag.evidence import EvidenceBundle
 from src.rag.types import RetrievalScope, RetrievedChunk
 from src.schemas.query import AgentTraceStep, CoverageReport
 
@@ -87,6 +88,7 @@ class AgentState(BaseModel):
     cleaned_evidence: list[RetrievedChunk] = Field(default_factory=list)
     graph_evidence: list[RetrievedChunk] = Field(default_factory=list)
     context_chunks: list[RetrievedChunk] = Field(default_factory=list)
+    evidence_bundle: EvidenceBundle = Field(default_factory=EvidenceBundle)
     crag_verdicts: list[CRAGEvidenceVerdict] = Field(default_factory=list)
     coverage: CoverageReport | None = None
 

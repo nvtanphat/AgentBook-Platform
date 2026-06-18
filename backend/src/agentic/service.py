@@ -61,7 +61,8 @@ from src.inference.intent_classifier import QueryIntent
 from src.inference.reasoning_path_builder import build_reasoning_path
 from src.models.common import PipelineStatus
 from src.models.material import Material
-from src.rag.query_router import RouteType
+from src.rag.evidence import CitationBuilder, EvidenceFusionRanker
+from src.rag.query_router import PreferredModality, RouteType
 from src.rag.retriever import dedupe_retrieved_chunks
 from src.rag.types import RetrievalScope, RetrievedChunk
 from src.schemas.query import (
@@ -100,6 +101,7 @@ class AgenticCoordinatingEngine:
     def __init__(self, *, engine: InferenceEngine) -> None:
         self.engine = engine
         self.planner = AgenticPlanner()
+        self.fusion_ranker = getattr(engine, "fusion_ranker", EvidenceFusionRanker(settings=getattr(engine, "settings", None)))
         self._rerank_fallback_semaphore = asyncio.Semaphore(1)
         _pattern = getattr(engine.settings, "extraction_anaphora_pattern", None) or (
             r"\b(nó|chúng|họ|điều này|điều đó|vấn đề này|khái niệm này|cái này|cái đó|"
@@ -160,6 +162,12 @@ class AgenticCoordinatingEngine:
             anaphora_resolution_enabled=bool(getattr(engine.settings, "agentic_anaphora_resolution_enabled", True)),
             planner_llm_enabled=bool(getattr(engine.settings, "agentic_planner_llm_enabled", False)),
         )
+
+    @staticmethod
+    def _modality_str(route) -> str | None:
+        modality = getattr(route, "preferred_modality", None)
+        value = getattr(modality, "value", modality)
+        return None if value in (None, "none") else str(value)
 
     def _clean_answer_text(
         self,
@@ -240,6 +248,53 @@ class AgenticCoordinatingEngine:
             self.engine._scaled_limit(top_k or self.engine.settings.final_top_k, route),
             coverage_floor,
         )
+
+        if route.preferred_modality == PreferredModality.FIGURE:
+            step = AgentTraceStep(name="retrieve_visual_evidence", status="skipped", tool="visual_image_search")
+            visual_hit_success = False
+            if self.visual_tool.enabled:
+                result = await self.visual_tool.run(query=resolved_query, scope=scope, limit=final_limit)
+                step.status = "completed" if result.success and result.data else "skipped"
+                step.evidence_count = len(result.data or [])
+                step.metadata = {"duration_ms": result.duration_ms}
+                state.record_step(step)
+                await self._emit_step(step, on_step)
+                if result.success and result.data:
+                    visual_hit_success = True
+                    response = await self.engine.answer_with_visual_evidence(
+                        query=resolved_query,
+                        scope=scope,
+                        visual_hits=result.data,
+                        answer_language=processed.answer_language,
+                        memory_context=memory_context or "",
+                    )
+                    response.agent_trace = AgentTrace(plan_type="visual_first", steps=list(state.steps_history))
+                    return response
+            else:
+                step.warning = "visual_tool_disabled"
+                state.record_step(step)
+                await self._emit_step(step, on_step)
+
+            # Caption-only fallback: when SigLIP visual index is empty (visual disabled
+            # or no embeddings) but the document was captioned, text retrieval over
+            # captions can still answer the question. Continue to the normal text
+            # pipeline instead of refusing immediately.
+            _caption_fallback = (
+                not visual_hit_success
+                and getattr(self.engine.settings, "visual_caption_fallback_enabled", True)
+            )
+            if not _caption_fallback:
+                state.was_refused = True
+                state.refusal_reason = "no_visual_matches"
+                return await self._build_query_response(state, processed=processed, route=route, answer=REFUSAL_ANSWER)
+
+            fallback_step = AgentTraceStep(
+                name="visual_caption_fallback", status="completed",
+                tool="text_search", warning="visual_index_miss_caption_fallback",
+            )
+            state.record_step(fallback_step)
+            await self._emit_step(fallback_step, on_step)
+            # Fall through to normal iterative retrieval loop below.
 
         # ── Iterative retrieval loop ────────────────────────────────────
         for iteration in range(self.config.max_iterations):
@@ -336,9 +391,27 @@ class AgenticCoordinatingEngine:
                 selected=reranked, candidates=candidates,
                 expected_material_ids=state.expected_material_ids, limit=final_limit,
             )
-            state.context_chunks = self.engine._pack_context_chunks(reranked)
+            packed = self.engine._pack_context_chunks(reranked)
+            # Post-retrieval graph probe (same as direct text path) — adds graph-linked
+            # chunks for entity-rich queries on any route, not just GRAPH_RELATION.
+            state.context_chunks = await self.engine._graph_probe(
+                query=state.resolved_query,
+                chunks=packed,
+                scope=scope,
+                route_decision=route,
+            )
         else:
             state.context_chunks = []
+        state.evidence_bundle = self.fusion_ranker.fuse(
+            query=state.resolved_query,
+            text_chunks=state.context_chunks,
+            visual_hits=[],
+            preferred_modality=self._modality_str(route),
+            route_type=route.route_type.value,
+            final_limit=final_limit,
+            include_visual=False,
+        )
+        state.context_chunks = state.evidence_bundle.to_legacy_chunks()
         state.coverage = await self._coverage_report(
             expected_material_ids=state.expected_material_ids, chunks=state.context_chunks,
         )
@@ -356,8 +429,10 @@ class AgenticCoordinatingEngine:
             should_refuse = False
             if refusal_reason not in (None, "partial_confidence"):
                 refusal_reason = None
-        state.citations = self.engine.response_parser.citations_from_chunks(
-            state.context_chunks, focus_text=state.resolved_query,
+        state.citations = CitationBuilder.from_evidence_bundle(
+            state.evidence_bundle,
+            owner_id=scope.owner_id,
+            api_v1_prefix=getattr(self.engine.settings, "api_v1_prefix", "/api/v1"),
         )
         if should_refuse:
             state.was_refused = True
@@ -519,16 +594,30 @@ class AgenticCoordinatingEngine:
                 if extras:
                     context_buffer = int(getattr(self.engine.settings, "agentic_critic_context_buffer", 4))
                     augmented = dedupe_retrieved_chunks(state.context_chunks + extras)[: final_limit + context_buffer]
-                    state.context_chunks = augmented
+                    state.evidence_bundle = self.fusion_ranker.fuse(
+                        query=state.resolved_query,
+                        text_chunks=augmented,
+                        visual_hits=[],
+                        preferred_modality=self._modality_str(route),
+                        route_type=route.route_type.value,
+                        final_limit=final_limit + context_buffer,
+                        include_visual=False,
+                    )
+                    state.context_chunks = state.evidence_bundle.to_legacy_chunks()
+                    state.citations = CitationBuilder.from_evidence_bundle(
+                        state.evidence_bundle,
+                        owner_id=scope.owner_id,
+                        api_v1_prefix=getattr(self.engine.settings, "api_v1_prefix", "/api/v1"),
+                    )
                     await self.agent_synthesizer.act(state, mode="repair")
                     if state.final_answer.strip():
                         state.final_answer = self._clean_answer_text(
                             state.final_answer,
-                            augmented,
+                            state.context_chunks,
                             state.answer_language or processed.answer_language,
                         )
                         state.final_answer = self.engine.response_parser.inject_citations(
-                            state.final_answer, augmented,
+                            state.final_answer, state.context_chunks,
                         )
                         state.record_step(
                             AgentTraceStep(
@@ -539,38 +628,35 @@ class AgenticCoordinatingEngine:
                         )
                         await self._emit_step(state.steps_history[-1], on_step)
 
-        # ── Sentence-level evidence coverage (SLEC) ─────────────────────
-        # Drops sentences whose rerank-vs-chunk score falls below
-        # `slec_partial_threshold` and refuses the whole answer when the
-        # weighted coverage ratio is below `slec_refuse_below`. This is the
-        # only safeguard against the LLM stitching a fluent answer from
-        # chunks that merely mention the query topic without grounding it.
+        # ── Unified quality finalization (SLEC → prune → aligner → gate) ───
+        # Replaces the bespoke agentic SLEC block and adds citation aligner +
+        # quality gate that were previously missing from the agentic path.
+        # _build_query_response still runs _prune_to_cited but that is a no-op
+        # when finalization already pruned — so ordering is safe.
         if (
             not should_refuse
-            and bool(getattr(self.engine.settings, "slec_enabled", False))
             and state.context_chunks
             and state.final_answer.strip()
             and state.final_answer != REFUSAL_ANSWER
         ):
-            try:
-                slec_answer, slec_report = await self.engine.sentence_coverage_gate.verify(
-                    answer=state.final_answer,
-                    chunks=state.context_chunks,
-                    route_type=route.route_type.value,
-                )
-                state.sentence_coverage_report = slec_report
-                if slec_report and slec_report.refused:
-                    should_refuse = True
-                    refusal_reason = "slec_coverage_below_floor"
-                    state.final_answer = REFUSAL_ANSWER
-                elif slec_report and slec_report.dropped_count > 0:
-                    state.final_answer = self.engine.response_parser.inject_citations(
-                        slec_answer, state.context_chunks,
-                    )
-                else:
-                    state.final_answer = slec_answer
-            except Exception as exc:
-                logger.warning("SLEC gate failed in agentic — keeping original answer", extra={"error": str(exc)})
+            _fq_ag = await self.engine._finalize_quality(
+                answer=state.final_answer,
+                citations=state.citations,
+                confidence=state.confidence_score,
+                evidence_bundle=state.evidence_bundle,
+                context_chunks=state.context_chunks,
+                route_decision=route,
+                trace=None,  # agentic path uses AgentTrace, not RequestTrace
+                run_slec=True,
+                multimodal=False,
+            )
+            state.final_answer = _fq_ag.answer
+            state.citations = _fq_ag.citations
+            state.sentence_coverage_report = _fq_ag.slec_report
+            if _fq_ag.should_refuse:
+                should_refuse = True
+                refusal_reason = _fq_ag.refusal_reason
+                state.final_answer = REFUSAL_ANSWER
 
         state.was_refused = should_refuse
         state.refusal_reason = refusal_reason
@@ -792,6 +878,7 @@ class AgenticCoordinatingEngine:
             refusal_reason=state.refusal_reason,
             reasoning_path=await build_reasoning_path(
                 query=state.resolved_query,
+                answer=answer,
                 retrieved_chunks=state.raw_evidence,
                 graph_chunks=state.graph_evidence,
                 reranked_chunks=state.context_chunks,

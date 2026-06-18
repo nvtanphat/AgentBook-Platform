@@ -38,7 +38,7 @@ async def ask(
     try:
         result = await query_service.ask(body)
     except ValueError as exc:
-        logger.warning("Invalid query request", extra={"owner_id": body.owner_id, "collection_id": body.collection_id})
+        logger.warning("Invalid query request", extra={"owner_id": body.owner_id, "collection_id": body.collection_id, "error": str(exc)})
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid query request.") from exc
     except Exception as exc:
         logger.exception("Query pipeline failed", extra={"owner_id": body.owner_id, "collection_id": body.collection_id})

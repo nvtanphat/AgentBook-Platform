@@ -5,6 +5,7 @@ import math
 import re
 
 from src.core.config import Settings
+from src.rag.evidence import EvidenceBundle
 from src.rag.types import RetrievedChunk
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,18 @@ class ConfidenceScorer:
         max_score = max(fused) or 1.0
         return round(sum(score / max_score for score in fused) / len(fused), 4)
 
+    def score_bundle(self, bundle: EvidenceBundle) -> float:
+        if not bundle.items:
+            return 0.0
+        scores = [max(0.0, min(1.0, float(item.score or 0.0))) for item in bundle.items]
+        if not scores:
+            return 0.0
+        # Top evidence matters more than long-tail auxiliaries, but keep a small
+        # average component so multi-source support raises confidence.
+        top = max(scores)
+        avg = sum(scores) / len(scores)
+        return round((0.65 * top) + (0.35 * avg), 4)
+
     @staticmethod
     def _topic_coverage(query: str, chunks: list[RetrievedChunk], min_overlap: int = 1) -> bool:
         """Return True if at least one chunk covers ≥ min_overlap key query terms.
@@ -64,6 +77,17 @@ class ConfidenceScorer:
             return True  # query too short to judge
         for chunk in chunks:
             text = chunk.content.lower()
+            if sum(1 for t in tokens if t in text) >= min_overlap:
+                return True
+        return False
+
+    @staticmethod
+    def _topic_coverage_bundle(query: str, bundle: EvidenceBundle, min_overlap: int = 1) -> bool:
+        tokens = {t for t in _WORD_RE.findall(query.lower()) if t not in _VI_STOPWORDS}
+        if len(tokens) < 2:
+            return True
+        for item in bundle.items:
+            text = " ".join([item.prompt_text() or "", item.snippet or ""]).lower()
             if sum(1 for t in tokens if t in text) >= min_overlap:
                 return True
         return False
@@ -90,4 +114,23 @@ class ConfidenceScorer:
 
         # Tier 3: Too low → refuse
         logger.info("Refusing: score %.4f below soft threshold %.4f", normalized_top, soft_threshold)
+        return True, "retrieved evidence confidence is below the configured threshold"
+
+    def should_refuse_bundle(self, *, bundle: EvidenceBundle, confidence: float, query: str = "") -> tuple[bool, str | None]:
+        if not bundle.items:
+            return True, "no relevant evidence was found in the scoped materials"
+        top_item = bundle.items[0]
+        normalized_top = max(0.0, min(1.0, float(top_item.score or confidence)))
+        threshold = self.settings.min_evidence_confidence
+        soft_threshold = threshold * 0.6
+
+        if normalized_top >= threshold:
+            if query and not self._topic_coverage_bundle(query, bundle):
+                logger.info("Refusing: high evidence score but low topic coverage for query: %.55s", query)
+                return True, "retrieved evidence does not cover the query topic"
+            return False, None
+        if normalized_top >= soft_threshold:
+            logger.info("Partial bundle confidence: %.4f (soft threshold %.4f)", normalized_top, soft_threshold)
+            return False, "partial_confidence"
+        logger.info("Refusing bundle: score %.4f below soft threshold %.4f", normalized_top, soft_threshold)
         return True, "retrieved evidence confidence is below the configured threshold"

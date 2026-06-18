@@ -5,6 +5,7 @@ import math
 import re
 
 from src.rag.types import RetrievedChunk
+from src.rag.evidence import CitationBuilder, EvidenceBundle
 from src.schemas.evidence import BoundingBoxSchema, CitationSchema, EvidenceBlockSchema
 
 # Vietnamese + Latin word pattern covering all Vietnamese diacritics
@@ -87,8 +88,23 @@ class ResponseParser:
         re.IGNORECASE,
     )
 
-    def format_evidence_for_prompt(self, chunks: list[RetrievedChunk]) -> str:
+    def format_evidence_for_prompt(self, chunks: list[RetrievedChunk] | EvidenceBundle) -> str:
+        if isinstance(chunks, EvidenceBundle):
+            return chunks.format_for_prompt()
         return self._format_evidence_xml(chunks)
+
+    def citations_from_evidence_bundle(
+        self,
+        bundle: EvidenceBundle,
+        *,
+        owner_id: str | None = None,
+        api_v1_prefix: str = "/api/v1",
+    ) -> list[CitationSchema]:
+        return CitationBuilder.from_evidence_bundle(
+            bundle,
+            owner_id=owner_id,
+            api_v1_prefix=api_v1_prefix,
+        )
 
     @staticmethod
     def _format_evidence_xml(chunks: list[RetrievedChunk]) -> str:
@@ -143,7 +159,7 @@ class ResponseParser:
 
     def citations_from_chunks(
         self,
-        chunks: list[RetrievedChunk],
+        chunks: list[RetrievedChunk] | EvidenceBundle,
         *,
         focus_text: str | None = None,
         owner_id: str | None = None,
@@ -157,6 +173,13 @@ class ResponseParser:
         Pass owner_id + api_v1_prefix to enable figure_image_url population on
         figure-type evidence blocks (so frontend can render actual figure images).
         """
+        if isinstance(chunks, EvidenceBundle):
+            return self.citations_from_evidence_bundle(
+                chunks,
+                owner_id=owner_id,
+                api_v1_prefix=api_v1_prefix,
+            )
+
         citations: list[CitationSchema] = []
         for i, chunk in enumerate(chunks):
             evs = chunk.evidence
@@ -212,8 +235,17 @@ class ResponseParser:
                 modality=chunk.modality,
             ) if primary_ev else chunk.content[:500]
             cited_span = self._extract_cited_span(citation_snippet, focus_text)
+            citation_kind = "table" if chunk.modality == "table" or (chunk.metadata or {}).get("sheet_names") else (
+                "audio" if chunk.modality == "audio" else ("visual" if chunk.modality == "figure" else "text")
+            )
+            first_sheet = ((chunk.metadata or {}).get("sheet_names") or [None])[0]
+            top_figure_url = next((b.figure_image_url for b in evidence_blocks if b.figure_image_url), None)
+            top_audio_start = next((b.audio_start_seconds for b in evidence_blocks if b.audio_start_seconds is not None), None)
+            top_audio_end = next((b.audio_end_seconds for b in evidence_blocks if b.audio_end_seconds is not None), None)
             citations.append(
                 CitationSchema(
+                    evidence_id=chunk.chunk_id,
+                    kind=citation_kind,
                     doc_id=primary_ev.material_id if primary_ev else chunk.material_id,
                     doc_name=primary_ev.document_name if primary_ev else chunk.document_name,
                     page=citation_page,
@@ -227,6 +259,11 @@ class ResponseParser:
                     source_language=chunk.language,
                     confidence=_citation_confidence(chunk),
                     evidence_blocks=evidence_blocks,
+                    figure_image_url=top_figure_url,
+                    sheet_name=first_sheet,
+                    cell_ref=(chunk.metadata or {}).get("cell_ref"),
+                    audio_start_seconds=top_audio_start,
+                    audio_end_seconds=top_audio_end,
                 )
             )
         return citations

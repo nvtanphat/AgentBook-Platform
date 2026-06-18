@@ -9,7 +9,7 @@ from src.inference.inference_engine import InferenceEngine
 from src.inference.response_parser import ResponseParser
 from src.processing.types import BBox, EvidenceBlock
 from src.rag.query_router import PreferredModality
-from src.rag.types import RetrievalScope, RetrievedChunk
+from src.rag.types import RetrievalScope, RetrievedChunk, RetrievedVisualChunk
 from src.schemas.query import SentenceCoverageReport, SentenceSupport
 
 
@@ -253,6 +253,101 @@ def test_refine_citation_blocks_uses_slec_supporting_block_provenance() -> None:
     assert refined[0].page == 2
     assert refined[0].bbox.x1 == 3
     assert refined[0].snippet_original.startswith("exact supporting block")
+
+
+def test_prune_to_cited_rewrites_sentence_coverage_text_markers() -> None:
+    report = SentenceCoverageReport(
+        sentences=[
+            SentenceSupport(
+                index=0,
+                text="First sentence [2].",
+                status="supported",
+                score=0.9,
+                citation_refs=[2],
+            ),
+            SentenceSupport(
+                index=1,
+                text="Second sentence [4].",
+                status="supported",
+                score=0.9,
+                citation_refs=[4],
+            ),
+        ]
+    )
+    citations = [object(), object(), object(), object()]
+
+    answer, pruned, updated_report, _ = InferenceEngine._prune_to_cited(
+        "First sentence [2]. Second sentence [4].",
+        citations,
+        report,
+    )
+
+    assert answer == "First sentence [1]. Second sentence [2]."
+    assert len(pruned) == 2
+    assert updated_report.sentences[0].text == "First sentence [1]."
+    assert updated_report.sentences[0].citation_refs == [1]
+    assert updated_report.sentences[1].text == "Second sentence [2]."
+    assert updated_report.sentences[1].citation_refs == [2]
+
+
+def test_visual_verifier_refusal_requires_image_and_high_confidence() -> None:
+    class Verdict:
+        supported = False
+        confidence = 0.4
+
+    assert InferenceEngine._visual_verifier_should_refuse(
+        visual_verdict=Verdict(),
+        image_paths=["figure.png"],
+        threshold=0.75,
+    ) is False
+    assert InferenceEngine._visual_verifier_should_refuse(
+        visual_verdict=Verdict(),
+        image_paths=[],
+        threshold=0.75,
+    ) is False
+
+    Verdict.confidence = 0.9
+    assert InferenceEngine._visual_verifier_should_refuse(
+        visual_verdict=Verdict(),
+        image_paths=["figure.png"],
+        threshold=0.75,
+    ) is True
+
+
+def test_inline_visual_alt_text_is_short_label_and_filter_respects_figure_number() -> None:
+    hit1 = RetrievedVisualChunk(
+        point_id="v1",
+        owner_id="u",
+        collection_id="c",
+        material_id="m",
+        document_name="paper.pdf",
+        page=3,
+        block_id="fig-1",
+        block_type="figure",
+        caption="Figure 1: " + "very long caption " * 40,
+        source_language="en",
+        score=0.9,
+    )
+    hit2 = hit1.model_copy(update={"point_id": "v2", "block_id": "fig-2", "page": 4, "caption": "Figure 2: other"})
+
+    filtered = InferenceEngine._filter_visual_hits_for_query("Describe Figure 1", [hit2, hit1])
+    engine = InferenceEngine(
+        settings=Settings(testing=True),
+        retriever=FakeRetriever(),
+        graph_retriever=FakeGraphRetriever(),
+        reranker=FakeReranker(),
+        llm=FakeLLM(),
+    )
+    answer = engine._inject_inline_images(answer="Answer [1].", visual_hits=filtered, owner_id="u")
+    citation = engine._visual_hit_to_citation(hit1)
+
+    assert filtered == [hit1]
+    assert "![Figure 1, trang 3]" in answer
+    assert "very long caption" not in answer
+    assert citation.role == "visual_match"
+    assert citation.evidence_id == "v1"
+    assert citation.kind == "visual"
+    assert citation.evidence_blocks
 
 
 def test_non_figure_answers_strip_inline_image_markdown() -> None:
