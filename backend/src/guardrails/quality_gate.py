@@ -21,6 +21,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from src.guardrails.citation_aligner import CitationAlignmentResult
+from src.rag.evidence import EvidenceBundle
 from src.schemas.query import SentenceCoverageReport
 
 
@@ -74,15 +75,6 @@ class QualityGateResult(BaseModel):
 # ── Gate ───────────────────────────────────────────────────────────────────────
 
 
-# Thresholds — intentionally lightweight; production thresholds live in config.
-_CONF_CAUTION = 0.50
-_CONF_FAIL = 0.30
-_SLEC_CAUTION = 0.60
-_SLEC_FAIL = 0.40
-_CIT_CAUTION = 0.80
-_CIT_FAIL = 0.50
-
-
 def _verdict_from_score(
     score: float,
     *,
@@ -97,7 +89,20 @@ def _verdict_from_score(
 
 
 class QualityGate:
-    """Compose SLEC + citation + confidence into a QualityGateResult."""
+    """Compose SLEC + citation + confidence into a QualityGateResult.
+
+    Thresholds are loaded from Settings (config/guardrails_config.yaml →
+    quality_gate section). Safe defaults match the former hardcoded values so
+    existing callers that pass no settings keep identical behaviour.
+    """
+
+    def __init__(self, settings: object | None = None) -> None:
+        self._conf_caution = float(getattr(settings, "quality_gate_conf_caution", 0.50))
+        self._conf_fail = float(getattr(settings, "quality_gate_conf_fail", 0.30))
+        self._slec_caution = float(getattr(settings, "quality_gate_slec_caution", 0.60))
+        self._slec_fail = float(getattr(settings, "quality_gate_slec_fail", 0.40))
+        self._cit_caution = float(getattr(settings, "quality_gate_citation_caution", 0.80))
+        self._cit_fail = float(getattr(settings, "quality_gate_citation_fail", 0.50))
 
     def evaluate(
         self,
@@ -105,6 +110,7 @@ class QualityGate:
         slec_report: SentenceCoverageReport | None,
         alignment: CitationAlignmentResult,
         confidence: float,
+        evidence_bundle: EvidenceBundle | None = None,
     ) -> QualityGateResult:
         verdicts: list[StageVerdict] = []
 
@@ -114,7 +120,7 @@ class QualityGate:
             StageVerdict(
                 stage="confidence",
                 verdict=_verdict_from_score(
-                    conf_score, caution_below=_CONF_CAUTION, fail_below=_CONF_FAIL
+                    conf_score, caution_below=self._conf_caution, fail_below=self._conf_fail
                 ),
                 score=round(conf_score, 4),
             )
@@ -129,7 +135,7 @@ class QualityGate:
                 slec_verdict: Literal["PASS", "CAUTION", "FAIL"] = "FAIL"
             else:
                 slec_verdict = _verdict_from_score(
-                    slec_score, caution_below=_SLEC_CAUTION, fail_below=_SLEC_FAIL
+                    slec_score, caution_below=self._slec_caution, fail_below=self._slec_fail
                 )
             verdicts.append(
                 StageVerdict(stage="slec", verdict=slec_verdict, score=round(slec_score, 4))
@@ -144,7 +150,7 @@ class QualityGate:
             StageVerdict(
                 stage="citation",
                 verdict=_verdict_from_score(
-                    cit_score, caution_below=_CIT_CAUTION, fail_below=_CIT_FAIL
+                    cit_score, caution_below=self._cit_caution, fail_below=self._cit_fail
                 ),
                 score=round(cit_score, 4),
             )

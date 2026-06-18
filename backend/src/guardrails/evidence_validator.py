@@ -14,6 +14,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from src.guardrails.refusal_policy import RefusalPolicy, RefusalRule
+from src.rag.evidence import AudioEvidence, EvidenceBundle, EvidenceKind, TableEvidence, VisualEvidence
 from src.rag.types import RetrievedChunk
 
 
@@ -51,18 +52,42 @@ class EvidenceValidator:
         self,
         *,
         query: str,
-        chunks: list[RetrievedChunk],
+        chunks: list[RetrievedChunk] | None = None,
+        evidence_bundle: EvidenceBundle | None = None,
         preferred_modality: str | None = None,
         aux_query: str = "",
     ) -> EvidenceValidationResult:
+        chunks = chunks or (evidence_bundle.to_legacy_chunks() if evidence_bundle is not None else [])
         decision = self.refusal_policy.check_evidence(chunks, query, aux_query=aux_query)
 
         modality_ok = True
         missing: list[str] = []
-        if preferred_modality == "table" and chunks:
-            modality_ok = any(_chunk_is_table(c) for c in chunks)
+        if preferred_modality and preferred_modality != "none" and chunks:
+            if evidence_bundle is not None:
+                if preferred_modality == "table":
+                    modality_ok = any(item.kind == EvidenceKind.TABLE.value or isinstance(item, TableEvidence) for item in evidence_bundle.items)
+                    missing_name = "table_evidence"
+                elif preferred_modality == "figure":
+                    modality_ok = any(item.kind == EvidenceKind.VISUAL.value or isinstance(item, VisualEvidence) for item in evidence_bundle.items)
+                    missing_name = "visual_evidence"
+                elif preferred_modality == "audio":
+                    modality_ok = any(item.kind == EvidenceKind.AUDIO.value or isinstance(item, AudioEvidence) for item in evidence_bundle.items)
+                    missing_name = "audio_evidence"
+                else:
+                    missing_name = f"{preferred_modality}_evidence"
+            elif preferred_modality == "table":
+                modality_ok = any(_chunk_is_table(c) for c in chunks)
+                missing_name = "table_evidence"
+            elif preferred_modality == "figure":
+                modality_ok = any(c.modality == "figure" for c in chunks)
+                missing_name = "visual_evidence"
+            elif preferred_modality == "audio":
+                modality_ok = any(c.modality == "audio" for c in chunks)
+                missing_name = "audio_evidence"
+            else:
+                missing_name = f"{preferred_modality}_evidence"
             if not modality_ok:
-                missing.append("table_evidence")
+                missing.append(missing_name)
 
         if decision.should_refuse:
             risk: Literal["low", "medium", "high"] = "high"
@@ -79,6 +104,9 @@ class EvidenceValidator:
             rule=decision.rule,
             confidence=decision.confidence,
             modality_ok=modality_ok,
-            selected_evidence_ids=[c.chunk_id for c in chunks],
+            selected_evidence_ids=(
+                [item.evidence_id for item in evidence_bundle.items]
+                if evidence_bundle is not None else [c.chunk_id for c in chunks]
+            ),
             missing=missing,
         )

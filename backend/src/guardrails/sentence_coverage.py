@@ -29,6 +29,7 @@ from dataclasses import dataclass
 
 from src.core.config import Settings
 from src.processing.types import EvidenceBlock
+from src.rag.evidence import EvidenceBundle
 from src.rag.reranker import CrossEncoderReranker
 from src.rag.types import RetrievedChunk
 from src.schemas.query import SentenceCoverageReport, SentenceSupport
@@ -131,7 +132,8 @@ class SentenceCoverageGate:
         self,
         *,
         answer: str,
-        chunks: list[RetrievedChunk],
+        chunks: list[RetrievedChunk] | None = None,
+        evidence_bundle: EvidenceBundle | None = None,
         route_type: str | None = None,
     ) -> tuple[str, SentenceCoverageReport]:
         """Score the answer and (optionally) rewrite it.
@@ -152,7 +154,12 @@ class SentenceCoverageGate:
         if not getattr(self.settings, "reranker_enabled", True):
             return answer, SentenceCoverageReport(enabled=False)
 
-        evidence = self._collect_evidence(chunks)
+        chunks = chunks or []
+        evidence = (
+            self._collect_bundle_evidence(evidence_bundle)
+            if evidence_bundle is not None
+            else self._collect_evidence(chunks)
+        )
         sentences_raw = _split_sentences(answer)
         if not sentences_raw or not evidence:
             return answer, SentenceCoverageReport(
@@ -288,6 +295,43 @@ class SentenceCoverageGate:
                             block_id="",
                             chunk_id=chunk.chunk_id,
                             material_id=chunk.material_id,
+                            text=text,
+                        )
+                    )
+                    if len(entries) >= max_total_blocks:
+                        return entries
+        return entries
+
+    @staticmethod
+    def _collect_bundle_evidence(
+        bundle: EvidenceBundle, max_items: int = 5, max_total_blocks: int = 24
+    ) -> list[_EvidenceEntry]:
+        entries: list[_EvidenceEntry] = []
+        for item in bundle.items[:max_items]:
+            blocks: list[EvidenceBlock] = list(item.evidence_blocks or [])
+            if blocks:
+                for blk in blocks:
+                    text = (blk.snippet_original or "").strip()
+                    if not text:
+                        continue
+                    entries.append(
+                        _EvidenceEntry(
+                            block_id=blk.block_id or item.block_id or "",
+                            chunk_id=item.evidence_id,
+                            material_id=item.material_id,
+                            text=text,
+                        )
+                    )
+                    if len(entries) >= max_total_blocks:
+                        return entries
+            else:
+                text = (item.prompt_text() or item.snippet or "").strip()
+                if text:
+                    entries.append(
+                        _EvidenceEntry(
+                            block_id=item.block_id or "",
+                            chunk_id=item.evidence_id,
+                            material_id=item.material_id,
                             text=text,
                         )
                     )

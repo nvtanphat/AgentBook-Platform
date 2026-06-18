@@ -19,6 +19,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from src.processing.types import EvidenceBlock
+from src.rag.evidence import AudioEvidence, EvidenceBundle, EvidenceKind, TableEvidence, VisualEvidence
 from src.rag.types import RetrievedChunk
 from src.schemas.query import SentenceCoverageReport
 
@@ -73,14 +74,30 @@ def _chunk_matches_modality(chunk: RetrievedChunk, modality: str) -> bool:
         return bool(meta.get("sheet_names") or meta.get("block_kinds"))
 
     if modality == "figure":
+        if chunk.modality == "figure":
+            return True
         blocks: list[EvidenceBlock] = list(chunk.evidence) if chunk.evidence else []
-        return _has_bbox(blocks)
+        meta = chunk.metadata or {}
+        return _has_bbox(blocks) or bool(meta.get("image_path") or meta.get("figure_image_path"))
 
     if modality == "audio":
         blocks = list(chunk.evidence) if chunk.evidence else []
         return _has_timestamp(blocks)
 
     return True  # no constraint for text / NONE
+
+
+def _evidence_matches_modality(bundle: EvidenceBundle, ref: int, modality: str) -> bool:
+    if ref < 1 or ref > len(bundle.items):
+        return False
+    item = bundle.items[ref - 1]
+    if modality == "table":
+        return item.kind == EvidenceKind.TABLE.value or isinstance(item, TableEvidence)
+    if modality == "figure":
+        return item.kind == EvidenceKind.VISUAL.value or isinstance(item, VisualEvidence)
+    if modality == "audio":
+        return item.kind == EvidenceKind.AUDIO.value or isinstance(item, AudioEvidence)
+    return True
 
 
 def _strip_invalid_markers(answer: str, invalid: set[int]) -> str:
@@ -108,14 +125,16 @@ class CitationAligner:
         self,
         *,
         answer: str,
-        chunks: list[RetrievedChunk],
+        chunks: list[RetrievedChunk] | None = None,
+        evidence_bundle: EvidenceBundle | None = None,
         slec_report: SentenceCoverageReport | None = None,
         preferred_modality: str | None = None,
     ) -> CitationAlignmentResult:
-        if not answer or not chunks:
+        chunks = chunks or []
+        if not answer or (not chunks and evidence_bundle is None):
             return CitationAlignmentResult(corrected_answer=answer or "")
 
-        chunk_count = len(chunks)
+        chunk_count = len(evidence_bundle.items) if evidence_bundle is not None else len(chunks)
         all_markers = [int(m.group(1)) for m in _CITATION_RE.finditer(answer)]
         if not all_markers:
             return CitationAlignmentResult(corrected_answer=answer)
@@ -146,13 +165,19 @@ class CitationAligner:
                 for ref in refs:
                     if ref < 1 or ref > chunk_count:
                         continue  # already flagged as out-of-range
-                    chunk = chunks[ref - 1]
-                    if not _chunk_matches_modality(chunk, preferred_modality):
+                    if evidence_bundle is not None:
+                        matches = _evidence_matches_modality(evidence_bundle, ref, preferred_modality)
+                        actual = evidence_bundle.items[ref - 1].kind
+                    else:
+                        chunk = chunks[ref - 1]
+                        matches = _chunk_matches_modality(chunk, preferred_modality)
+                        actual = chunk.modality
+                    if not matches:
                         invalid.add(ref)
                         has_mismatch = True
                         if len(details) < 5:
                             details.append(
-                                f"[{ref}] modality={chunk.modality!r} "
+                                f"[{ref}] modality={actual!r} "
                                 f"expected={preferred_modality!r}: …{sent_snippet}…"
                             )
                 if has_mismatch:
