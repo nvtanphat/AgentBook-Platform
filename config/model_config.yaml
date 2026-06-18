@@ -20,6 +20,7 @@ inference:
   fallback_snippet_chars: 200
   retry_evidence_limit: 5
   graph_priority_score_boost: 0.25
+  graph_boost_score: 0.10
   min_chunk_chars: 40
   multi_doc_min_sources: 3
   synthesis_route_types:
@@ -62,8 +63,15 @@ inference:
 
 # ── Docling PDF converter tuning ─────────────────────────────────────────────
 docling:
-  queue_max_size: 2      # max in-flight pages; reduce to limit RAM on large PDFs
-  images_scale: 1.0      # page image scale; lower to 0.5 to further reduce RAM
+  queue_max_size: 1      # max in-flight pages; low to avoid std::bad_alloc on CPU
+  images_scale: 0.35     # page image scale; low to fit Docling in tight RAM (prevents bad_alloc dropping table/figure pages)
+  # Isolate Docling parse in a fresh subprocess — the long-running server process
+  # corrupts Docling models (convert returns empty → OCR fallback → structure lost).
+  subprocess_enabled: true
+  subprocess_timeout_seconds: 900
+  # Unload Ollama's VLM (~4.7GB) before parse so Docling has RAM (root cause of
+  # bad_alloc → empty parse on 16GB machines). Captioning reloads it afterwards.
+  free_ollama_before_parse: true
 
 llm:
   default_provider: "local"
@@ -146,6 +154,20 @@ ocr:
   # Re-OCR trigger: if VI diacritics < this ratio of alpha chars, Docling text is garbled
   # (non-standard font encoding common in Vietnamese legal PDFs) → re-process with VietOCR.
   garbled_vi_diacritic_ratio: 0.03
+  # ── Standalone image routing (OCR vs VLM) ──────────────────────────────────
+  # An image with >= image_ocr_text_word_threshold OCR words is treated as a
+  # text scan (OCR is faithful). BUT charts/tables are also text-dense yet need
+  # 2D structure — when the numeric-token ratio >= image_numeric_ratio_vlm_trigger
+  # the image is a chart/table, so a VLM pass (structure-aware markdown table) is
+  # ADDED on top of OCR (hybrid: OCR keeps exact numbers, VLM keeps year↔metric links).
+  image_ocr_text_word_threshold: 20
+  image_numeric_ratio_vlm_trigger: 0.30
+  image_structure_vlm_max_side_px: 2048   # higher res for the chart/table VLM pass (dense numbers)
+  # Hybrid table reader (2b): VLM-read numeric-dense figures on pages where Docling
+  # found no table. Docling stays the exact/citation source; VLM tables get
+  # table_source="vlm" + low confidence so evidence/citation treats them cautiously.
+  vlm_table_fallback_enabled: true
+  vlm_table_confidence: 0.5
   # Language → EasyOCR language list mapping; extend for new deployment languages
   easyocr_language_map:
     vi: ["vi"]
@@ -184,3 +206,21 @@ figure_captioner:
   max_workers: 4                       # max threads for parallel figure captioning
   ollama_timeout_seconds: 300.0        # httpx timeout per VLM call
   image_max_side_px: 1024              # resize longest side before base64 encoding
+  num_ctx: 8192                        # Ollama context window. The 2048px chart/table structure pass
+                                       # makes ~3.7k vision tokens + prompt; the 4096 default overflows
+                                       # → 400 exceed_context_size_error. Keep > vision tokens + prompt.
+  # List-only hallucination gate: reject captions that are mostly short bullet points
+  # (e.g. VLM listing animal names from decorative photos instead of describing content)
+  list_bullet_ratio_max: 0.70          # reject if fraction of bullet lines > this
+  list_bullet_max_words: 3             # bullet line counts as "short" if <= this many words
+
+vlm_query:
+  enabled: true                         # use VLM over retrieved visual evidence for figure/image/chart queries
+  provider: "auto"                      # auto | ollama | openai_compatible
+  ollama_model: ""                      # empty = auto-detect qwen2.5vl/qwen2-vl/minicpm-v/llava
+  openai_model: ""                      # empty = reuse llm.openai_model
+  max_images: 2                         # max retrieved corpus images passed to VLM
+  image_max_side_px: 1024               # resize query/evidence images before VLM call
+  timeout_seconds: 300.0
+  caption_fallback: true                # fallback to caption-only text path when pixels are unavailable
+  verify_enabled: true                  # lightweight VLM support check for visual answers

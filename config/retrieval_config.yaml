@@ -129,14 +129,27 @@ routing:
       [bảng, cột, hàng, dòng, ô, giá trị, tổng, trung bình, lớn nhất, nhỏ nhất,
        table, column, row, cell, value, sum, average, mean, total, max, min]
     figure_keywords:
-      [biểu đồ, đồ thị, sơ đồ, hình, ảnh, hình vẽ,
-       chart, figure, diagram, graph, plot, image]
+      [biểu đồ, đồ thị, sơ đồ, hình, ảnh, hình vẽ, hình ảnh,
+       chart, charts, figure, figures, diagram, diagrams,
+       graph, graphs, plot, plots, image, images, visualization, visualizations]
     audio_keywords:
       [ghi âm, đoạn ghi, băng ghi, phút, giây, nói rằng,
        audio, recording, timestamp, minute, transcript]
     table_boost_multiplier: 0.30      # fused-score boost added to modality=table hits
+    vlm_list_caption_score_penalty: 0.40  # subtract from rerank_score for VLM list-only caption chunks
     extra_pass: true                  # run a modality-filtered retrieval pass and merge
     filtered_pass_limit_ratio: 0.5    # size of that pass vs the main retrieval limit
+
+# ── Post-retrieval graph probe (adaptive graph augmentation) ─────────────────
+# After text retrieval, if top chunks mention known graph entities, adds related
+# graph evidence (relations, neighbour chunks) to the context automatically.
+# Works for ALL routes, not just GRAPH_RELATION — no router change needed.
+graph_probe:
+  enabled: true
+  min_entities: 2           # minimum named entities matched in top chunks to trigger probe
+  top_chunks_to_scan: 5     # how many top reranked chunks to scan for entity names
+  max_graph_chunks: 4       # cap on extra chunks injected from graph probe
+  skip_routes: ["claim_check"]  # routes where graph probe is redundant or risky
 
 chunking:
   strategy: semantic

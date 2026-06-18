@@ -17,7 +17,11 @@ foreach ($port in @(8000, 5173)) {
         Write-Warn "Killed old process on :$port"
     }
 }
-Get-Process python -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+# Kill only python processes holding port 8000, not every python on the machine.
+$backendConn = Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue
+if ($backendConn) {
+    $backendConn | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
+}
 Start-Sleep -Seconds 2
 
 # ── Clear log files safely (rename-then-delete avoids lock errors) ─────────────
@@ -113,9 +117,9 @@ Start-Process -FilePath "python" `
     -RedirectStandardError  (Join-Path $ProjectRoot "backend.err.log") `
     -WindowStyle Hidden
 
-Write-Host "   Waiting for backend (up to 120s)..." -ForegroundColor Gray
+Write-Host "   Waiting for backend (up to 180s)..." -ForegroundColor Gray
 $backendReady = $false
-for ($i = 0; $i -lt 120; $i++) {
+for ($i = 0; $i -lt 180; $i++) {
     try {
         $r = Invoke-WebRequest -Uri "http://127.0.0.1:8000/health" -UseBasicParsing -TimeoutSec 2
         if ($r.StatusCode -eq 200) { $backendReady = $true; break }
@@ -132,7 +136,7 @@ for ($i = 0; $i -lt 120; $i++) {
 if ($backendReady) {
     Write-OK "Backend ready"
 } else {
-    Write-Fail "Backend did not respond in 120s"
+    Write-Fail "Backend did not respond in 180s"
     Write-Host ""
     Write-Host "   Last errors from backend.err.log:" -ForegroundColor Yellow
     Get-Content (Join-Path $ProjectRoot "backend.err.log") -Tail 20 -ErrorAction SilentlyContinue |
@@ -150,7 +154,7 @@ Start-Process -FilePath "npm.cmd" `
     -WindowStyle Hidden
 
 $frontendReady = $false
-for ($i = 0; $i -lt 30; $i++) {
+for ($i = 0; $i -lt 60; $i++) {
     try {
         $r = Invoke-WebRequest -Uri "http://localhost:5173" -UseBasicParsing -TimeoutSec 2
         if ($r.StatusCode -eq 200) { $frontendReady = $true; break }

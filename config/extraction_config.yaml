@@ -5,6 +5,16 @@
 # Goal: same pipeline works for ML, law, history, medicine, ... without
 # touching code. New domain = just set collection.subject text.
 
+# ── Structural KG linker ──────────────────────────────────────────────────────
+# Connects each content block to its enclosing section heading via `belongs_to`
+# edges, and nests sub-sections under their parent heading. Pure positional
+# (reading_order + heading level), no LLM/ML. Lets graph traversal climb the
+# document hierarchy (RAG-Anything style).
+structure_linker:
+  enabled: true
+  section_confidence: 0.9       # confidence for section entities created from headings
+  belongs_to_confidence: 0.85   # confidence for belongs_to relations
+
 extraction:
   # Universal type seeds. Inject into prompt as {entity_types}.
   # Keep small + truly universal so model isn't biased toward any field.
@@ -61,6 +71,32 @@ extraction:
     - "tài\\s+liệu\\s+tham\\s+khảo"
     - "lời\\s+cảm\\s+ơn"
     - "danh\\s+mục\\s+tài\\s+liệu"
+
+  # ── Ontology-guided entity refinement (hybrid GLiNER + LLM, OMD-GraphRAG) ────
+  # After GLiNER (recall, exact spans), one cloud-LLM pass re-validates each
+  # entity against this ontology: corrects mistyped labels, merges fragmented
+  # spans ("biện 2" → "biện pháp bảo đảm"), drops junk, and gleans missed
+  # entities. Pydantic-validated (no JSON-retry waste). Config-driven — the LLM
+  # is told the allowed types + these descriptions; no hardcoded correction maps.
+  entity_refine_enabled: true
+  entity_refine_max_entities: 200
+  entity_type_descriptions:
+    concept: "Khái niệm/thuật ngữ/nguyên tắc trừu tượng (quyền, nghĩa vụ, thừa kế, self-attention)"
+    person: "Cá nhân hoặc vai trò pháp lý cụ thể (vợ, chồng, người thừa kế, tác giả)"
+    organization: "Tổ chức, cơ quan, công ty, toà án, doanh nghiệp"
+    location: "Địa danh, nơi chốn địa lý"
+    event: "Sự kiện, sự việc, cột mốc, thủ tục diễn ra"
+    artifact: "Văn bản/tác phẩm/sản phẩm/mô hình/quy định có tên (di chúc, hợp đồng, BERT, luật cụ thể)"
+    time: "Mốc thời gian, ngày tháng, giai đoạn"
+    quantity: "Số đo, thống kê, tỉ lệ, điểm số"
+    model: "Mô hình học máy/AI có tên (Transformer, BERT, GPT)"
+    algorithm: "Thuật toán có tên (Adam, SGD, gradient descent)"
+    dataset: "Bộ dữ liệu/benchmark (GLUE, ImageNet)"
+    metric: "Độ đo đánh giá (accuracy, F1, BLEU)"
+    method: "Phương pháp/kỹ thuật (fine-tuning, transfer learning)"
+    framework: "Khung/thư viện công nghệ (PyTorch, TensorFlow)"
+    technology: "Công nghệ tổng quát"
+    field: "Lĩnh vực nghiên cứu (NLP, computer vision)"
 
   # ── Entity types that participate in graph relation extraction ───────────────
   # Any entity whose type is in this list can appear as source/target of a graph

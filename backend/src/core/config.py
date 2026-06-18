@@ -103,6 +103,7 @@ class Settings(BaseSettings):
         default_factory=lambda: ["pdf", "docx", "pptx", "png", "jpg", "jpeg", "csv", "xlsx", "xls"]
     )
     max_upload_size_mb: int = 20
+    upload_dedupe_scope: str = "owner"
     cors_origins: list[str] = Field(default_factory=lambda: [
         "http://localhost:5173", "http://127.0.0.1:5173",
         "http://localhost:5174", "http://127.0.0.1:5174",
@@ -227,6 +228,9 @@ class Settings(BaseSettings):
     extraction_ontology: dict = Field(default_factory=dict)  # entity_type → valid relation types
     extraction_graph_entity_types: list[str] = Field(default_factory=list)  # types that enter the graph
     extraction_relation_types: list[str] = Field(default_factory=list)      # relation vocab
+    extraction_entity_type_descriptions: dict = Field(default_factory=dict)  # type → 1-line desc for refiner prompt
+    extraction_entity_refine_enabled: bool = True            # ontology-guided LLM entity refinement pass
+    extraction_entity_refine_max_entities: int = 200         # cap entities sent to the refiner LLM call
     extraction_excluded_sections: list[str] = Field(default_factory=list)   # heading patterns skipped for KG
     extraction_merge_threshold: float = 0.82                # cross-type BGE-M3 merge
     extraction_cross_lingual_merge_threshold: float = 0.74  # same-type BGE-M3 merge
@@ -267,6 +271,7 @@ class Settings(BaseSettings):
     modality_table_boost_multiplier: float = 0.30
     modality_extra_pass: bool = True
     modality_filtered_pass_limit_ratio: float = 0.5
+    vlm_list_caption_score_penalty: float = 0.40
     router_agentic_confidence_threshold: float = 0.55
 
     # Sentence-level Evidence Coverage (SLEC) — Adaptive Evidence-Guided RAG core
@@ -278,6 +283,25 @@ class Settings(BaseSettings):
     slec_min_sentence_chars: int = 12
     slec_max_sentences: int = 24
     slec_skip_routes: list[str] = Field(default_factory=lambda: ["claim_check"])
+
+    # Quality gate thresholds (formerly hardcoded in quality_gate.py)
+    quality_gate_conf_caution: float = 0.50
+    quality_gate_conf_fail: float = 0.30
+    quality_gate_slec_caution: float = 0.60
+    quality_gate_slec_fail: float = 0.40
+    quality_gate_citation_caution: float = 0.80
+    quality_gate_citation_fail: float = 0.50
+
+    # Visual caption fallback: when SigLIP visual index has no hits, fall back to
+    # text retrieval for figure queries rather than refusing immediately.
+    visual_caption_fallback_enabled: bool = True
+
+    # Post-retrieval graph probe — adaptive graph augmentation for all routes
+    graph_probe_enabled: bool = True
+    graph_probe_min_entities: int = 2
+    graph_probe_top_chunks_to_scan: int = 5
+    graph_probe_max_graph_chunks: int = 4
+    graph_probe_skip_routes: list[str] = Field(default_factory=lambda: ["claim_check"])
 
     # Visual embedding (SigLIP)
     visual_embedding_enabled: bool = False
@@ -293,6 +317,13 @@ class Settings(BaseSettings):
     figure_captioner_max_workers: int = 4
     ollama_caption_timeout_seconds: float = 300.0
     figure_image_max_side_px: int = 1024
+    # Ollama context window for VLM captioning. A 2048px structure-pass image
+    # produces ~3.7k vision tokens + prompt → overflows Ollama's 4096 default
+    # and returns a 400 exceed_context_size_error. Must comfortably exceed
+    # (vision tokens at image_structure_vlm_max_side_px + prompt + num_predict).
+    vlm_caption_num_ctx: int = 8192
+    caption_list_bullet_ratio_max: float = 0.70
+    caption_list_bullet_max_words: int = 3
     memory_max_turns: int = 10
 
     ocr_text_detection_model_name: str = "PP-OCRv5_mobile_det"
@@ -306,6 +337,15 @@ class Settings(BaseSettings):
     ocr_vietocr_model_name: str = "vgg_transformer"
     ocr_vietocr_device: str = "cpu"
     ocr_garbled_vi_diacritic_ratio: float = 0.03  # re-OCR page when VI diacritics < 3% of alpha chars
+    image_ocr_text_word_threshold: int = 20        # standalone image with >= this many OCR words = text scan
+    image_numeric_ratio_vlm_trigger: float = 0.30  # text-dense image with >= this numeric-token ratio = chart/table → also run VLM
+    image_structure_vlm_max_side_px: int = 2048    # resolution for the chart/table VLM structure pass (dense numbers need detail)
+    # Hybrid table reader (2b): VLM-read numeric-dense figures on pages where
+    # Docling's TableFormer found no table. Docling stays the exact source; VLM
+    # output is tagged table_source="vlm" + lower confidence so evidence/citation
+    # treats its numbers with caution.
+    vlm_table_fallback_enabled: bool = True
+    vlm_table_confidence: float = 0.5
     pdf_render_scale: float = 1.5
 
     # Audio (faster-whisper)
@@ -327,6 +367,7 @@ class Settings(BaseSettings):
     inference_fallback_snippet_chars: int = 200
     inference_retry_evidence_limit: int = 5
     inference_graph_priority_score_boost: float = 0.25
+    inference_graph_boost_score: float = 0.10
     inference_min_chunk_chars: int = 40
     inference_multi_doc_min_sources: int = 3
     inference_synthesis_route_types: list[str] = Field(
@@ -360,8 +401,35 @@ class Settings(BaseSettings):
     )
 
     # Docling PDF converter (see config/model_config.yaml → docling:)
+    vlm_query_enabled: bool = True
+    vlm_query_provider: str = "auto"
+    vlm_query_ollama_model: str = ""
+    vlm_query_openai_model: str = ""
+    vlm_query_max_images: int = 2
+    vlm_query_image_max_side_px: int = 1024
+    vlm_query_timeout_seconds: float = 300.0
+    vlm_query_caption_fallback: bool = True
+    vlm_query_verify_enabled: bool = True
+    vlm_query_verify_refuse_confidence: float = 0.75
+
     docling_queue_max_size: int = 2
     docling_images_scale: float = 1.0
+    # Run Docling parse in an isolated subprocess. A long-running server process
+    # corrupts Docling's models over time (convert() returns an empty document →
+    # every page falls back to OCR → all table/figure/equation structure lost). A
+    # fresh subprocess parses reliably. Falls back to in-process on any failure.
+    docling_subprocess_enabled: bool = True
+    docling_subprocess_timeout_seconds: float = 900.0
+    # Unload Ollama models (the ~4.7GB VLM) before the memory-heavy Docling parse.
+    # On a RAM-tight box the loaded VLM starves Docling → std::bad_alloc on every
+    # page → empty parse → OCR fallback wipes all table/figure/equation structure.
+    free_ollama_before_parse: bool = True
+
+    # Structural KG linker — connects content blocks to their enclosing section
+    # heading via `belongs_to` edges (pure positional, no ML).
+    structure_linker_enabled: bool = True
+    structure_section_confidence: float = 0.9
+    structure_belongs_to_confidence: float = 0.85
 
     # User-facing messages (language-keyed, see config/guardrails_config.yaml → messages:)
     messages_refusal_answer: dict[str, str] = Field(
@@ -467,6 +535,9 @@ class Settings(BaseSettings):
         ]:
             if not 1 <= int(value) <= upper:
                 raise ValueError(f"{name} ({value}) must be between 1 and {upper}")
+        self.upload_dedupe_scope = (self.upload_dedupe_scope or "owner").strip().lower()
+        if self.upload_dedupe_scope not in {"owner", "collection"}:
+            raise ValueError("upload_dedupe_scope must be either 'owner' or 'collection'")
         if self.llm_max_output_tokens < 1 or self.llm_max_output_tokens > 8192:
             raise ValueError("llm_max_output_tokens must be between 1 and 8192")
         if self.chunk_min_token_count >= self.chunk_target_token_count:
@@ -508,6 +579,9 @@ def get_settings() -> Settings:
     refusal_config = guardrails_config.get("refusal", {})
     image_quality_config = guardrails_config.get("image_quality", {})
     slec_config = guardrails_config.get("sentence_coverage", {})
+    quality_gate_config = guardrails_config.get("quality_gate", {})
+    visual_guardrails_config = guardrails_config.get("visual", {})
+    graph_probe_config = retrieval_config.get("graph_probe", {})
     embedding_config = model_config.get("embedding", {})
     llm_config = model_config.get("llm", {})
     reranker_config = model_config.get("reranker", {})
@@ -531,6 +605,7 @@ def get_settings() -> Settings:
     except FileNotFoundError:
         _ext_yaml = {}
     extraction_config = _ext_yaml.get("extraction", {})
+    structure_linker_cfg = _ext_yaml.get("structure_linker", {})
     heuristics_cfg = _ext_yaml.get("heuristics", {})
     method_keywords_cfg = list(_ext_yaml.get("method_keywords", []))
     metric_terms_cfg = list(_ext_yaml.get("metric_terms", []))
@@ -550,6 +625,7 @@ def get_settings() -> Settings:
 
     return Settings(
         max_upload_size_mb=upload_config.get("max_file_size_mb", 20),
+        upload_dedupe_scope=str(upload_config.get("dedupe_scope", "owner")),
         allowed_upload_extensions=upload_config.get(
             "allowed_extensions", ["pdf", "docx", "pptx", "png", "jpg", "jpeg", "csv", "xlsx", "xls"]
         ),
@@ -653,6 +729,7 @@ def get_settings() -> Settings:
         modality_table_boost_multiplier=float(modality_config.get("table_boost_multiplier", 0.30)),
         modality_extra_pass=bool(modality_config.get("extra_pass", True)),
         modality_filtered_pass_limit_ratio=float(modality_config.get("filtered_pass_limit_ratio", 0.5)),
+        vlm_list_caption_score_penalty=float(modality_config.get("vlm_list_caption_score_penalty", 0.40)),
         router_agentic_confidence_threshold=float(
             retrieval_config.get("routing", {}).get("agentic_confidence_threshold", 0.55)
         ),
@@ -664,6 +741,18 @@ def get_settings() -> Settings:
         slec_min_sentence_chars=int(slec_config.get("min_sentence_chars", 12)),
         slec_max_sentences=int(slec_config.get("max_sentences", 24)),
         slec_skip_routes=list(slec_config.get("skip_routes", ["claim_check"])),
+        quality_gate_conf_caution=float(quality_gate_config.get("conf_caution", 0.50)),
+        quality_gate_conf_fail=float(quality_gate_config.get("conf_fail", 0.30)),
+        quality_gate_slec_caution=float(quality_gate_config.get("slec_caution", 0.60)),
+        quality_gate_slec_fail=float(quality_gate_config.get("slec_fail", 0.40)),
+        quality_gate_citation_caution=float(quality_gate_config.get("citation_caution", 0.80)),
+        quality_gate_citation_fail=float(quality_gate_config.get("citation_fail", 0.50)),
+        visual_caption_fallback_enabled=bool(visual_guardrails_config.get("caption_fallback_enabled", True)),
+        graph_probe_enabled=bool(graph_probe_config.get("enabled", True)),
+        graph_probe_min_entities=int(graph_probe_config.get("min_entities", 2)),
+        graph_probe_top_chunks_to_scan=int(graph_probe_config.get("top_chunks_to_scan", 5)),
+        graph_probe_max_graph_chunks=int(graph_probe_config.get("max_graph_chunks", 4)),
+        graph_probe_skip_routes=list(graph_probe_config.get("skip_routes", ["claim_check"])),
         min_handwriting_quality_score=refusal_config.get("min_handwriting_quality_score", 0.72),
         min_handwriting_confidence=refusal_config.get("min_handwriting_confidence", 0.8),
         min_blur_variance=image_quality_config.get("min_blur_variance", 80.0),
@@ -689,6 +778,11 @@ def get_settings() -> Settings:
         ocr_vietocr_model_name=str(ocr_config.get("vietocr_model_name", "vgg_transformer")),
         ocr_vietocr_device=env_value("OCR_VIETOCR_DEVICE", ocr_config.get("vietocr_device", "cpu")),
         ocr_garbled_vi_diacritic_ratio=float(ocr_config.get("garbled_vi_diacritic_ratio", 0.03)),
+        image_ocr_text_word_threshold=int(ocr_config.get("image_ocr_text_word_threshold", 20)),
+        image_numeric_ratio_vlm_trigger=float(ocr_config.get("image_numeric_ratio_vlm_trigger", 0.30)),
+        image_structure_vlm_max_side_px=int(ocr_config.get("image_structure_vlm_max_side_px", 2048)),
+        vlm_table_fallback_enabled=bool(ocr_config.get("vlm_table_fallback_enabled", True)),
+        vlm_table_confidence=float(ocr_config.get("vlm_table_confidence", 0.5)),
         pdf_render_scale=float(pdf_config.get("render_scale", 1.5)),
         visual_embedding_enabled=env_bool(
             "VISUAL_EMBEDDING_ENABLED", visual_config.get("enabled", False)
@@ -715,6 +809,9 @@ def get_settings() -> Settings:
         figure_captioner_max_workers=int(figure_captioner_config.get("max_workers", 4)),
         ollama_caption_timeout_seconds=float(figure_captioner_config.get("ollama_timeout_seconds", 300.0)),
         figure_image_max_side_px=int(figure_captioner_config.get("image_max_side_px", 1024)),
+        vlm_caption_num_ctx=int(figure_captioner_config.get("num_ctx", 8192)),
+        caption_list_bullet_ratio_max=float(figure_captioner_config.get("list_bullet_ratio_max", 0.70)),
+        caption_list_bullet_max_words=int(figure_captioner_config.get("list_bullet_max_words", 3)),
         memory_max_turns=int(memory_config.get("max_turns", 10)),
         self_rag_reflection_enabled=env_bool(
             "SELF_RAG_REFLECTION_ENABLED", llm_config.get("self_rag_reflection_enabled", False)
@@ -754,6 +851,9 @@ def get_settings() -> Settings:
         extraction_ontology=dict(extraction_config.get("ontology", {})),
         extraction_graph_entity_types=list(extraction_config.get("graph_entity_types", [])),
         extraction_relation_types=list(extraction_config.get("relation_types", [])),
+        extraction_entity_type_descriptions=dict(extraction_config.get("entity_type_descriptions", {})),
+        extraction_entity_refine_enabled=bool(extraction_config.get("entity_refine_enabled", True)),
+        extraction_entity_refine_max_entities=int(extraction_config.get("entity_refine_max_entities", 200)),
         extraction_excluded_sections=list(extraction_config.get("excluded_sections", [])),
         extraction_merge_threshold=float(extraction_config.get("merge_threshold", 0.82)),
         extraction_cross_lingual_merge_threshold=float(extraction_config.get("cross_lingual_merge_threshold", 0.74)),
@@ -769,6 +869,7 @@ def get_settings() -> Settings:
         inference_fallback_snippet_chars=int(inference_cfg.get("fallback_snippet_chars", 200)),
         inference_retry_evidence_limit=int(inference_cfg.get("retry_evidence_limit", 5)),
         inference_graph_priority_score_boost=float(inference_cfg.get("graph_priority_score_boost", 0.25)),
+        inference_graph_boost_score=float(inference_cfg.get("graph_boost_score", 0.10)),
         inference_min_chunk_chars=int(inference_cfg.get("min_chunk_chars", 40)),
         inference_multi_doc_min_sources=int(inference_cfg.get("multi_doc_min_sources", 3)),
         inference_synthesis_route_types=list(inference_cfg.get("synthesis_route_types", ["summarization", "comparison", "graph_relation"])),
@@ -790,9 +891,26 @@ def get_settings() -> Settings:
             "nên bắt đầu", "scikit-learn User Guide", "Dive into Deep",
             "Xem thêm tại", "Link:", "URL:",
         ])),
+        vlm_query_enabled=bool(model_config.get("vlm_query", {}).get("enabled", True)),
+        vlm_query_provider=str(model_config.get("vlm_query", {}).get("provider", "auto")),
+        vlm_query_ollama_model=str(model_config.get("vlm_query", {}).get("ollama_model", "")),
+        vlm_query_openai_model=str(model_config.get("vlm_query", {}).get("openai_model", "")),
+        vlm_query_max_images=int(model_config.get("vlm_query", {}).get("max_images", 2)),
+        vlm_query_image_max_side_px=int(model_config.get("vlm_query", {}).get("image_max_side_px", 1024)),
+        vlm_query_timeout_seconds=float(model_config.get("vlm_query", {}).get("timeout_seconds", 300.0)),
+        vlm_query_caption_fallback=bool(model_config.get("vlm_query", {}).get("caption_fallback", True)),
+        vlm_query_verify_enabled=bool(model_config.get("vlm_query", {}).get("verify_enabled", True)),
+        vlm_query_verify_refuse_confidence=float(model_config.get("vlm_query", {}).get("verify_refuse_confidence", 0.75)),
         # Docling
-        docling_queue_max_size=int(docling_cfg.get("queue_max_size", 2)),
-        docling_images_scale=float(docling_cfg.get("images_scale", 1.0)),
+        docling_queue_max_size=int(docling_cfg.get("queue_max_size", 1)),
+        docling_images_scale=float(docling_cfg.get("images_scale", 0.5)),
+        docling_subprocess_enabled=bool(docling_cfg.get("subprocess_enabled", True)),
+        docling_subprocess_timeout_seconds=float(docling_cfg.get("subprocess_timeout_seconds", 900.0)),
+        free_ollama_before_parse=env_bool("FREE_OLLAMA_BEFORE_PARSE", bool(docling_cfg.get("free_ollama_before_parse", True))),
+        # Structural KG linker (belongs_to section edges)
+        structure_linker_enabled=bool(structure_linker_cfg.get("enabled", True)),
+        structure_section_confidence=float(structure_linker_cfg.get("section_confidence", 0.9)),
+        structure_belongs_to_confidence=float(structure_linker_cfg.get("belongs_to_confidence", 0.85)),
         # Messages
         messages_refusal_answer=dict(messages_config.get("refusal_answer", {
             "vi": "Tôi không tìm thấy đủ bằng chứng trong tài liệu được cung cấp để trả lời câu hỏi này.",

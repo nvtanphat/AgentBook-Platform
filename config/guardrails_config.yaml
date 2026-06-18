@@ -1,5 +1,8 @@
 upload:
   max_file_size_mb: 100  # audio files (mp3/wav/m4a) can be larger than PDFs
+  # owner = reject the same binary across all collections for a user.
+  # collection = legacy behavior; only reject duplicates inside one collection.
+  dedupe_scope: "owner"
   allowed_extensions:
     - "pdf"
     - "docx"
@@ -32,7 +35,7 @@ refusal:
   min_evidence_confidence: 0.20  # sigmoid scale; used by ConfidenceScorer.score()
   min_graph_confidence: 0.40
   min_handwriting_quality_score: 0.72
-  min_handwriting_confidence: 0.8
+  min_handwriting_confidence: 0.45
 
 claim_verification:
   claim_overlap_threshold: 0.15   # min fraction of claim tokens that must appear in evidence to declare support
@@ -95,3 +98,17 @@ image_quality:
   max_brightness: 230.0
   min_contrast: 18.0
   max_abs_skew_degrees: 12.0
+
+# Quality gate — unified post-generation signal (SLEC + citation + confidence)
+# These thresholds were previously hardcoded in quality_gate.py.
+quality_gate:
+  conf_caution: 0.50      # confidence below this → CAUTION
+  conf_fail: 0.30         # confidence below this → FAIL
+  slec_caution: 0.60      # SLEC coverage below this → CAUTION
+  slec_fail: 0.40         # SLEC coverage below this → FAIL
+  citation_caution: 0.80  # citation_coverage below this → CAUTION
+  citation_fail: 0.50     # citation_coverage below this → FAIL
+
+# Visual answer fallback — when SigLIP index is empty but captions exist in text index
+visual:
+  caption_fallback_enabled: true  # fall back to text retrieval for figure queries when visual index miss
