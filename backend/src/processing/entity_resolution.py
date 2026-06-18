@@ -3,11 +3,24 @@ from __future__ import annotations
 import asyncio
 import re
 import logging
+import unicodedata
 from collections import OrderedDict
 
 from src.processing.types import ExtractedEntity
 
 logger = logging.getLogger(__name__)
+
+
+def _is_vietnamese_name(value: str) -> bool:
+    """True when the surface form carries Vietnamese orthography.
+
+    Used to gate the loose embedding-merge threshold to genuine cross-lingual
+    pairs only. Vietnamese text carries combining diacritics (Unicode category
+    Mn) or the đ/Đ letter; English/ASCII technical terms do not.
+    """
+    if any(ch in "đĐ" for ch in value):
+        return True
+    return any(unicodedata.category(ch) == "Mn" for ch in unicodedata.normalize("NFD", value))
 
 # BGE-M3 cosine similarity thresholds for entity dedup.
 #   _EMBEDDING_MERGE_THRESHOLD       — cross-TYPE pairs (stricter; avoids merging
@@ -203,7 +216,15 @@ class EntityResolver:
                 if find(i) == find(j) or norms[j] < 1e-8:
                     continue
                 sim = float(np.dot(vecs[i], vecs[j]) / (norms[i] * norms[j]))
-                threshold = same_type_thr if types[i] == types[j] else cross_type_thr
+                # The loose same-type threshold exists ONLY to catch cross-lingual
+                # synonyms ("Machine Learning" ↔ "Học máy"). Applying it to two
+                # same-language terms collapses distinct concepts transitively via
+                # union-find (e.g. all VI legal terms cluster ~0.74-0.80 and merge
+                # into one node). So use the loose threshold only when the pair is
+                # cross-lingual; same-language pairs use the strict threshold.
+                same_type = types[i] == types[j]
+                cross_lingual = _is_vietnamese_name(names[i]) != _is_vietnamese_name(names[j])
+                threshold = same_type_thr if (same_type and cross_lingual) else cross_type_thr
                 if sim >= threshold:
                     union(i, j)
 

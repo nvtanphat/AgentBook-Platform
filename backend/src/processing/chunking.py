@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from src.core.config import Settings
 from src.core.tokenizer import count_tokens as _tokenizer_count_tokens
+from src.processing import table_serializer
 from src.processing.types import BlockType, EvidenceBlock, EvidenceMap, TextChunk
 
 if TYPE_CHECKING:
@@ -26,6 +27,71 @@ _LEADING_PAGE_NUMBER = re.compile(r"^\s*\d{1,4}\s+(?=\S)")
 
 def _strip_leading_page_number(text: str) -> str:
     return _LEADING_PAGE_NUMBER.sub("", text, count=1)
+
+
+def _is_table_evidence(block: EvidenceBlock) -> bool:
+    return block.block_type == _TABLE_BLOCK_TYPE or block.metadata.get("block_kind") == "table_block"
+
+
+def _render_table_block_for_embedding(block: EvidenceBlock) -> str:
+    parsed = table_serializer.parse_html_table(block.snippet_original) or table_serializer.parse_markdown_table(
+        block.snippet_original
+    )
+    if parsed is None:
+        return _strip_leading_page_number(block.snippet_original)
+
+    header, rows = parsed
+    table_name = str(block.metadata.get("sheet_name") or block.metadata.get("table_name") or block.document_name)
+    language = "en" if block.source_language == "en" else "vi"
+    row_start = int(block.metadata.get("row_start") or 1)
+    title = (
+        f"Table '{table_name}' on page {block.page}: {len(rows)} rows x {len(header)} columns. "
+        f"Columns: {', '.join(c or f'Column {idx + 1}' for idx, c in enumerate(header))}."
+    )
+    markdown = table_serializer.to_markdown(header, rows)
+    row_lines = [
+        text for _, text in table_serializer.verbalize_rows(
+            header,
+            rows,
+            table_name=table_name,
+            language=language,
+            start_index=row_start,
+        )
+    ]
+    return "\n".join([title, markdown, *row_lines]).strip()
+
+
+_HTML_TABLE_TAGS = re.compile(r"</?(table|thead|tbody|tr|t[hd])\b[^>]*>", re.IGNORECASE)
+
+
+def _normalize_html_table_fragments(text: str) -> str:
+    """Convert any leftover HTML table markup into readable pipe rows.
+
+    Proper table blocks are rendered to Markdown via
+    ``_render_table_block_for_embedding``. But a table fragment can leak into a
+    plain-text block (e.g. when docling splits an HTML table across blocks),
+    leaving raw ``<td>...</td>`` tags in the embedded text — noise that hurts
+    retrieval and reads badly as a citation. Normalize defensively.
+    """
+    if "<td" not in text.lower() and "<tr" not in text.lower():
+        return text
+    parsed = table_serializer.parse_html_table(text)
+    if parsed is not None:
+        header, rows = parsed
+        return table_serializer.to_markdown(header, rows)
+    # Partial/garbled fragment: degrade gracefully to pipe-separated cells.
+    text = re.sub(r"</tr\s*>", "\n", text, flags=re.IGNORECASE)
+    text = re.sub(r"</t[hd]\s*>\s*<t[hd][^>]*>", " | ", text, flags=re.IGNORECASE)
+    text = _HTML_TABLE_TAGS.sub(" ", text)
+    return "\n".join(" ".join(line.split()) for line in text.splitlines()).strip()
+
+
+def _render_block_for_embedding(block: EvidenceBlock) -> str:
+    if _is_table_evidence(block):
+        return _render_table_block_for_embedding(block)
+    return _normalize_html_table_fragments(_strip_leading_page_number(block.snippet_original))
+
+
 _LIST_ITEM = re.compile(r"^[\s]*(?:[\u25a1\u2022\u25cf\u25aa\u25ab\u2013\u2014\-\*\u25c6\u25c7\u25cb]|\d+\.|\w\))\s+", re.MULTILINE)
 _CODE_BLOCK = re.compile(r"```[\s\S]*?```|`[^`\n]+`")
 _TABLE_BLOCK_TYPE = BlockType.TABLE.value
@@ -251,7 +317,7 @@ class LayoutAwareChunker:
         current_tokens: int,
         block: EvidenceBlock,
     ) -> tuple[list[EvidenceBlock], int]:
-        block_tokens = self._count_tokens(block.snippet_original)
+        block_tokens = self._count_tokens(_render_block_for_embedding(block))
         starts_new_section = self._starts_new_section(block, current)
         # Suppress heading-triggered split when the current buffer is too small to
         # stand alone; let it accumulate until it reaches a meaningful size.
@@ -265,7 +331,7 @@ class LayoutAwareChunker:
             chunks.append(self._make_chunk(evidence_map, current))
             reset = starts_new_section or exceeds_block_budget or table_boundary or self._is_heading_only(current)
             current = [] if reset else self._overlap_blocks(current)
-            current_tokens = sum(self._count_tokens(item.snippet_original) for item in current)
+            current_tokens = sum(self._count_tokens(_render_block_for_embedding(item)) for item in current)
             if current_tokens + block_tokens > self.settings.chunk_target_token_count:
                 current = []
                 current_tokens = 0
@@ -285,7 +351,7 @@ class LayoutAwareChunker:
     def _make_chunk(self, evidence_map: EvidenceMap, blocks: list[EvidenceBlock]) -> TextChunk:
         # Strip OCR'd page-number prefixes per block so they don't bleed into
         # chunk text / citations (also catches page-boundary blocks mid-chunk).
-        content = "\n".join(_strip_leading_page_number(block.snippet_original) for block in blocks).strip()
+        content = "\n".join(_render_block_for_embedding(block) for block in blocks).strip()
         pages = sorted({block.page for block in blocks})
         block_ids = [block.block_id for block in blocks]
         bboxes = [block.bbox for block in blocks if block.bbox is not None]
@@ -319,7 +385,7 @@ class LayoutAwareChunker:
         overlap: list[EvidenceBlock] = []
         token_count = 0
         for block in reversed(blocks):
-            block_tokens = self._count_tokens(block.snippet_original)
+            block_tokens = self._count_tokens(_render_block_for_embedding(block))
             if token_count + block_tokens > self.settings.chunk_overlap_token_count:
                 break
             overlap.insert(0, block)

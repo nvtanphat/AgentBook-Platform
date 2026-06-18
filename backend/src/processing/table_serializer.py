@@ -97,6 +97,27 @@ def to_html(header: list[str], rows: list[list[str]]) -> str:
     return f"<table><tr>{th}</tr>{''.join(body_rows)}</table>"
 
 
+def to_markdown(header: list[str], rows: list[list[str]], *, max_rows: int | None = None) -> str:
+    """Render a compact markdown table for semantic embedding."""
+    width = max(1, len(header))
+    normalized_header = [(c or f"Column {i + 1}").strip() for i, c in enumerate((list(header) + [""])[:width])]
+    body = rows[:max_rows] if max_rows is not None else rows
+
+    def clean(value: str) -> str:
+        return _clip(value).replace("|", "\\|")
+
+    lines = [
+        "| " + " | ".join(clean(cell) for cell in normalized_header) + " |",
+        "| " + " | ".join("---" for _ in normalized_header) + " |",
+    ]
+    for row in body:
+        cells = (list(row) + [""] * width)[:width]
+        lines.append("| " + " | ".join(clean(cell) for cell in cells) + " |")
+    if max_rows is not None and len(rows) > max_rows:
+        lines.append(f"... {len(rows) - max_rows} more rows")
+    return "\n".join(lines)
+
+
 def verbalize_rows(
     header: list[str],
     rows: list[list[str]],

@@ -99,3 +99,26 @@ class TestNumberCoercion:
 
     def test_decimal_comma(self):
         assert te._to_number("4,7") == 4.7
+
+
+class TestLookup:
+    def test_lookup_value_by_row_and_column(self):
+        blocks = [_table_block(HEADER, ROWS)]
+        r = te.lookup(blocks=blocks, query="Gia VND cua iPhone 15 Pro la bao nhieu?")
+        assert r is not None
+        assert r.value == "28900000"
+        assert r.column == "Gia VND"
+        assert r.row_label == "iPhone 15 Pro"
+        assert r.cell_ref == "B4"
+
+    def test_lookup_direct_cell_ref(self):
+        blocks = [_table_block(HEADER, ROWS)]
+        r = te.lookup(blocks=blocks, query="O C2 co gia tri gi?")
+        assert r is not None
+        assert r.value == "32"
+        assert r.column == "So luong"
+        assert r.cell_ref == "C2"
+
+    def test_lookup_ambiguous_returns_none(self):
+        blocks = [_table_block(HEADER, ROWS)]
+        assert te.lookup(blocks=blocks, query="Gia VND la gi?") is None

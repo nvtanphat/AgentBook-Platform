@@ -26,34 +26,78 @@ logger = logging.getLogger(__name__)
 #   - Reject hallucination ("if unsure, write [?]")
 #   - List terms separately to avoid run-on gibberish
 _CAPTION_PROMPT_VI = (
-    "Bạn là OCR + visual analyzer chuyên nghiệp. Đọc HÌNH ảnh này và trích xuất:\n"
+    "Bạn là chuyên gia trích xuất nội dung tài liệu. Đọc hình ảnh và xuất ra DỮ LIỆU THỰC — không mô tả hình thức.\n"
     "\n"
-    "1. **Tiêu đề chính** (heading lớn nhất)\n"
-    "2. **Các bước / mục** (numbered list nếu có)\n"
-    "3. **Thuật ngữ + định nghĩa** (term: definition)\n"
-    "4. **Số liệu / công thức** nếu xuất hiện\n"
+    "Quan sát toàn bộ ảnh, xác định từng vùng nội dung, rồi áp dụng quy tắc phù hợp:\n"
     "\n"
-    "Quy tắc QUAN TRỌNG:\n"
-    "- Viết bằng tiếng Việt CHUẨN có đầy đủ dấu (sắc, huyền, hỏi, ngã, nặng).\n"
-    "- KHÔNG ghép từ vô nghĩa. Nếu không đọc được rõ, ghi [không rõ] thay vì đoán.\n"
-    "- KHÔNG suy diễn. Chỉ ghi những gì thực sự nhìn thấy.\n"
-    "- Format Markdown: ## tiêu đề, - bullet, **bold** cho thuật ngữ.\n"
-    "- Mỗi mục một dòng riêng. Tránh chạy chữ liền nhau.\n"
+    "- **Bảng:** Xuất Markdown table giữ nguyên hàng × cột. Ghi rõ đơn vị nếu có. Không bỏ sót hàng.\n"
+    "- **Biểu đồ cột/đường/vùng:** Xuất Markdown table. DÒNG HEADER là các nhãn trục X (ví dụ năm 2020, 2021…), KHÔNG ghi 'Cột 2/Cột 3'. "
+    "Mỗi cụm/loạt cột là một hàng. ĐẾM số cột (số vạch trục X) rồi điền ĐỦ đúng bấy nhiêu giá trị cho mỗi hàng — đọc số ghi trên đỉnh từng cột, không bỏ sót, không gộp. "
+    "Nếu một cột không có nhãn số thì ghi [không rõ] để giữ đúng vị trí. Không viết mô tả xu hướng.\n"
+    "- **Biểu đồ tròn/donut:** Liệt kê từng phần: tên — giá trị hoặc %.\n"
+    "- **Sơ đồ phân cấp/tổ chức:** Dùng indent thể hiện quan hệ cha–con.\n"
+    "- **Lưu đồ/quy trình:** Liệt kê các bước theo thứ tự, giữ nguyên nhãn mũi tên/điều kiện.\n"
+    "- **Văn bản/tiêu đề/chú thích:** Ghi nguyên văn, đủ dấu tiếng Việt.\n"
+    "- **Công thức/ký hiệu:** Sao chép y hệt, không diễn giải.\n"
+    "- **Ảnh thực/minh họa (không có dữ liệu cấu trúc):** Mô tả ngắn gọn: chủ thể chính là gì/ai, bối cảnh, hành động nếu có. Tối đa 3 câu.\n"
+    "\n"
+    "Quy tắc bắt buộc:\n"
+    "- Tiếng Việt phải đủ dấu thanh và dấu phụ.\n"
+    "- KHÔNG mô tả màu sắc, kích thước, vị trí trừ khi đó là thông tin duy nhất.\n"
+    "- KHÔNG suy diễn. Không đọc được → ghi [không rõ].\n"
+    "- Nhiều vùng nội dung → dùng ## tên vùng làm header phân tách.\n"
+    "- CHỈ trả về nội dung trích xuất, không thêm lời dẫn.\n"
 )
 _CAPTION_PROMPT_EN = (
-    "You are a professional OCR + visual analyzer. Read this IMAGE and extract:\n"
+    "You are a document content extraction expert. Read the image and output the ACTUAL DATA — do not describe appearance.\n"
     "\n"
-    "1. **Main title** (largest heading)\n"
-    "2. **Steps / sections** (numbered list if present)\n"
-    "3. **Terms + definitions** (term: definition)\n"
-    "4. **Numbers / formulas** if shown\n"
+    "Survey the whole image, identify each content region, then apply the matching rule:\n"
     "\n"
-    "IMPORTANT rules:\n"
-    "- If unsure, write [unclear] rather than guess.\n"
-    "- Do NOT infer. Report only what is visually present.\n"
-    "- Format as Markdown: ## title, - bullet, **bold** for terms.\n"
-    "- One item per line. Avoid run-on text.\n"
+    "- **Table:** Output a Markdown table preserving all rows × columns. Include units if shown. Do not skip rows.\n"
+    "- **Bar/line/area chart:** Output a Markdown table. The HEADER row is the X-axis labels (e.g. years 2020, 2021…), NOT 'Column 2/Column 3'. "
+    "Each series is one row. COUNT the columns (X-axis ticks), then fill EXACTLY that many values per row — read the number printed on top of each bar, do not skip or merge any. "
+    "If a column has no printed value, write [unclear] to keep its position. Do not describe trends.\n"
+    "- **Pie/donut chart:** List each segment: label — value or percentage.\n"
+    "- **Hierarchy/org chart:** Use indentation to show parent–child relationships.\n"
+    "- **Flowchart/process:** List steps in order, preserving arrow labels and conditions.\n"
+    "- **Text/titles/captions:** Transcribe verbatim.\n"
+    "- **Formulas/symbols:** Copy exactly, do not interpret.\n"
+    "- **Natural image/illustration (no structured data):** Write a brief factual caption: main subject, setting, action if any. Max 3 sentences.\n"
+    "\n"
+    "Universal rules:\n"
+    "- Do NOT describe colors, sizes, or positions unless that is the only meaningful content.\n"
+    "- Do NOT infer. If unreadable → write [unclear].\n"
+    "- Multiple content regions → use ## region-title as a separator header.\n"
+    "- Return ONLY the extracted content, no preamble.\n"
 )
+
+
+_BULLET_LINE_RE = re.compile(r"^\s*[-*•]\s*(\*{0,2})(.+?)(\*{0,2})\s*$")
+
+
+def _looks_like_list_hallucination(
+    text: str,
+    *,
+    bullet_ratio_max: float = 0.70,
+    bullet_max_words: int = 3,
+) -> bool:
+    """Detect VLM captions that are just lists of short items (e.g. ImageNet animal names).
+
+    When a decorative photo slide is captioned, VLMs often enumerate objects
+    ("- Quail", "- otter", "- grouse") instead of describing the image. These
+    captions are semantically useless and pollute retrieval.
+    """
+    lines = [l for l in text.splitlines() if l.strip()]
+    if len(lines) < 4:
+        return False
+    short_bullet_count = 0
+    for line in lines:
+        m = _BULLET_LINE_RE.match(line)
+        if m:
+            item_text = m.group(2).strip()
+            if len(item_text.split()) <= bullet_max_words:
+                short_bullet_count += 1
+    return (short_bullet_count / len(lines)) > bullet_ratio_max
 
 
 def _looks_like_gibberish(text: str) -> bool:
@@ -76,8 +120,10 @@ def _looks_like_gibberish(text: str) -> bool:
             return True
     return False
 
-# Vision models supported by Ollama, tried in order.
-_OLLAMA_VISION_MODELS = ["minicpm-v", "qwen2-vl", "llava", "moondream", "bakllava", "llava-phi3"]
+# Vision models supported by Ollama, tried in order of document/table strength.
+# qwen2.5vl / qwen2-vl read dense tables + Vietnamese far better than minicpm-v,
+# which hallucinates on number-dense financial pages. minicpm-v kept as fallback.
+_OLLAMA_VISION_MODELS = ["qwen2.5vl", "qwen2-vl", "minicpm-v", "llava", "moondream", "bakllava", "llava-phi3"]
 
 
 class FigureCaptioner:
@@ -91,12 +137,18 @@ class FigureCaptioner:
         ocr_fallback: bool = True,
         timeout: float = 300.0,
         image_max_side_px: int = 1024,
+        num_ctx: int = 8192,
+        list_bullet_ratio_max: float = 0.70,
+        list_bullet_max_words: int = 3,
     ) -> None:
         self.ollama_base_url = ollama_base_url.rstrip("/")
         self.language = language
         self.ocr_fallback = ocr_fallback
         self.timeout = timeout
         self.image_max_side_px = image_max_side_px
+        self.num_ctx = num_ctx
+        self.list_bullet_ratio_max = list_bullet_ratio_max
+        self.list_bullet_max_words = list_bullet_max_words
         self._available_model: str | None = None
         self._model_checked: bool = False
         self._ocr_engine = None  # lazy-init, reused across all figures
@@ -193,17 +245,28 @@ class FigureCaptioner:
                     "prompt": prompt,
                     "images": [image_b64],
                     "stream": False,
-                    "options": {"temperature": 0.1, "num_predict": 512},
+                    "options": {"temperature": 0.1, "num_predict": 512, "num_ctx": self.num_ctx},
                 },
                 timeout=self.timeout,
             )
             response.raise_for_status()
             data = response.json()
             caption = (data.get("response") or "").strip()
+            caption = self._strip_special_tokens(caption)
             caption = self._remove_repetition_loops(caption)
             if self._looks_like_cross_language_hallucination(caption):
                 logger.warning(
                     "VLM caption rejected due to cross-language hallucination",
+                    extra={"model": model, "image": image_path.name, "chars": len(caption)},
+                )
+                return ""
+            if _looks_like_list_hallucination(
+                caption,
+                bullet_ratio_max=self.list_bullet_ratio_max,
+                bullet_max_words=self.list_bullet_max_words,
+            ):
+                logger.warning(
+                    "VLM caption rejected: list-only hallucination (decorative image)",
                     extra={"model": model, "image": image_path.name, "chars": len(caption)},
                 )
                 return ""
@@ -214,9 +277,16 @@ class FigureCaptioner:
                 )
             return caption
         except Exception as exc:
+            body = ""
+            resp = getattr(exc, "response", None)
+            if resp is not None:
+                try:
+                    body = resp.text[:500]
+                except Exception:
+                    body = ""
             logger.warning(
                 "VLM captioning failed",
-                extra={"model": model, "error": str(exc), "error_type": type(exc).__name__},
+                extra={"model": model, "error": str(exc), "error_type": type(exc).__name__, "body": body},
             )
             return ""
 
@@ -255,7 +325,7 @@ class FigureCaptioner:
                     logger.info("Figure captioner using VLM model: %s", self._available_model)
                     return self._available_model
         except Exception as exc:
-            logger.debug("Ollama not reachable for figure captioning: %s", exc)
+            logger.warning("Ollama not reachable for figure captioning: %s", exc)
         logger.info("No vision model found in Ollama — figure captioner will use OCR fallback")
         return None
 
@@ -275,6 +345,21 @@ class FigureCaptioner:
             return base64.b64encode(buf.getvalue()).decode("ascii")
         except Exception:
             return base64.b64encode(image_path.read_bytes()).decode("ascii")
+
+    @staticmethod
+    def _strip_special_tokens(text: str) -> str:
+        """Remove model special tokens that leak into captions of token-labelled
+        figures (e.g. attention-visualization diagrams print ``<pad>`` / ``<EOS>``
+        on the image, and the VLM transcribes them verbatim — pure noise for
+        retrieval).
+        """
+        if not text:
+            return text
+        text = re.sub(r"<\s*/?\s*(pad|eos|bos|s|unk|sep|cls|mask)\s*>", " ", text, flags=re.IGNORECASE)
+        text = re.sub(r"<\|[^>]*\|>", " ", text)  # chat-template markers like <|im_end|>
+        # Collapse the whitespace runs left behind, per line to keep table rows.
+        text = "\n".join(" ".join(line.split()) for line in text.splitlines())
+        return text.strip()
 
     @staticmethod
     def _remove_repetition_loops(text: str) -> str:

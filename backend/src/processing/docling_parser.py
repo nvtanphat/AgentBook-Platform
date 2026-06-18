@@ -147,7 +147,10 @@ class DoclingParser:
                 return self._pdf_text_fallback_document(file_path, language=language, parser_error=exc)
             raise
 
+        logger.info("Docling convert returned for %s; exporting parsed blocks", file_path.name)
         pages = self._pages_from_export(result.document, file_path=file_path, extension=extension, language=language)
+        block_count = sum(len(page.blocks) for page in pages)
+        logger.info("Docling export completed for %s pages=%s blocks=%s", file_path.name, len(pages), block_count)
         extra = {"parser": "docling"}
         if extension == "pdf":
             extra["pdf_strategy"] = "docling_layout_first_text_ocr_missing_pages"
@@ -185,6 +188,10 @@ class DoclingParser:
             table_batch_size=1,
             queue_max_size=_cfg.docling_queue_max_size,
             images_scale=_cfg.docling_images_scale,
+            # NOTE: formula LaTeX is taken from Docling's default text export
+            # (see equation tagging in _blocks_from_docling_dict). We deliberately
+            # do NOT enable do_formula_enrichment — its CodeFormulaV2 VLM crashes
+            # the pipeline on CPU (→ pypdf fallback) and runs minutes/document.
             # NOTE: do NOT set generate_picture_images=True here — retaining all
             # picture pixels across the document triggers std::bad_alloc on
             # image-heavy PDFs. Figure images are instead extracted lazily,
@@ -193,10 +200,20 @@ class DoclingParser:
         return DocumentConverter(format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pdf_options)})
 
     def _pages_from_export(self, document: Any, *, file_path: Path, extension: str, language: str) -> list[ParsedPage]:
+        logger.info("Docling export start file=%s extension=%s", file_path.name, extension)
         exported = self._export_dict(document)
         blocks = self._blocks_from_docling_dict(exported, language=language)
+        logger.info("Docling export dict parsed file=%s blocks=%s", file_path.name, len(blocks))
         if extension == "docx":
             blocks.extend(self._docx_table_blocks(file_path=file_path, language=language, reading_order_offset=len(blocks)))
+        if extension == "pdf":
+            # Docling exports PDF tables as structured TableItem objects (no flat
+            # text), so _collect_text_nodes misses them. Read document.tables and
+            # re-run enrichment so the new markdown tables get HTML grid + rows.
+            pdf_tables = self._pdf_table_blocks(document, language=language)
+            if pdf_tables:
+                blocks = self._enrich_table_blocks(blocks + pdf_tables, language=language)
+            logger.info("Docling PDF table extraction file=%s tables=%s blocks=%s", file_path.name, len(pdf_tables), len(blocks))
         if not blocks:
             markdown = self._export_markdown(document)
             if markdown.strip():
@@ -356,6 +373,9 @@ class DoclingParser:
     ) -> None:
         if not file_path.exists():
             return
+        if self._pdf_has_text_layer(file_path):
+            logger.info("Skipping PDF OCR fallback for digital PDF with text layer file=%s", file_path.name)
+            return
         try:
             import pypdfium2 as pdfium
         except ImportError as exc:
@@ -394,6 +414,7 @@ class DoclingParser:
 
         pdf = pdfium.PdfDocument(str(file_path))
         try:
+            logger.info("PDF OCR fallback scan start file=%s pages=%s language=%s", file_path.name, len(pdf), ocr_language)
             for page_index in range(len(pdf)):
                 page_number = page_index + 1
                 # Skip pages Docling already parsed with REAL text content.
@@ -408,6 +429,7 @@ class DoclingParser:
                         continue
                     # Garbled page: clear Docling blocks and re-OCR.
                     pages_by_number[page_number] = []
+                logger.info("PDF OCR fallback page start file=%s page=%s", file_path.name, page_number)
                 page = pdf[page_index]
                 try:
                     bitmap = page.render(scale=render_scale)
@@ -425,8 +447,20 @@ class DoclingParser:
                 if blocks:
                     # Replace empty figure placeholder with the OCR'd text blocks.
                     pages_by_number[page_number] = blocks
+                logger.info("PDF OCR fallback page done file=%s page=%s blocks=%s", file_path.name, page_number, len(blocks))
         finally:
             pdf.close()
+
+    @staticmethod
+    def _pdf_has_text_layer(file_path: Path) -> bool:
+        try:
+            from pypdf import PdfReader
+
+            reader = PdfReader(str(file_path))
+            sample = " ".join((page.extract_text() or "") for page in reader.pages[:3])
+            return len(sample.strip()) > 200
+        except Exception:
+            return False
 
     @staticmethod
     def _export_dict(document: Any) -> dict[str, Any]:
@@ -479,18 +513,25 @@ class DoclingParser:
                 continue
             page_number = self._node_page(node)
             raw_bbox = self._node_bbox(node)
+            block_type = self._classify_node(node, text)
+            extra: dict[str, Any] = {"label": str(node.get("label") or node.get("type") or "")}
+            # Preserve the LaTeX of math formulas so the snippet stays renderable
+            # and the original expression survives chunking → citation.
+            if block_type == BlockType.EQUATION.value:
+                extra["latex"] = text
+                extra["modality"] = "equation"
             blocks.append(
                 ParsedBlock(
                     block_id=node.get("self_ref") or self._stable_block_id(Path("docling"), page_number, index, text[:80]),
                     block_index=len(blocks),
-                    block_type=self._classify_node(node, text),
+                    block_type=block_type,
                     content=text,
                     page_number=page_number,
                     language=language,
                     bbox=self._flip_bbox_y(raw_bbox, page_heights.get(page_number)),
                     reading_order=len(blocks),
                     source="docling",
-                    extra={"label": str(node.get("label") or node.get("type") or "")},
+                    extra=extra,
                 )
             )
 
@@ -662,6 +703,116 @@ class DoclingParser:
                     )
                 )
         return blocks
+
+    def _pdf_table_blocks(self, document: Any, *, language: str) -> list[ParsedBlock]:
+        """Extract Docling TableFormer tables (PDF) as markdown TABLE blocks.
+
+        Docling exports PDF tables as structured ``TableItem`` objects with a cell
+        grid and no flat text, so ``_collect_text_nodes`` never picks them up. We
+        read ``document.tables`` directly. Defensive: a per-table failure is
+        skipped (logged), never crashes the parse. The resulting markdown blocks
+        flow through ``_enrich_table_blocks`` → HTML grid + verbalized rows.
+        """
+        tables = getattr(document, "tables", None)
+        if not tables:
+            return []
+        page_heights = getattr(self, "_page_heights", {})
+        blocks: list[ParsedBlock] = []
+        for table_index, table in enumerate(tables):
+            try:
+                header, rows = self._table_grid(table, document)
+            except Exception as exc:
+                logger.debug(
+                    "PDF table extraction skipped",
+                    extra={"table_index": table_index, "error": str(exc)},
+                )
+                continue
+            if not header or not rows:
+                continue
+            page_number, raw_bbox = self._table_prov(table)
+            content = table_serializer.to_markdown(header, rows)
+            blocks.append(
+                ParsedBlock(
+                    block_id=getattr(table, "self_ref", None)
+                    or self._stable_block_id(Path("docling"), page_number, 25000 + table_index, content[:80]),
+                    block_index=len(blocks),
+                    block_type=BlockType.TABLE.value,
+                    content=content,
+                    page_number=page_number,
+                    language=language,
+                    bbox=self._flip_bbox_y(raw_bbox, page_heights.get(page_number)),
+                    # Place after text blocks on the page so reading order stays sane.
+                    reading_order=100000 + table_index,
+                    source="docling",
+                    extra={"label": "table", "table_source": "docling", "table_index": table_index},
+                )
+            )
+        return blocks
+
+    @staticmethod
+    def _table_grid(table: Any, document: Any) -> tuple[list[str], list[list[str]]]:
+        """Recover ``(header, rows)`` from a Docling TableItem, version-tolerant.
+
+        Tries, in order: pandas dataframe export, the raw ``data.grid`` cell
+        matrix, then a markdown export parsed by table_serializer. Returns
+        ``([], [])`` when nothing usable is found.
+        """
+        # 1) pandas dataframe — most stable across Docling versions.
+        # Newer Docling wants the doc arg; older takes none — try doc first.
+        to_df = getattr(table, "export_to_dataframe", None)
+        if callable(to_df):
+            try:
+                df = to_df(document)
+            except TypeError:
+                df = to_df()
+            if df is not None and not df.empty:
+                header = [str(c) for c in df.columns]
+                rows = [["" if v is None else str(v) for v in row] for row in df.values.tolist()]
+                if header and rows:
+                    return header, rows
+
+        # 2) raw cell grid
+        data = getattr(table, "data", None)
+        grid = getattr(data, "grid", None) if data is not None else None
+        if grid:
+            matrix = [
+                [(getattr(cell, "text", "") or "").strip() for cell in grid_row]
+                for grid_row in grid
+            ]
+            matrix = [r for r in matrix if any(r)]
+            if len(matrix) >= 2 and max((len(r) for r in matrix), default=0) >= 2:
+                return matrix[0], matrix[1:]
+
+        # 3) markdown export
+        to_md = getattr(table, "export_to_markdown", None)
+        if callable(to_md):
+            try:
+                md = to_md(document)
+            except TypeError:
+                md = to_md()
+            parsed = table_serializer.parse_markdown_table(md or "")
+            if parsed is not None:
+                return parsed
+        return [], []
+
+    @staticmethod
+    def _table_prov(table: Any) -> tuple[int, BBox | None]:
+        """Page number + PDF-space bbox (origin bottom-left) for a TableItem."""
+        prov = getattr(table, "prov", None)
+        if not prov:
+            return 1, None
+        first = prov[0]
+        page = getattr(first, "page_no", None) or 1
+        bb = getattr(first, "bbox", None)
+        bbox: BBox | None = None
+        if bb is not None:
+            left = getattr(bb, "l", None)
+            top = getattr(bb, "t", None)
+            right = getattr(bb, "r", None)
+            bottom = getattr(bb, "b", None)
+            if all(v is not None for v in (left, top, right, bottom)):
+                bbox = BBox(x1=float(left), y1=float(top), x2=float(right), y2=float(bottom))
+        return int(page), bbox
 
     @staticmethod
     def _normalize_cell_text(text: str) -> str:
