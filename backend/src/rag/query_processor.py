@@ -42,7 +42,29 @@ class ProcessedQuery(BaseModel):
 
 class QueryProcessor:
     VI_CHARS = set("ăâđêôơưáàảãạấầẩẫậắằẳẵặéèẻẽẹếềểễệíìỉĩịóòỏõọốồổỗộớờởỡợúùủũụứừửữựýỳỷỹỵ")
-    VI_WORDS = {"la", "là", "gi", "gì", "nhu", "như", "nao", "nào", "giup", "giúp", "giam", "giảm", "so", "sanh", "sánh"}
+    VI_WORDS = {
+        # With diacritics
+        "là", "gì", "như", "nào", "giúp", "giảm", "sánh",
+        # Without diacritics — common query tokens that are unambiguously Vietnamese
+        "la", "gi", "nhu", "nao", "giup", "giam", "so", "sanh",
+        "khong",   # không
+        "doanh",   # doanh thu / doanh nghiệp
+        "thuan",   # thuần / thuận
+        "nhieu",   # nhiều
+        "truoc",   # trước
+        "cuoi",    # cuối
+        "gop",     # gộp / góp
+        "phan",    # phần / phân
+        "tang",    # tăng
+        "biet",    # biết / biệt
+        "toan",    # toàn / tổng
+        "theo",    # theo
+        "dung",    # đúng
+        "khac",    # khác
+        "nhan",    # nhân / nhận
+        "tien",    # tiền / tiến
+        "quan",    # quan hệ / quản
+    }
 
     # Longer phrases must come before shorter overlapping ones (sorted by length in process())
     TRANSLATIONS: dict[str, str] = {

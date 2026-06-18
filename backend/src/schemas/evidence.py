@@ -31,6 +31,8 @@ class EvidenceBlockSchema(BaseModel):
 
 
 class CitationSchema(BaseModel):
+    evidence_id: str | None = None
+    kind: str | None = None
     doc_id: str
     doc_name: str
     page: int | None = None
@@ -49,6 +51,13 @@ class CitationSchema(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     # All contributing evidence blocks — exposes spatial/page data for every block in this chunk
     evidence_blocks: list[EvidenceBlockSchema] = Field(default_factory=list)
+
+    # First-class multimodal citation anchors. Kept optional for legacy clients.
+    figure_image_url: str | None = None
+    sheet_name: str | None = None
+    cell_ref: str | None = None
+    audio_start_seconds: float | None = None
+    audio_end_seconds: float | None = None
 
     @field_validator("confidence", mode="before")
     @classmethod

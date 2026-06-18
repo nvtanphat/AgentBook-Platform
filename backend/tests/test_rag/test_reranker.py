@@ -10,6 +10,11 @@ class FakeCrossEncoder:
         return [0.1, 0.9]
 
 
+class FakeSingleCrossEncoder:
+    def predict(self, pairs):
+        return [0.1 for _ in pairs]
+
+
 class FakeMultilingualCrossEncoder:
     def predict(self, pairs):
         scores = {
@@ -60,6 +65,40 @@ def test_cross_encoder_reranker_orders_by_score() -> None:
 
     assert [chunk.chunk_id for chunk in results] == ["b", "a"]
     assert results[0].rerank_score == 0.9
+
+
+def test_cross_encoder_reranker_preserves_visual_fusion_score() -> None:
+    reranker = CrossEncoderReranker(Settings(testing=True))
+    reranker._model = FakeSingleCrossEncoder()
+    chunks = [
+        RetrievedChunk(
+            chunk_id="visual",
+            owner_id="user_demo",
+            collection_id="c",
+            material_id="m",
+            document_name="a.pdf",
+            content="caption text",
+            language="en",
+            modality="figure",
+            fused_score=0.8,
+        ),
+        RetrievedChunk(
+            chunk_id="text",
+            owner_id="user_demo",
+            collection_id="c",
+            material_id="m",
+            document_name="b.pdf",
+            content="weak",
+            language="en",
+            modality="text",
+            fused_score=0.1,
+        ),
+    ]
+
+    results = reranker.rerank(query="Figure 1", chunks=chunks, limit=2)
+
+    assert [chunk.chunk_id for chunk in results] == ["visual", "text"]
+    assert results[0].rerank_score == 0.8
 
 
 def test_cross_encoder_reranker_multilingual_uses_best_query_score() -> None:

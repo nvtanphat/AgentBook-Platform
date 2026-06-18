@@ -77,8 +77,12 @@ class SemanticQueryCache:
         n = len(data) // 4
         return list(struct.unpack(f"{n}f", data))
 
-    def _scope_key(self, owner_id: str, collection_id: str | None) -> str:
-        return f"{self.prefix}:{owner_id}:{collection_id or 'none'}"
+    def _scope_key(self, owner_id: str, collection_id: str | None, answer_language: str | None = None) -> str:
+        # answer_language is part of the scope: BGE-M3 embeds a VI query and its
+        # EN translation almost identically, so without this a VI question would
+        # hit an EN-cached answer (and vice versa) and be returned in the wrong
+        # language. Separate caches per answer language.
+        return f"{self.prefix}:{owner_id}:{collection_id or 'none'}:{answer_language or 'auto'}"
 
     # ── Public API ─────────────────────────────────────────────────────────
 
@@ -88,12 +92,13 @@ class SemanticQueryCache:
         owner_id: str,
         collection_id: str | None,
         query_embedding: list[float],
+        answer_language: str | None = None,
     ) -> dict[str, Any] | None:
         """Return cached QueryResponse dict if semantically similar query found."""
         if not self.enabled or not query_embedding:
             return None
         try:
-            scope = self._scope_key(owner_id, collection_id)
+            scope = self._scope_key(owner_id, collection_id, answer_language)
             pattern = f"{scope}:*"
             best_score = 0.0
             best_payload: dict[str, Any] | None = None
@@ -131,6 +136,7 @@ class SemanticQueryCache:
         query: str,
         query_embedding: list[float],
         response: dict[str, Any],
+        answer_language: str | None = None,
     ) -> None:
         """Cache a (query, embedding, response) tuple under the given scope."""
         if not self.enabled or not query_embedding:
@@ -139,7 +145,7 @@ class SemanticQueryCache:
             # Don't cache refused answers — they may become valid after re-index
             if response.get("was_refused"):
                 return
-            scope = self._scope_key(owner_id, collection_id)
+            scope = self._scope_key(owner_id, collection_id, answer_language)
             # Use timestamp-based suffix; Redis TTL handles eviction
             import time
             idx = int(time.time() * 1000)
@@ -158,7 +164,10 @@ class SemanticQueryCache:
         if not self.enabled:
             return 0
         try:
-            scope = self._scope_key(owner_id, collection_id)
+            # Language-agnostic: scope keys carry a trailing answer-language
+            # segment (…:vi, …:en, …:auto), so match every language for this
+            # owner/collection when invalidating after a document change.
+            scope = f"{self.prefix}:{owner_id}:{collection_id or 'none'}"
             pattern = f"{scope}:*"
             count = 0
             for key in self._redis.scan_iter(match=pattern, count=200):

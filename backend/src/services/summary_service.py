@@ -14,6 +14,7 @@ from src.inference.inference_engine import InferenceEngine
 from src.inference.response_parser import ResponseParser
 from src.models.common import PipelineStatus
 from src.models.material import Material
+from src.rag.evidence import CitationBuilder, EvidenceBundle
 from src.rag.retriever import HybridRetriever
 from src.rag.reranker import CrossEncoderReranker
 from src.rag.types import RetrievalScope
@@ -88,7 +89,12 @@ class SummaryService:
         # when truly nothing relevant was retrieved (empty `reranked`).
         should_refuse = len(reranked) == 0
         refusal_reason = "no relevant evidence was found in the scoped materials" if should_refuse else None
-        citations = self.response_parser.citations_from_chunks(reranked)
+        evidence_bundle = EvidenceBundle.from_chunks(reranked)
+        citations = CitationBuilder.from_evidence_bundle(
+            evidence_bundle,
+            owner_id=request.owner_id,
+            api_v1_prefix=self.settings.api_v1_prefix,
+        )
         covered_after_rerank = list({chunk.material_id for chunk in reranked})
         coverage = await self._coverage_report(expected_material_ids=expected_material_ids, covered_material_ids=covered_after_rerank)
         if should_refuse:
@@ -109,7 +115,7 @@ class SummaryService:
             )
         _LANG_NAMES = {"vi": "tiếng Việt", "en": "English"}
         lang_name = _LANG_NAMES.get(request.answer_language, request.answer_language)
-        evidence_text = self.response_parser.format_evidence_for_prompt(reranked)
+        evidence_text = evidence_bundle.format_for_prompt()
         evidence_safety = InferenceEngine._evidence_safety_rules()
         prompt = (
             f"{evidence_safety}\n\n"
@@ -146,7 +152,7 @@ class SummaryService:
                 coverage=coverage,
             )
         from src.inference.response_parser import _fix_numbered_lists
-        summary = self.response_parser.inject_citations(_fix_numbered_lists(summary), reranked)
+        summary = self.response_parser.inject_citations(_fix_numbered_lists(summary), evidence_bundle.to_legacy_chunks())
         # Verify ONLY against contradiction (token-overlap based, false positives common).
         # Summary is inherently a paraphrase task — NOT_ENOUGH_EVIDENCE is the default state
         # of paraphrasing and should not block the response.
@@ -316,4 +322,3 @@ class SummaryService:
         lines.append("")
         lines.append("Nhận định chung: các ý trên được rút trực tiếp từ từng nguồn trong collection; bấm citation để kiểm tra bằng chứng gốc.")
         return "\n".join(lines)
-

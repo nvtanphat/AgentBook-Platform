@@ -109,8 +109,9 @@ _DEFAULT_TABLE_KEYWORDS = [
     "table", "column", "row", "cell", "value", "sum", "average", "mean", "total",
 ]
 _DEFAULT_FIGURE_KEYWORDS = [
-    "biểu đồ", "đồ thị", "sơ đồ", "hình", "ảnh",
-    "chart", "figure", "diagram", "graph", "plot", "image",
+    "biểu đồ", "đồ thị", "sơ đồ", "hình", "ảnh", "hình vẽ", "hình ảnh",
+    "chart", "charts", "figure", "figures", "diagram", "diagrams",
+    "graph", "graphs", "plot", "plots", "image", "images", "visualization", "visualizations",
 ]
 _DEFAULT_AUDIO_KEYWORDS = [
     "ghi âm", "đoạn ghi", "băng ghi", "phút", "giây", "nói rằng",
@@ -219,7 +220,24 @@ _MULTIHOP_RE = re.compile(
     re.IGNORECASE,
 )
 _CROSSDOC_RE = re.compile(r"\b(tat ca tai lieu|cac tai lieu|nhieu nguon|across documents|all sources|moi nguon)\b", re.IGNORECASE)
-_TEMPORAL_RE = re.compile(r"\b(truoc|sau|theo thoi gian|tien trinh|lich su|before|after|over time|timeline|evolution)\b", re.IGNORECASE)
+_TEMPORAL_RE = re.compile(
+    r"\b(theo thoi gian|tien trinh|lich su|truoc do|sau do|"
+    r"before that|after that|over time|timeline|evolution)\b",
+    re.IGNORECASE,
+)
+# Year-range or trend pattern: "từ 2020 đến 2024", "xu hướng", "2020-2024", etc.
+# More specific than _TEMPORAL_RE so it doesn't false-fire on "sau thuế".
+_TREND_RE = re.compile(
+    r"(\d{4}\s*(?:den|đến|to|through|-|–)\s*\d{4}"
+    r"|tu\s+\d{4}|xu\s+h[uư][oơ]ng|xu\s+huong"
+    r"|from\s+\d{4}|over\s+the\s+years|year.?over.?year|yoy"
+    r"|tang\s+lien\s+tuc|giam\s+lien\s+tuc|bien\s+dong"
+    r"|(?:\d{4}[\s,]+){2,}\d{4}"           # 3+ years: "2022 2023 2024" or "2022, 2023, 2024"
+    r"|qua\s+(?:cac\s+)?nam\s+\d{4}"       # "qua cac nam 2022"
+    r"|thay\s+doi\s+(?:the\s+nao\s+)?qua)" # "thay doi the nao qua"
+    ,
+    re.IGNORECASE,
+)
 
 # route_type → base confidence (well-defined intents score higher).
 _ROUTE_CONFIDENCE: dict = {
@@ -286,6 +304,8 @@ class QueryRouter:
         factors += 1 if _MULTIHOP_RE.search(text) else 0
         factors += 1 if _CROSSDOC_RE.search(text) else 0
         factors += 1 if _TEMPORAL_RE.search(text) else 0
+        has_trend = bool(_TREND_RE.search(text))
+        factors += 1 if has_trend else 0
         if decision.route_type in (RouteType.COMPARISON, RouteType.GRAPH_RELATION):
             factors += 1  # relational/synthesis routes are inherently multi-hop
         if factors >= 3:
@@ -301,6 +321,11 @@ class QueryRouter:
             decision.confidence < self._agentic_conf_threshold
             or decision.difficulty == Difficulty.COMPLEX
         )
+        # Enable graph retrieval for multi-hop / complex queries that did not
+        # already set use_graph (e.g. GRAPH_RELATION route). Trend / year-range
+        # queries benefit from graph traversal even when the route is GENERAL.
+        if not decision.use_graph and decision.difficulty != Difficulty.SIMPLE:
+            decision.use_graph = True
         return decision
 
     @staticmethod

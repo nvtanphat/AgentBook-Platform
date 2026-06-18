@@ -22,6 +22,7 @@ from src.models.material import BoundingBox, Material
 from src.models.query_log import QueryCitation, QueryLog, RequestTraceModel
 from src.services.memory_service import MemoryService
 from src.rag.graph_retriever import GraphRetriever
+from src.rag.evidence import CitationBuilder, EvidenceBundle
 from src.rag.query_router import TableQueryType
 from src.rag.reranker import CrossEncoderReranker
 from src.rag.retriever import HybridRetriever
@@ -345,25 +346,9 @@ class QueryService:
 
         matched_material_ids = list(dict.fromkeys(h.material_id for h in visual_hits if h.material_id))
 
-        # Compose a text query for the standard text pipeline.
-        # Top captions become the semantic seed; user text (if any) is appended verbatim.
-        caption_seeds = " ".join(
-            (h.caption or h.document_name or "").strip()
-            for h in visual_hits[:3]
-            if (h.caption or h.document_name)
-        ).strip()
         user_text = (request.query_text or "").strip()
-        if user_text and caption_seeds:
-            seed_query = f"{user_text}. Bối cảnh hình ảnh: {caption_seeds}"
-        elif user_text:
-            seed_query = user_text
-        elif caption_seeds:
-            seed_query = f"Giải thích nội dung liên quan đến: {caption_seeds}"
-        else:
-            seed_query = "Mô tả nội dung tương tự với hình ảnh được tải lên."
+        visual_query = user_text or "Describe the visually similar content in the retrieved document image."
 
-        # Restrict downstream retrieval to materials that actually contained
-        # a visually-similar figure — keeps the answer grounded in the right docs.
         downstream_scope = RetrievalScope(
             owner_id=request.owner_id,
             collection_id=request.collection_id,
@@ -373,22 +358,15 @@ class QueryService:
         conversation_id = self._conversation_id(request.conversation_id)
         memory_context = await self.memory_service.build_context(scope=downstream_scope, conversation_id=conversation_id)
         started = perf_counter()
-        response = await self.inference_engine.answer(
-            query=seed_query,
+        response = await self.inference_engine.answer_with_visual_evidence(
+            query=visual_query,
             scope=downstream_scope,
-            top_k=request.top_k,
+            visual_hits=visual_hits[: max(1, request.top_k or self.settings.final_top_k)],
+            uploaded_image_bytes=image_bytes,
             answer_language=request.answer_language or "vi",
             memory_context=memory_context,
-            rag_flags={},
         )
         latency_ms = int((perf_counter() - started) * 1000)
-
-        # Prepend visual citations so the frontend VisualCitationStrip renders thumbnails.
-        visual_citations = [self._visual_hit_to_citation(h) for h in visual_hits[:4]]
-        existing_keys = {(c.doc_id, c.page, c.block_id) for c in response.citations}
-        for vc in visual_citations:
-            if (vc.doc_id, vc.page, vc.block_id) not in existing_keys:
-                response.citations.insert(0, vc)
 
         logger.info(
             "Image-as-query answered",
@@ -554,7 +532,12 @@ class QueryService:
         except OSError as exc:
             logger.warning("Compare retrieval failed", exc_info=True, extra={"owner_id": request.owner_id, "error": str(exc)})
             retrieved = []
-        citations_by_chunk = self.response_parser.citations_from_chunks(retrieved)
+        evidence_bundle = EvidenceBundle.from_chunks(retrieved)
+        citations_by_chunk = CitationBuilder.from_evidence_bundle(
+            evidence_bundle,
+            owner_id=request.owner_id,
+            api_v1_prefix=self.settings.api_v1_prefix,
+        )
         citation_lookup = {chunk.chunk_id: citation for chunk, citation in zip(retrieved, citations_by_chunk)}
         results = [
             self._build_comparison_cell(
@@ -643,7 +626,14 @@ class QueryService:
 
         citation_lookup = {
             chunk.chunk_id: citation
-            for chunk, citation in zip(all_chunks, self.response_parser.citations_from_chunks(all_chunks))
+            for chunk, citation in zip(
+                all_chunks,
+                CitationBuilder.from_evidence_bundle(
+                    EvidenceBundle.from_chunks(all_chunks),
+                    owner_id=request.owner_id,
+                    api_v1_prefix=self.settings.api_v1_prefix,
+                ),
+            )
         }
         source_names, _ = await asyncio.gather(
             self._material_names(material_ids),
@@ -955,7 +945,7 @@ class QueryService:
                     seen_ids.add(chunk.chunk_id)
                     all_chunks.append(chunk)
 
-        evidence = self.response_parser.format_evidence_for_prompt(all_chunks)
+        evidence = EvidenceBundle.from_chunks(all_chunks).format_for_prompt()
         dim_lines = "\n".join(f'  - "{dim}"' for dim in active_dims)
         dim_keys = ", ".join(f'"{dim}"' for dim in active_dims)
 
@@ -1030,7 +1020,7 @@ class QueryService:
         """Synthesize a concise 1-3 sentence answer for one comparison dimension via LLM."""
         _LANG_NAMES = {"vi": "tiếng Việt", "en": "English"}
         lang_name = _LANG_NAMES.get(answer_language, answer_language)
-        evidence = self.response_parser.format_evidence_for_prompt(chunks)
+        evidence = EvidenceBundle.from_chunks(chunks).format_for_prompt()
         evidence_safety = InferenceEngine._evidence_safety_rules()
         prompt = (
             f"{evidence_safety}\n\n"

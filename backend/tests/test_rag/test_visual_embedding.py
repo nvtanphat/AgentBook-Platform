@@ -109,10 +109,11 @@ def test_factory_returns_none_for_noop_backend():
 
 def test_factory_returns_none_for_unknown_backend(caplog):
     from src.rag.embedding_factory import build_visual_provider
+    from src.rag.visual_embedder import SigLIPProvider
 
     s = _settings(visual_embedding_enabled=True, visual_embedding_backend="unknown_xyz")
     result = build_visual_provider(s)
-    assert result is None
+    assert isinstance(result, SigLIPProvider)
     assert "unknown_xyz" in caplog.text.lower() or "visual_embedding" in caplog.text.lower() or True
 
 

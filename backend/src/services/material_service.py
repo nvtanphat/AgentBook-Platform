@@ -189,13 +189,22 @@ class MaterialService:
         )
 
     async def _ensure_not_duplicate(self, *, owner_id: str, collection_id: PydanticObjectId, checksum: str) -> None:
-        existing = await Material.find_one(
-            Material.owner_id == owner_id,
-            Material.collection_id == collection_id,
-            Material.checksum_sha256 == checksum,
-        )
+        scope = (self.settings.upload_dedupe_scope or "owner").strip().lower()
+        if scope == "collection":
+            existing = await Material.find_one(
+                Material.owner_id == owner_id,
+                Material.collection_id == collection_id,
+                Material.checksum_sha256 == checksum,
+            )
+            message = "File already exists in this collection"
+        else:
+            existing = await Material.find_one(
+                Material.owner_id == owner_id,
+                Material.checksum_sha256 == checksum,
+            )
+            message = "File already exists for this user"
         if existing is not None:
-            raise ValueError("File already exists in this collection")
+            raise ValueError(message)
 
     async def _resolve_collection(self, metadata: MaterialUploadMetadata) -> KnowledgeCollection:
         if metadata.collection_id:
@@ -370,6 +379,25 @@ class MaterialService:
             )
         except Exception as exc:
             logger.warning("Qdrant delete failed for material", extra={"material_id": material_id, "error": str(exc)})
+        try:
+            qdrant.delete(
+                collection_name=self.settings.qdrant_visual_collection_name,
+                points_selector=qdrant_models.FilterSelector(
+                    filter=qdrant_models.Filter(
+                        must=[
+                            qdrant_models.FieldCondition(
+                                key="material_id",
+                                match=qdrant_models.MatchValue(value=material_id),
+                            )
+                        ]
+                    )
+                ),
+            )
+        except Exception as exc:
+            logger.warning(
+                "Qdrant visual delete failed for material",
+                extra={"material_id": material_id, "error": str(exc)},
+            )
 
         # Delete raw file from disk
         self._delete_data_file(material.storage_path)
@@ -434,6 +462,25 @@ class MaterialService:
             )
         except Exception as exc:
             logger.warning("Qdrant delete failed for collection", extra={"collection_id": collection_id, "error": str(exc)})
+        try:
+            qdrant.delete(
+                collection_name=self.settings.qdrant_visual_collection_name,
+                points_selector=qdrant_models.FilterSelector(
+                    filter=qdrant_models.Filter(
+                        must=[
+                            qdrant_models.FieldCondition(
+                                key="collection_id",
+                                match=qdrant_models.MatchValue(value=collection_id),
+                            )
+                        ]
+                    )
+                ),
+            )
+        except Exception as exc:
+            logger.warning(
+                "Qdrant visual delete failed for collection",
+                extra={"collection_id": collection_id, "error": str(exc)},
+            )
 
         # Delete raw files and parsed JSON artifacts from disk
         materials = await Material.find(Material.collection_id == cid, Material.owner_id == owner_id).to_list()

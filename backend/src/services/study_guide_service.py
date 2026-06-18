@@ -14,6 +14,7 @@ from src.guardrails.claim_verifier import ClaimVerdict, ClaimVerifier
 from src.inference.confidence_scorer import ConfidenceScorer
 from src.inference.inference_engine import InferenceEngine
 from src.inference.response_parser import ResponseParser
+from src.rag.evidence import CitationBuilder, EvidenceBundle
 from src.rag.retriever import HybridRetriever
 from src.rag.reranker import CrossEncoderReranker
 from src.rag.types import RetrievalScope
@@ -74,7 +75,12 @@ class StudyGuideService:
                 limit=request.top_k or self.settings.final_top_k,
             )
         confidence = self.confidence_scorer.score(reranked)
-        citations = self.response_parser.citations_from_chunks(reranked)
+        evidence_bundle = EvidenceBundle.from_chunks(reranked)
+        citations = CitationBuilder.from_evidence_bundle(
+            evidence_bundle,
+            owner_id=request.owner_id,
+            api_v1_prefix=self.settings.api_v1_prefix,
+        )
         if not reranked:
             return StudyGuideResponse(
                 overview=_REFUSAL_TEXT,
@@ -85,7 +91,7 @@ class StudyGuideService:
             )
         _LANG_NAMES = {"vi": "tiếng Việt", "en": "English"}
         lang_name = _LANG_NAMES.get(request.answer_language, request.answer_language)
-        evidence_text = self.response_parser.format_evidence_for_prompt(reranked)
+        evidence_text = evidence_bundle.format_for_prompt()
         evidence_safety = InferenceEngine._evidence_safety_rules()
         guide_prompt = (
             f"{evidence_safety}\n\n"
@@ -121,7 +127,7 @@ class StudyGuideService:
             for item in [overview, "\n".join(key_concepts[:10]), "\n".join(outline[:12])]
             if item.strip()
         )
-        verification_text = self.response_parser.inject_citations(verification_text, reranked)
+        verification_text = self.response_parser.inject_citations(verification_text, evidence_bundle.to_legacy_chunks())
         verification = await self.claim_verifier.averify(
             claim=verification_text,
             evidence=[evidence for chunk in reranked for evidence in chunk.evidence],

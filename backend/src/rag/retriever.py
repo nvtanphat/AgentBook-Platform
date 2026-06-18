@@ -527,6 +527,72 @@ class HybridRetriever:
             )
         return hydrated
 
+    async def retrieve_by_chunk_ids(
+        self,
+        *,
+        chunk_ids: list[str],
+        scope: "RetrievalScope",
+    ) -> list["RetrievedChunk"]:
+        """Fetch and hydrate chunks from MongoDB by their IDs, scoped to owner/collection."""
+        if not chunk_ids:
+            return []
+        chunk_oids = []
+        for cid in chunk_ids:
+            try:
+                chunk_oids.append(PydanticObjectId(cid))
+            except Exception:
+                pass
+        if not chunk_oids:
+            return []
+
+        scope_filter: dict = {"_id": {"$in": chunk_oids}, "owner_id": scope.owner_id}
+        if scope.collection_id:
+            scope_filter["collection_id"] = PydanticObjectId(scope.collection_id)
+
+        chunks_list = await Chunk.find(scope_filter).to_list()
+        if not chunks_list:
+            return []
+
+        material_oids = []
+        for c in chunks_list:
+            try:
+                material_oids.append(PydanticObjectId(str(c.material_id)))
+            except Exception:
+                pass
+
+        materials_list = await Material.find({"_id": {"$in": material_oids}}).to_list()
+        materials_by_id: dict[str, Material] = {str(m.id): m for m in materials_list}
+        pages_by_material_id = await get_material_pages_by_material_ids(materials_list)
+
+        # Preserve caller's requested order
+        cid_order = {cid: i for i, cid in enumerate(chunk_ids)}
+        hydrated: list[RetrievedChunk] = []
+        for chunk in sorted(chunks_list, key=lambda c: cid_order.get(str(c.id), 999)):
+            material = materials_by_id.get(str(chunk.material_id))
+            if material is None:
+                continue
+            material_pages = pages_by_material_id.get(str(material.id), [])
+            evidence = self._chunk_evidence(chunk=chunk, material=material, material_pages=material_pages)
+            hydrated.append(
+                RetrievedChunk(
+                    chunk_id=str(chunk.id),
+                    owner_id=chunk.owner_id,
+                    collection_id=str(chunk.collection_id),
+                    material_id=str(chunk.material_id),
+                    document_name=material.original_name,
+                    content=chunk.content,
+                    language=chunk.language,
+                    modality=chunk.modality,
+                    source_block_ids=chunk.source_block_ids,
+                    source_pages=chunk.source_pages,
+                    bboxes=[block.bbox for block in evidence if block.bbox is not None],
+                    evidence=evidence,
+                    metadata=_rollup_table_metadata(evidence),
+                    fused_score=0.0,
+                )
+            )
+        return hydrated
+
     @staticmethod
     def _chunk_evidence(*, chunk: Chunk, material: Material, material_pages) -> list[EvidenceBlock]:
         block_lookup = {

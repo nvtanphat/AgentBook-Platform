@@ -21,6 +21,7 @@ from src.processing.chunking import AudioChunker, LayoutAwareChunker, SemanticCh
 from src.processing.contextual_enricher import ContextualEnricher
 from src.processing.docling_parser import DoclingParser, SUPPORTED_DOCLING_EXTENSIONS
 from src.processing.cross_modal_linker import CrossModalLinker
+from src.processing.structure_linker import StructureLinker
 from src.processing.entity_extractor import EntityExtractor
 from src.processing.section_filter import filter_extraction_blocks
 from src.processing.entity_resolution import EntityResolver
@@ -85,6 +86,7 @@ class ParseIndexPipeline:
         entity_resolver: EntityResolver | None = None,
         event_extractor: EventExtractor | None = None,
         cross_modal_linker: CrossModalLinker | None = None,
+        structure_linker: StructureLinker | None = None,
         graph_quality_gate: GraphQualityGate | None = None,
         chunker: LayoutAwareChunker | SemanticChunker | None = None,
         indexer: QdrantMongoIndexer | None = None,
@@ -108,13 +110,27 @@ class ParseIndexPipeline:
         self.entity_resolver = entity_resolver or EntityResolver()
         self.event_extractor = event_extractor or EventExtractor()
         self.cross_modal_linker = cross_modal_linker or CrossModalLinker()
+        self.structure_linker = structure_linker or StructureLinker(
+            enabled=settings.structure_linker_enabled,
+            section_confidence=settings.structure_section_confidence,
+            belongs_to_confidence=settings.structure_belongs_to_confidence,
+        )
         # Semantic relation extraction adds an extra LLM call per material on
         # top of entity extraction. Small local models (qwen2.5:3b) saturate
         # the Ollama queue and time out, leaving 0 semantic relations and
-        # wasted compute. Only activate the extractor when a cloud LLM is
-        # configured (OpenAI-compatible endpoint) so latency / reliability
-        # match the workload.
-        _semantic_llm = _llm if (settings.llm_default_provider or "").lower() != "local" else None
+        # wasted compute. Route this task to a configured cloud
+        # (OpenAI-compatible) endpoint when available so latency / reliability
+        # match the workload, while keeping the local LLM for answer generation
+        # and entity-extraction fallback. Falls back to the default LLM for a
+        # cloud-default setup, and to None for a local-only setup with no key.
+        if settings.openai_api_key:
+            from src.core.openai_client import OpenAICompatibleLLM
+
+            _semantic_llm = OpenAICompatibleLLM(settings)
+        elif (settings.llm_default_provider or "").lower() != "local":
+            _semantic_llm = _llm
+        else:
+            _semantic_llm = None
         self.semantic_relation_extractor = LLMSemanticRelationExtractor(
             llm=_semantic_llm,
             max_concepts=settings.graph_semantic_relation_max_concepts,
@@ -122,6 +138,19 @@ class ParseIndexPipeline:
             max_passage_chars=settings.graph_semantic_relation_max_passage_chars,
             gleaning=settings.graph_semantic_relation_gleaning,
         )
+        # Ontology-guided entity refinement shares the same cloud LLM as semantic
+        # relations (capable model required for de-fragmentation / re-typing).
+        if settings.extraction_entity_refine_enabled and _semantic_llm is not None:
+            from src.processing.entity_refiner import EntityRefiner
+
+            self.entity_refiner = EntityRefiner(
+                llm=_semantic_llm,
+                allowed_types=tuple(settings.extraction_graph_entity_types),
+                type_descriptions=settings.extraction_entity_type_descriptions,
+                max_entities=settings.extraction_entity_refine_max_entities,
+            )
+        else:
+            self.entity_refiner = None
         self.graph_quality_gate = graph_quality_gate or GraphQualityGate(
             min_entity_confidence=settings.min_graph_confidence,
             min_relation_confidence=settings.min_graph_confidence,
@@ -143,6 +172,7 @@ class ParseIndexPipeline:
             await self._mark(material=material, job=job, status=PipelineStatus.PARSING.value, stage=PipelineStatus.PARSING.value)
             parsed = await asyncio.to_thread(self._parse_material, material)
             parsed = await asyncio.to_thread(self._caption_figures, parsed, material.language)
+            parsed = await asyncio.to_thread(self._vlm_table_fallback, parsed, material.language)
             # Collect figure items for visual indexing before normalization may
             # drop block.extra fields.  Empty when visual embedding is disabled.
             figure_items = (
@@ -194,10 +224,23 @@ class ParseIndexPipeline:
                 excluded_patterns=tuple(self.settings.extraction_excluded_sections) or None,
             )
             raw_entities = await self.entity_extractor.extract_async(graph_map, domain_hint=domain_hint)
+            # Ontology-guided LLM refinement: fix GLiNER mistypes / fragmented
+            # spans on Vietnamese, drop junk, glean misses. No-op when disabled
+            # or no cloud LLM is configured. Runs on graph_map (extraction scope).
+            if self.entity_refiner is not None:
+                try:
+                    raw_entities = await self.entity_refiner.refine_async(raw_entities, graph_map)
+                except Exception as exc:
+                    logger.warning(
+                        "Entity refinement failed (non-fatal); using raw entities",
+                        extra={"error": str(exc), "error_type": type(exc).__name__},
+                    )
             embedder = self.indexer.embedder if self.indexer is not None else None
             entities = await self.entity_resolver.resolve_async(raw_entities, embedder=embedder)
             events, relations = self.event_extractor.extract(graph_map, entities)
             cm_entities, cm_relations = self.cross_modal_linker.link(evidence_map, entities)
+            # Structural hierarchy: section entities + belongs_to edges (positional, no ML).
+            struct_entities, struct_relations = self.structure_linker.link(evidence_map)
             # LLM-driven typed semantic relations between concept entities
             # (uses / extends / improves / compared_with / …). Empty when
             # the LLM is unavailable or the doc has < 2 concept entities.
@@ -211,8 +254,8 @@ class ParseIndexPipeline:
                     extra={"error": str(exc), "error_type": type(exc).__name__},
                 )
                 semantic_relations = []
-            entities = list(entities) + cm_entities
-            relations = list(relations) + cm_relations + semantic_relations
+            entities = list(entities) + cm_entities + struct_entities
+            relations = list(relations) + cm_relations + semantic_relations + struct_relations
 
             # Apply graph quality gates
             entities = self.graph_quality_gate.prune_entities(entities)
@@ -427,10 +470,108 @@ class ParseIndexPipeline:
             return SemanticChunker(self.settings, embedder=embedder)
         return LayoutAwareChunker(self.settings)
 
+    def _free_ollama_models(self) -> None:
+        """Best-effort unload of all currently-loaded Ollama models to free RAM.
+
+        Queries /api/ps and re-requests each with keep_alive=0 (Ollama's unload
+        signal). Non-fatal: a failure here just means Docling runs with less RAM.
+        """
+        if not self.settings.free_ollama_before_parse:
+            return
+        import httpx
+
+        base = self.settings.ollama_base_url.rstrip("/")
+        try:
+            with httpx.Client(timeout=10.0) as client:
+                loaded = client.get(f"{base}/api/ps").json().get("models", [])
+                for model in loaded:
+                    name = model.get("name") or model.get("model")
+                    if not name:
+                        continue
+                    client.post(f"{base}/api/generate", json={"model": name, "keep_alive": 0, "prompt": ""})
+            if loaded:
+                import time
+
+                logger.info("Freed %d Ollama model(s) before parse to reclaim RAM", len(loaded))
+                time.sleep(3)
+        except Exception as exc:
+            logger.debug("Ollama unload skipped (%s)", type(exc).__name__)
+
+    def _parse_docling(self, path: Path, *, language: str) -> ParsedDocument:
+        """Parse a Docling-supported document, isolated in a fresh subprocess.
+
+        The server process corrupts Docling's models over its lifetime (convert()
+        returns an empty document → every page falls back to OCR → tables/figures/
+        equations lost). A fresh subprocess parses reliably. On any subprocess
+        failure (timeout, crash, bad output) we fall back to in-process parsing so
+        ingestion never hard-fails.
+        """
+        # Free the ~4.7GB Ollama VLM first — on a RAM-tight box it starves Docling
+        # → std::bad_alloc on every page → empty parse → OCR fallback loses tables.
+        self._free_ollama_models()
+
+        if not self.settings.docling_subprocess_enabled:
+            return self.docling_parser.parse(path, language=language)
+
+        import os
+        import subprocess
+        import sys
+        import tempfile
+        from uuid import uuid4
+
+        backend_dir = Path(__file__).resolve().parents[2]  # …/backend
+        out_path = Path(tempfile.gettempdir()) / f"agentbook-parse-{uuid4().hex}.json"
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-m", "src.processing.parse_worker", str(path), language or "unknown", str(out_path)],
+                cwd=str(backend_dir),
+                env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+                capture_output=True,
+                text=True,
+                timeout=self.settings.docling_subprocess_timeout_seconds,
+            )
+            if proc.returncode == 0 and out_path.exists():
+                parsed = ParsedDocument.model_validate_json(out_path.read_text(encoding="utf-8"))
+                logger.info("Isolated Docling parse ok pages=%s blocks=%s", len(parsed.pages), len(parsed.blocks))
+                return parsed
+            logger.warning(
+                "Isolated Docling parse failed (rc=%s) — falling back in-process. stderr=%s",
+                proc.returncode,
+                (proc.stderr or "")[-600:],
+            )
+        except subprocess.TimeoutExpired:
+            logger.warning("Isolated Docling parse timed out — falling back in-process")
+        except Exception as exc:
+            logger.warning("Isolated Docling parse error (%s) — falling back in-process", type(exc).__name__)
+        finally:
+            try:
+                out_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+        return self.docling_parser.parse(path, language=language)
+
     def _parse_material(self, material: Material) -> ParsedDocument:
         path = self._material_path(material)
         if material.file_type in SUPPORTED_DOCLING_EXTENSIONS:
-            return self.docling_parser.parse(path, language=material.language)
+            parsed = self._parse_docling(path, language=material.language)
+            from collections import Counter as _Counter
+            _bt = dict(_Counter(b.block_type for b in parsed.blocks))
+            # Inline in the message — the log formatter does not render `extra`.
+            logger.info(
+                "Parsed material %s parser=%s images_scale=%s block_types=%s",
+                str(material.id),
+                parsed.extra.get("parser"),
+                self.settings.docling_images_scale,
+                _bt,
+            )
+            ocr_ratio = _bt.get("ocr_text", 0) / max(len(parsed.blocks), 1)
+            if ocr_ratio > 0.95 and material.file_type == "pdf":
+                logger.warning(
+                    "Parse result is >95%% OCR text - Docling layout model likely failed "
+                    "(RAM pressure?). Tables/figures may be missing. material_id=%s",
+                    str(material.id),
+                )
+            return parsed
         if material.file_type in SUPPORTED_SPREADSHEET_EXTENSIONS:
             return self.spreadsheet_parser.parse(path, language=material.language, display_name=material.original_name)
         if material.file_type in IMAGE_EXTENSIONS:
@@ -465,6 +606,9 @@ class ParseIndexPipeline:
             language=language if language in {"vi", "en"} else "vi",
             timeout=self.settings.ollama_caption_timeout_seconds,
             image_max_side_px=self.settings.figure_image_max_side_px,
+            num_ctx=self.settings.vlm_caption_num_ctx,
+            list_bullet_ratio_max=self.settings.caption_list_bullet_ratio_max,
+            list_bullet_max_words=self.settings.caption_list_bullet_max_words,
         )
         # Pre-check Ollama availability once before spawning threads, so threads
         # share the cached result and don't each trigger a 5s network probe.
@@ -686,7 +830,7 @@ class ParseIndexPipeline:
         This prevents VLMs from hallucinating content on text-scan images where OCR
         is ground truth.
         """
-        _OCR_TEXT_WORD_THRESHOLD = 20  # images with >= this many OCR words are text scans
+        word_threshold = self.settings.image_ocr_text_word_threshold
 
         language = declared_language if declared_language in {"vi", "en"} else "vi"
 
@@ -705,14 +849,37 @@ class ParseIndexPipeline:
             for page in (ocr_parsed.pages if ocr_parsed else [])
             for b in page.blocks
         )
-        if ocr_parsed is not None and ocr_word_count >= _OCR_TEXT_WORD_THRESHOLD:
+        if ocr_parsed is not None and ocr_word_count >= word_threshold:
+            # Text-dense. Pure text scans → OCR is faithful, skip VLM. But charts /
+            # tables are ALSO text-dense, yet OCR flattens their 2D structure
+            # (numbers lose their row/year association). Detect those via numeric
+            # density and ADD a VLM structure pass on top of OCR (hybrid): OCR
+            # keeps exact numbers, VLM reconstructs the metric↔year table.
+            numeric_ratio = self._numeric_token_ratio(ocr_parsed)
+            if numeric_ratio < self.settings.image_numeric_ratio_vlm_trigger:
+                logger.info(
+                    "Standalone image is text-dense — using OCR directly (skipping VLM)",
+                    extra={"image": path.name, "ocr_words": ocr_word_count, "numeric_ratio": round(numeric_ratio, 3)},
+                )
+                ocr_parsed.extra.setdefault("parse_method", "ocr")
+                ocr_parsed.extra["vlm_attempted"] = False
+                ocr_parsed.extra["vlm_skipped_reason"] = "ocr_text_dense"
+                return ocr_parsed
+
             logger.info(
-                "Standalone image is text-dense — using OCR directly (skipping VLM)",
-                extra={"image": path.name, "ocr_words": ocr_word_count},
+                "Standalone image is text-dense but numeric-heavy (chart/table) — adding VLM structure pass",
+                extra={"image": path.name, "ocr_words": ocr_word_count, "numeric_ratio": round(numeric_ratio, 3)},
             )
-            ocr_parsed.extra.setdefault("parse_method", "ocr")
-            ocr_parsed.extra["vlm_attempted"] = False
-            ocr_parsed.extra["vlm_skipped_reason"] = "ocr_text_dense"
+            vlm_block = self._vlm_structure_block(path, language=language)
+            if vlm_block is not None and ocr_parsed.pages:
+                ocr_parsed.pages[0].blocks.insert(0, vlm_block)
+                ocr_parsed.extra["parse_method"] = "ocr+vlm"
+                ocr_parsed.extra["vlm_attempted"] = True
+                ocr_parsed.extra["vlm_structure_added"] = True
+            else:
+                ocr_parsed.extra.setdefault("parse_method", "ocr")
+                ocr_parsed.extra["vlm_attempted"] = True
+                ocr_parsed.extra["vlm_skipped_reason"] = "vlm_unavailable_or_short"
             return ocr_parsed
 
         # Step 2: sparse OCR → likely a visual/infographic → try VLM.
@@ -722,6 +889,9 @@ class ParseIndexPipeline:
             ocr_fallback=False,
             timeout=self.settings.ollama_caption_timeout_seconds,
             image_max_side_px=self.settings.figure_image_max_side_px,
+            num_ctx=self.settings.vlm_caption_num_ctx,
+            list_bullet_ratio_max=self.settings.caption_list_bullet_ratio_max,
+            list_bullet_max_words=self.settings.caption_list_bullet_max_words,
         )
         vlm_model = captioner._detect_available_model()
         fallback_reason = "vlm_unavailable"
@@ -784,6 +954,122 @@ class ParseIndexPipeline:
         if vlm_model:
             ocr_parsed.extra["vlm_model"] = vlm_model
         return ocr_parsed
+
+    @staticmethod
+    def _numeric_token_ratio(parsed: ParsedDocument) -> float:
+        """Fraction of whitespace tokens that contain a digit.
+
+        Charts/tables (financial pages, statistics) are number-dense; flowing
+        prose is not. Used to detect text-dense-but-structured images that need a
+        VLM structure pass even though OCR already returned plenty of words.
+        """
+        total = 0
+        numeric = 0
+        for page in parsed.pages:
+            for block in page.blocks:
+                for tok in (block.content or "").split():
+                    total += 1
+                    if any(ch.isdigit() for ch in tok):
+                        numeric += 1
+        return (numeric / total) if total else 0.0
+
+    def _vlm_structure_block(self, path: Path, *, language: str) -> "ParsedBlock | None":
+        """Caption a chart/table image with a VLM into a structure-preserving block.
+
+        Returns None when no vision model is available or the caption is too
+        short / gibberish, so the caller keeps OCR-only output.
+        """
+        captioner = FigureCaptioner(
+            ollama_base_url=self.settings.ollama_base_url,
+            language=language,
+            ocr_fallback=False,
+            timeout=self.settings.ollama_caption_timeout_seconds,
+            image_max_side_px=self.settings.image_structure_vlm_max_side_px,
+            num_ctx=self.settings.vlm_caption_num_ctx,
+            list_bullet_ratio_max=self.settings.caption_list_bullet_ratio_max,
+            list_bullet_max_words=self.settings.caption_list_bullet_max_words,
+        )
+        if not captioner._detect_available_model():
+            return None
+        from src.processing.figure_captioner import _looks_like_gibberish
+
+        caption = captioner.caption_image_path(path)
+        if not caption or len(caption.strip()) < 80 or _looks_like_gibberish(caption):
+            return None
+        return ParsedBlock(
+            block_id=f"blk-vlm-{path.stem[:12]}",
+            block_index=0,
+            block_type=BlockType.TABLE.value,
+            content=caption,
+            page_number=1,
+            reading_order=0,
+            language=language,
+            source="vlm",
+            extra={"parse_method": "vlm", "caption_source": "vlm_structure", "image_file": path.name},
+        )
+
+    def _vlm_table_fallback(self, parsed: ParsedDocument, language: str) -> ParsedDocument:
+        """Hybrid table reader (2b): VLM-read numeric-dense figures on pages where
+        Docling's TableFormer found no table.
+
+        Docling (``table_source="docling"``) stays the exact, citation-grade
+        source. This only fires for figures Docling missed; the produced table is
+        tagged ``table_source="vlm"`` with a lower confidence so the
+        evidence/citation layer treats its numbers cautiously. Bounded: skips
+        pages that already have a Docling table, and figures below the numeric
+        trigger. Failures are non-fatal.
+        """
+        if not self.settings.vlm_table_fallback_enabled:
+            return parsed
+        docling_table_pages = {
+            b.page_number
+            for b in parsed.blocks
+            if b.block_type == BlockType.TABLE.value and (b.extra or {}).get("table_source") == "docling"
+        }
+        trigger = self.settings.image_numeric_ratio_vlm_trigger
+        added = 0
+        for page in parsed.pages:
+            if page.page_number in docling_table_pages:
+                continue
+            for fig in list(page.blocks):
+                if fig.block_type != BlockType.FIGURE.value:
+                    continue
+                img = (fig.extra or {}).get("figure_image_path")
+                if not img or not Path(img).exists():
+                    continue
+                if self._text_numeric_ratio(fig.content or "") < trigger:
+                    continue
+                try:
+                    blk = self._vlm_structure_block(Path(img), language=language)
+                except Exception as exc:
+                    logger.debug(
+                        "VLM table fallback skipped for figure",
+                        extra={"block_id": fig.block_id, "error": str(exc)},
+                    )
+                    blk = None
+                if blk is None:
+                    continue
+                blk.page_number = fig.page_number
+                blk.bbox = fig.bbox
+                blk.reading_order = fig.reading_order
+                blk.ocr_confidence = self.settings.vlm_table_confidence
+                blk.extra = {**(blk.extra or {}), "table_source": "vlm", "label": "table"}
+                page.blocks.append(blk)
+                added += 1
+        if added:
+            logger.info(
+                "VLM table fallback added tables (Docling missed)",
+                extra={"count": added, "source": parsed.source_path},
+            )
+        return parsed
+
+    @staticmethod
+    def _text_numeric_ratio(text: str) -> float:
+        tokens = (text or "").split()
+        if not tokens:
+            return 0.0
+        numeric = sum(1 for tok in tokens if any(ch.isdigit() for ch in tok))
+        return numeric / len(tokens)
 
     def _parse_printed_image(self, path: Path, *, declared_language: str) -> ParsedDocument:
         runtime_language = self._ocr_runtime_language(declared_language)

@@ -463,6 +463,10 @@ class QdrantMongoIndexer:
                 target_id=relation.target_id,
                 relation_type=relation.relation_type,
                 evidence_refs=[self._to_ref(ref) for ref in relation.evidence_refs],
+                evidence_text_chunk=(
+                    relation.evidence_text_chunk
+                    or (relation.evidence_refs[0].snippet_original[:500] if relation.evidence_refs else None)
+                ),
                 confidence=relation.confidence,
                 is_conflicting=relation.is_conflicting,
             )

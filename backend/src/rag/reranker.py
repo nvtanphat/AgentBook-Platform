@@ -52,11 +52,10 @@ class CrossEncoderReranker:
         if not self.settings.reranker_enabled:
             return self._fallback(candidates, limit)
         try:
-            pairs = [(query, chunk.content) for chunk in candidates]
-            scores = self.model.predict(pairs)
-            scored: list[RetrievedChunk] = []
-            for chunk, score in zip(candidates, scores, strict=True):
-                scored.append(chunk.model_copy(update={"rerank_score": float(score)}))
+            text_candidates = [chunk for chunk in candidates if not self._is_visual_chunk(chunk)]
+            pairs = [(query, chunk.content) for chunk in text_candidates]
+            scores = self.model.predict(pairs) if pairs else []
+            scored = self._merge_scores_preserving_visual(candidates, text_candidates, scores)
             scored.sort(key=self._rank_key, reverse=True)
             return scored[: limit or self.settings.final_top_k]
         except Exception as exc:
@@ -73,13 +72,15 @@ class CrossEncoderReranker:
         if not self.settings.reranker_enabled:
             return self._fallback(candidates, limit)
         try:
-            pairs = [(query, chunk.content) for chunk in candidates]
+            text_candidates = [chunk for chunk in candidates if not self._is_visual_chunk(chunk)]
+            pairs = [(query, chunk.content) for chunk in text_candidates]
             model = await self._aload_model()
-            async with self._predict_semaphore:
-                scores = await asyncio.to_thread(model.predict, pairs)
-            scored: list[RetrievedChunk] = []
-            for chunk, score in zip(candidates, scores, strict=True):
-                scored.append(chunk.model_copy(update={"rerank_score": float(score)}))
+            if pairs:
+                async with self._predict_semaphore:
+                    scores = await asyncio.to_thread(model.predict, pairs)
+            else:
+                scores = []
+            scored = self._merge_scores_preserving_visual(candidates, text_candidates, scores)
             scored.sort(key=self._rank_key, reverse=True)
             return scored[: limit or self.settings.final_top_k]
         except Exception as exc:
@@ -117,14 +118,20 @@ class CrossEncoderReranker:
             scored = self._fallback(candidates, limit=None)
         else:
             try:
-                pairs = [(query, chunk.content) for chunk in candidates for query in unique_queries]
-                scores = [float(s) for s in self.model.predict(pairs)]
+                text_candidates = [chunk for chunk in candidates if not self._is_visual_chunk(chunk)]
+                pairs = [(query, chunk.content) for chunk in text_candidates for query in unique_queries]
+                scores = [float(s) for s in self.model.predict(pairs)] if pairs else []
                 query_count = len(unique_queries)
-                scored = []
-                for index, chunk in enumerate(candidates):
+                best_scores: dict[str, float] = {}
+                for index, chunk in enumerate(text_candidates):
                     start = index * query_count
-                    best_score = max(scores[start: start + query_count])
-                    scored.append(chunk.model_copy(update={"rerank_score": best_score}))
+                    best_scores[chunk.chunk_id] = max(scores[start: start + query_count])
+                scored = [
+                    chunk.model_copy(
+                        update={"rerank_score": self._visual_rank_score(chunk) if self._is_visual_chunk(chunk) else best_scores.get(chunk.chunk_id, 0.0)}
+                    )
+                    for chunk in candidates
+                ]
                 scored.sort(key=self._rank_key, reverse=True)
             except Exception as exc:
                 logger.warning(
@@ -165,17 +172,26 @@ class CrossEncoderReranker:
             scored = self._fallback(candidates, limit=None)
         else:
             try:
-                pairs = [(query, chunk.content) for chunk in candidates for query in unique_queries]
+                text_candidates = [chunk for chunk in candidates if not self._is_visual_chunk(chunk)]
+                pairs = [(query, chunk.content) for chunk in text_candidates for query in unique_queries]
                 model = await self._aload_model()
-                async with self._predict_semaphore:
-                    raw_scores = await asyncio.to_thread(model.predict, pairs)
+                if pairs:
+                    async with self._predict_semaphore:
+                        raw_scores = await asyncio.to_thread(model.predict, pairs)
+                else:
+                    raw_scores = []
                 scores = [float(s) for s in raw_scores]
                 query_count = len(unique_queries)
-                scored = []
-                for index, chunk in enumerate(candidates):
+                best_scores: dict[str, float] = {}
+                for index, chunk in enumerate(text_candidates):
                     start = index * query_count
-                    best_score = max(scores[start: start + query_count])
-                    scored.append(chunk.model_copy(update={"rerank_score": best_score}))
+                    best_scores[chunk.chunk_id] = max(scores[start: start + query_count])
+                scored = [
+                    chunk.model_copy(
+                        update={"rerank_score": self._visual_rank_score(chunk) if self._is_visual_chunk(chunk) else best_scores.get(chunk.chunk_id, 0.0)}
+                    )
+                    for chunk in candidates
+                ]
                 scored.sort(key=self._rank_key, reverse=True)
             except Exception as exc:
                 logger.warning(
@@ -231,6 +247,52 @@ class CrossEncoderReranker:
     def _fallback(self, chunks: list[RetrievedChunk], limit: int | None) -> list[RetrievedChunk]:
         fallback = sorted(chunks, key=lambda c: c.fused_score, reverse=True)
         return fallback[: limit or self.settings.final_top_k]
+
+    @staticmethod
+    def _is_visual_chunk(chunk: RetrievedChunk) -> bool:
+        modality = (chunk.modality or "").lower()
+        kind = str((chunk.metadata or {}).get("kind") or (chunk.metadata or {}).get("evidence_kind") or "").lower()
+        return modality in {"figure", "image", "visual"} or kind == "visual"
+
+    @staticmethod
+    def _visual_rank_score(chunk: RetrievedChunk) -> float:
+        return float(chunk.fused_score or chunk.graph_score or 0.0)
+
+    def _merge_scores_preserving_visual(
+        self,
+        candidates: list[RetrievedChunk],
+        text_candidates: list[RetrievedChunk],
+        scores,
+    ) -> list[RetrievedChunk]:
+        score_by_id = {
+            chunk.chunk_id: float(score)
+            for chunk, score in zip(text_candidates, scores, strict=True)
+        }
+        penalty = getattr(self.settings, "vlm_list_caption_score_penalty", 0.40)
+        result = []
+        for chunk in candidates:
+            if self._is_visual_chunk(chunk):
+                raw = self._visual_rank_score(chunk)
+            else:
+                raw = score_by_id.get(chunk.chunk_id, 0.0)
+            if penalty > 0 and self._is_list_caption_chunk(chunk):
+                raw = max(0.0, raw - penalty)
+            result.append(chunk.model_copy(update={"rerank_score": raw}))
+        return result
+
+    @staticmethod
+    def _is_list_caption_chunk(chunk: RetrievedChunk) -> bool:
+        """Return True when chunk content is a VLM-generated bullet list (hallucination pattern)."""
+        content = chunk.content or ""
+        lines = [l for l in content.splitlines() if l.strip()]
+        if len(lines) < 4:
+            return False
+        bullet_re = __import__("re").compile(r"^\s*[-*•]\s*(\*{0,2})(.+?)(\*{0,2})\s*$")
+        short_bullets = sum(
+            1 for l in lines
+            if (m := bullet_re.match(l)) and len(m.group(2).strip().split()) <= 3
+        )
+        return (short_bullets / len(lines)) > 0.70
 
     @staticmethod
     def _rank_key(chunk: RetrievedChunk) -> float:
