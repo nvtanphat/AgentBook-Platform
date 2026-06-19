@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 _CROSS_MODAL_TYPES = frozenset({"table", "figure", "equation"})
 _PROXIMITY_WINDOW = 5  # reading_order distance within same page
+_MAX_COLOCATED_PER_BLOCK = 8  # cap co_located_with edges per table/figure to avoid star-spam
 
 # Explicit reference patterns in text
 _TABLE_REF  = re.compile(r"\b(?:Table|Bảng)\s+(\d+)", re.IGNORECASE)
@@ -40,15 +41,29 @@ def _slug(value: str) -> str:
     return slugify(value)
 
 
+def _block_label_suffix(block: EvidenceBlock) -> str:
+    """Stable, short disambiguator for a cross-modal block (e.g. '6' from
+    docling '#/tables/6', else the page number)."""
+    m = re.search(r"(\d+)\s*$", block.block_id or "")
+    return m.group(1) if m else str(block.page)
+
+
 def _canonical_name(block: EvidenceBlock) -> str:
-    """Derive a human-readable canonical name for a cross-modal block."""
-    content = (block.snippet_original or "").strip()
+    """Derive a clean, human-readable canonical name for a cross-modal block.
+
+    Never slugs the raw block body: a table's pipe-grid or a VLM caption full of
+    markdown produced a junk mega-entity (e.g. ``table-tom-tat-thong-tin-tai-
+    chinh-5-nam...``) that every nearby entity then co_located_with. Prefer an
+    explicit caption/title from metadata; otherwise a compact positional label.
+    """
     prefix = block.block_type.capitalize()
-    if content:
-        # Trim to first 80 chars so names stay manageable
-        short = content[:80].replace("\n", " ").strip()
-        return f"{prefix}: {short}"
-    return f"{prefix} (page {block.page})"
+    meta = block.metadata or {}
+    caption = str(meta.get("caption") or meta.get("title") or meta.get("table_name") or "").strip()
+    caption = " ".join(caption.replace("\n", " ").split())
+    # Reject grid/markdown noise (pipes, header rules) and overlong captions.
+    if caption and "|" not in caption and len(caption) <= 60:
+        return f"{prefix}: {caption}"
+    return f"{prefix} {_block_label_suffix(block)} (page {block.page})"
 
 
 def _dedupe_relations(relations: list[ExtractedRelation]) -> list[ExtractedRelation]:
@@ -127,27 +142,46 @@ class CrossModalLinker:
         relations: list[ExtractedRelation] = []
 
         # ── Step 3: Spatial proximity relations ────────────────────────────────
+        # Collect candidate (distance, entity_id) per cross-modal block, then keep
+        # only the nearest few. Without this, a dense page where every block shares
+        # reading_order=0 makes |cm_ro - text_ro| == 0 for ALL pairs, linking every
+        # entity to every table/figure (hundreds of meaningless co_located_with).
+        candidates: dict[str, list[tuple[int, str]]] = defaultdict(list)
         for entity in entities:
             entity_id = f"entity:{_slug(entity.canonical_name)}"
             key = entity.canonical_name.lower()
             for page, text_ro in entity_positions.get(key, []):
                 for cm_ro, cm_block_id in cm_page_index.get(page, []):
-                    if abs(cm_ro - text_ro) > _PROXIMITY_WINDOW:
+                    dist = abs(cm_ro - text_ro)
+                    if dist > _PROXIMITY_WINDOW:
                         continue
-                    cm_entity = block_to_entity.get(cm_block_id)
-                    if cm_entity is None:
-                        continue
-                    cm_id = f"entity:{_slug(cm_entity.canonical_name)}"
-                    # Use the cross-modal block as evidence for this relation
-                    cm_block = next((b for b in blocks if b.block_id == cm_block_id), None)
-                    evidence_refs = [cm_block] if cm_block else []
-                    relations.append(ExtractedRelation(
-                        source_id=entity_id,
-                        target_id=cm_id,
-                        relation_type="co_located_with",
-                        evidence_refs=evidence_refs,
-                        confidence=0.75,
-                    ))
+                    candidates[cm_block_id].append((dist, entity_id))
+
+        for cm_block_id, cand in candidates.items():
+            # Degenerate proximity: if every candidate is at distance 0 and there
+            # are more than the cap, reading_order carries no signal here — skip
+            # rather than emit a star of spurious edges.
+            distinct_dists = {d for d, _ in cand}
+            if distinct_dists == {0} and len(cand) > _MAX_COLOCATED_PER_BLOCK:
+                continue
+            cm_entity = block_to_entity.get(cm_block_id)
+            if cm_entity is None:
+                continue
+            cm_id = f"entity:{_slug(cm_entity.canonical_name)}"
+            cm_block = next((b for b in blocks if b.block_id == cm_block_id), None)
+            evidence_refs = [cm_block] if cm_block else []
+            seen_ids: set[str] = set()
+            for _dist, entity_id in sorted(cand, key=lambda c: c[0])[:_MAX_COLOCATED_PER_BLOCK]:
+                if entity_id in seen_ids:
+                    continue
+                seen_ids.add(entity_id)
+                relations.append(ExtractedRelation(
+                    source_id=entity_id,
+                    target_id=cm_id,
+                    relation_type="co_located_with",
+                    evidence_refs=evidence_refs,
+                    confidence=0.75,
+                ))
 
         # ── Step 4: Explicit reference relations ("Table 1 shows…") ───────────
         for block in blocks:

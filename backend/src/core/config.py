@@ -242,7 +242,7 @@ class Settings(BaseSettings):
     graph_display_min_mentions: int = 2
     graph_max_entities_fetch: int = 400
     graph_max_relations_fetch: int = 400
-    graph_max_visible_nodes: int = 150
+    graph_max_visible_nodes: int = 50
     graph_focus_primary_cap: int = 15
     graph_focus_neighbor_cap: int = 12
     graph_focus_fallback_cap: int = 20
@@ -822,7 +822,7 @@ def get_settings() -> Settings:
         graph_display_min_mentions=int(graph_config.get("display_min_mentions", 2)),
         graph_max_entities_fetch=int(graph_config.get("max_entities_fetch", 400)),
         graph_max_relations_fetch=int(graph_config.get("max_relations_fetch", 400)),
-        graph_max_visible_nodes=int(graph_config.get("max_visible_nodes", 150)),
+        graph_max_visible_nodes=int(graph_config.get("max_visible_nodes", 50)),
         graph_focus_primary_cap=int(graph_config.get("focus_primary_cap", 15)),
         graph_focus_neighbor_cap=int(graph_config.get("focus_neighbor_cap", 12)),
         graph_focus_fallback_cap=int(graph_config.get("focus_fallback_cap", 20)),

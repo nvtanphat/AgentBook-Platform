@@ -38,7 +38,9 @@ def _render_table_block_for_embedding(block: EvidenceBlock) -> str:
         block.snippet_original
     )
     if parsed is None:
-        return _strip_leading_page_number(block.snippet_original)
+        # A large table split across blocks leaves an unparseable HTML fragment
+        # (e.g. a lone `</td><td>…` row). Don't embed raw markup — normalize it.
+        return _normalize_html_table_fragments(_strip_leading_page_number(block.snippet_original))
 
     header, rows = parsed
     table_name = str(block.metadata.get("sheet_name") or block.metadata.get("table_name") or block.document_name)
@@ -62,6 +64,21 @@ def _render_table_block_for_embedding(block: EvidenceBlock) -> str:
 
 
 _HTML_TABLE_TAGS = re.compile(r"</?(table|thead|tbody|tr|t[hd])\b[^>]*>", re.IGNORECASE)
+_SPECIAL_TOKENS = re.compile(r"<\s*/?\s*(pad|eos|bos|s|unk|sep|cls|mask)\s*>", re.IGNORECASE)
+_CHAT_MARKERS = re.compile(r"<\|[^>]*\|>")
+
+
+def _strip_special_tokens(text: str) -> str:
+    """Remove model special tokens (``<pad>``, ``<EOS>``, ``<|im_end|>`` …).
+
+    Attention-visualization figures print token labels (incl. padding tokens) on
+    the image; docling OCR / VLM transcribe them verbatim, polluting embeddings.
+    """
+    if "<" not in text:
+        return text
+    text = _SPECIAL_TOKENS.sub(" ", text)
+    text = _CHAT_MARKERS.sub(" ", text)
+    return "\n".join(" ".join(line.split()) for line in text.splitlines()).strip()
 
 
 def _normalize_html_table_fragments(text: str) -> str:
@@ -88,8 +105,10 @@ def _normalize_html_table_fragments(text: str) -> str:
 
 def _render_block_for_embedding(block: EvidenceBlock) -> str:
     if _is_table_evidence(block):
-        return _render_table_block_for_embedding(block)
-    return _normalize_html_table_fragments(_strip_leading_page_number(block.snippet_original))
+        return _strip_special_tokens(_render_table_block_for_embedding(block))
+    return _strip_special_tokens(
+        _normalize_html_table_fragments(_strip_leading_page_number(block.snippet_original))
+    )
 
 
 _LIST_ITEM = re.compile(r"^[\s]*(?:[\u25a1\u2022\u25cf\u25aa\u25ab\u2013\u2014\-\*\u25c6\u25c7\u25cb]|\d+\.|\w\))\s+", re.MULTILINE)

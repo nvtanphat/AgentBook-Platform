@@ -515,6 +515,16 @@ class DoclingParser:
             raw_bbox = self._node_bbox(node)
             block_type = self._classify_node(node, text)
             extra: dict[str, Any] = {"label": str(node.get("label") or node.get("type") or "")}
+            # Tier 0: preserve docling's native heading depth so the mindmap can
+            # build an exact hierarchy without re-deriving levels from text. A
+            # plain "title" (doc title) is the shallowest; section_header carries
+            # an explicit `level` (1 = top). Kept where docling provides it.
+            if block_type == BlockType.HEADING.value:
+                native_level = node.get("level")
+                if isinstance(native_level, int):
+                    extra["heading_level"] = native_level
+                elif "title" in extra["label"].lower():
+                    extra["heading_level"] = 0
             # Preserve the LaTeX of math formulas so the snippet stays renderable
             # and the original expression survives chunking → citation.
             if block_type == BlockType.EQUATION.value:

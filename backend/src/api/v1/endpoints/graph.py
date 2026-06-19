@@ -5,6 +5,7 @@ import json
 import math
 import re
 import unicodedata
+from functools import lru_cache
 from collections import defaultdict
 
 from beanie import PydanticObjectId
@@ -1578,6 +1579,120 @@ async def auto_viz(
     )
 
 
+# A generic numbered sub-item ("… 1. …") — marks where a section body begins,
+# so the recovered heading keeps only the title. Not domain-specific.
+_NUMBERED_BODY_RE = re.compile(r"\s\d+\.\s")
+# Bibliography entry ("[6] Author, Title…") — the layout parser often misclassifies
+# every reference-list line as a heading, drowning the real numbered sections and
+# collapsing the hierarchy signal. The bracket-number prefix is a universal
+# citation format, not a per-domain term.
+_BIB_ENTRY_RE = re.compile(r"^\s*\[\d+\]")
+
+
+def _is_section_heading(text: str) -> bool:
+    """A heading block that plausibly names a document section (not a citation)."""
+    return bool(text) and not _BIB_ENTRY_RE.match(text)
+
+
+async def _material_name_map(material_ids: list[str]) -> dict[str, str]:
+    """Map material_id (str) → display name, for labelling per-document branches."""
+    out: dict[str, str] = {}
+    obj_ids = []
+    for mid in material_ids:
+        try:
+            obj_ids.append(PydanticObjectId(mid))
+        except Exception:
+            continue
+    if not obj_ids:
+        return out
+    for m in await Material.find({"_id": {"$in": obj_ids}}).to_list():
+        out[str(m.id)] = m.original_name or m.filename or "Document"
+    return out
+
+
+def _is_terminal_section(text: str, viz_config: dict) -> bool:
+    """True when a heading starts a back-matter section (References/Bibliography…)
+    listed in ``viz_config.terminal_sections`` — everything after it is citations,
+    not document structure."""
+    low = " ".join((text or "").split()).lower()
+    titles = (viz_config or {}).get("terminal_sections") or []
+    return any(low.startswith(str(t).lower()) for t in titles if str(t).strip())
+
+
+def _ladder_keywords(viz_config: dict) -> tuple[str, ...]:
+    """Section keywords (chương/điều/section/…) drawn from the configured
+    ``hierarchy_ladders`` — no domain terms are hardcoded here; add a ladder in
+    ``config/viz_config.yaml`` to support another language/scheme.
+
+    Only the top ``limits.recover_heading_depth`` levels of each ladder count:
+    the deepest levels (khoản/điểm, clause) are mostly inline cross-references
+    rather than section titles, so they are left out of heading recovery.
+    """
+    cfg = viz_config or {}
+    ladders = cfg.get("hierarchy_ladders") or {}
+    depth = int((cfg.get("limits") or {}).get("recover_heading_depth", 5))
+    kws = {
+        kw.strip().lower()
+        for ladder in ladders.values()
+        for kw in (ladder or [])[:depth]
+        if isinstance(kw, str) and kw.strip()
+    }
+    return tuple(sorted(kws))
+
+
+@lru_cache(maxsize=8)
+def _structural_marker_re(ladder_keywords: tuple[str, ...]) -> re.Pattern | None:
+    """Compile ``<ladder keyword> <number>`` (keywords from config) for in-text
+    scanning. Keyword is case-insensitive; the title-capitalisation check that
+    separates a heading from a cross-reference is done in code (Unicode-aware)."""
+    if not ladder_keywords:
+        return None
+    alt = "|".join(re.escape(k) for k in sorted(ladder_keywords, key=len, reverse=True))
+    return re.compile(rf"(?:^|(?<=\s))(?P<kw>(?i:{alt}))\s+(?P<num>[IVXLCDM\d]+)\.?\s+")
+
+
+def _recover_structural_headings(ordered_pages: list, viz_config: dict) -> list[HeadingItem]:
+    """Rebuild section heading items from block text using configured ladders.
+
+    The layout parser marks only a handful of blocks as ``heading`` on scanned
+    structured docs (a 35-article law yielded 4 headings, one a signatory name)
+    and merges several articles into one run-on block, so the hierarchy mindmap
+    collapses. Ladder markers, however, recur in the text: scan for them and
+    treat a marker as a heading only when a Capitalised title follows (a
+    cross-reference like "tại Điều 5 của…" is followed by a lowercase word).
+    """
+    marker_re = _structural_marker_re(_ladder_keywords(viz_config))
+    if marker_re is None:
+        return []
+    items: list[HeadingItem] = []
+    for page in ordered_pages:
+        for block in _blocks_in_reading_order(page.blocks):
+            content = (block.content or "").strip()
+            if not content:
+                continue
+            matches = list(marker_re.finditer(content))
+            for i, m in enumerate(matches):
+                tail = content[m.end():]
+                if not tail or not tail[0].isupper():
+                    continue  # no capitalised title → a cross-reference, not a heading
+                # Title runs until the next marker, then trim any numbered body.
+                end = matches[i + 1].start() if i + 1 < len(matches) else len(content)
+                head = content[m.start():end].splitlines()[0]
+                marker_len = m.end() - m.start()
+                prefix, rest = head[:marker_len], head[marker_len:]
+                cut = _NUMBERED_BODY_RE.search(rest)
+                if cut:
+                    rest = rest[: cut.start()]
+                head = (prefix + rest).strip()
+                items.append(HeadingItem(
+                    text=_short_label(head, limit=80),
+                    material_id=str(page.material_id),
+                    page=page.page_number,
+                    block_id=block.block_id,
+                ))
+    return items
+
+
 @router.post("/mindmap", response_model=APIResponse[MindmapResponse])
 async def mindmap(
     request: Request,
@@ -1602,6 +1717,7 @@ async def mindmap(
     block_texts: list[str] = []
     text_block_count = 0
     ordered_pages = sorted(pages, key=lambda p: (str(p.material_id), p.page_number))
+    in_backmatter = False
     for page in ordered_pages:
         for block in _blocks_in_reading_order(page.blocks):
             content = (block.content or "").strip()
@@ -1609,46 +1725,89 @@ async def mindmap(
                 continue
             block_texts.append(content)
             text_block_count += 1
-            if block.block_type == "heading":
+            if block.block_type != "heading":
+                continue
+            # Once the references/appendix begins, stop treating headings as
+            # document structure (the reference list is mis-parsed as headings).
+            if not in_backmatter and _is_terminal_section(content, settings.viz_config):
+                in_backmatter = True
+            if not in_backmatter and _is_section_heading(content):
+                native_level = (getattr(block, "extra", None) or {}).get("heading_level")
                 heading_items.append(
                     HeadingItem(
                         text=content,
                         material_id=str(page.material_id),
                         page=page.page_number,
                         block_id=block.block_id,
+                        level=native_level if isinstance(native_level, int) else None,
                     )
                 )
 
+    # The layout parser's heading classification is sparse/noisy on scanned
+    # legal PDFs. Recover Chương/Điều markers from block text and prefer them
+    # whenever they yield a richer structure than the parser headings.
+    recovered = _recover_structural_headings(ordered_pages, settings.viz_config)
+    if len(recovered) > len(heading_items):
+        heading_items = recovered
+
     if heading_items:
-        signals = detect_structure(
-            headings=[h.text for h in heading_items],
-            total_text_blocks=text_block_count,
-            block_texts=block_texts,
-            entities=[],
-            relations=[],
-            viz_config=settings.viz_config,
-        )
-        # Use hierarchy tree when the document has clear heading structure
-        if signals.hierarchy >= 0.35 or signals.reference >= 0.5:
-            # Filter out garbage headings: require at least one real word (3+ alpha chars)
-            # This drops OCR noise like "42 2", "AaC", "4 >3" from poor-quality PDFs.
-            clean_headings = [
-                h for h in heading_items
-                if re.search(r"[A-Za-zÀ-ỹ]{3,}", h.text)
-                and len(h.text.strip()) >= 4
+        # Group headings by document so a multi-document collection becomes a
+        # FOREST — one branch per document, its sections nested underneath —
+        # instead of forcing unrelated docs (a law + several papers) into one
+        # meaningless hierarchy. A single document collapses to its own tree.
+        by_material: dict[str, list[HeadingItem]] = defaultdict(list)
+        for h in heading_items:
+            by_material[h.material_id].append(h)
+        doc_names = await _material_name_map(list(by_material.keys()))
+        single_doc = len(by_material) == 1
+
+        doc_branches: list[MindmapNode] = []
+        for mid, items in by_material.items():
+            # Drop OCR-noise headings ("42 2", "AaC") — need a real word.
+            clean = [
+                h for h in items
+                if re.search(r"[A-Za-zÀ-ỹ]{3,}", h.text) and len(h.text.strip()) >= 4
             ]
-            tree = build_hierarchy_tree(
-                root_topic=root_topic,
-                headings=clean_headings,
+            if not clean:
+                continue
+            sig = detect_structure(
+                headings=[h.text for h in clean],
+                total_text_blocks=text_block_count,
+                block_texts=[h.text for h in clean],
+                entities=[],
+                relations=[],
                 viz_config=settings.viz_config,
             )
-            if tree:
-                return APIResponse(
-                    success=True,
-                    message="Mindmap generated from document structure",
-                    data=MindmapResponse(root_topic=root_topic, nodes=tree),
-                    error=None,
-                )
+            if sig.hierarchy < 0.35 and sig.reference < 0.5:
+                continue
+            doc_label = doc_names.get(mid) or root_topic
+            subtree = build_hierarchy_tree(
+                root_topic=doc_label,
+                headings=clean,
+                viz_config=settings.viz_config,
+            )
+            if not subtree:
+                continue
+            if single_doc:
+                doc_branches = subtree
+            else:
+                doc_branches.append(MindmapNode(
+                    id=f"doc:{mid}",
+                    label=doc_label,
+                    entity_type="document",
+                    children=subtree,
+                ))
+        if doc_branches:
+            msg = (
+                "Mindmap generated from document structure" if single_doc
+                else "Mindmap generated from collection structure (grouped by document)"
+            )
+            return APIResponse(
+                success=True,
+                message=msg,
+                data=MindmapResponse(root_topic=root_topic, nodes=doc_branches),
+                error=None,
+            )
 
     # ── Path 2: entity + chunk concept extraction (original flow) ─────────────
     query = _scope_query(body)

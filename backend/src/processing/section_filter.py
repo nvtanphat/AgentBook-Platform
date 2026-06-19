@@ -76,8 +76,13 @@ def filter_extraction_blocks(
     excluded_ids: set[str] = set()
     in_excluded = False
     for block in ordered:
-        if block.block_type == "heading":
-            in_excluded = bool(pattern.match((block.snippet_original or "").strip()))
+        # References/Bibliography/Acknowledgments are terminal back-matter: once
+        # entered, stay excluded to the end. We must NOT reset on the next
+        # heading, because reference entries themselves are routinely mis-parsed
+        # as heading blocks ("[6] Author, Title…") — resetting there would let the
+        # entire author list survive and flood the graph with citation names.
+        if block.block_type == "heading" and pattern.match((block.snippet_original or "").strip()):
+            in_excluded = True
         if in_excluded:
             excluded_ids.add(block.block_id)
 

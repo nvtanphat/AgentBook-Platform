@@ -328,8 +328,7 @@ class QueryRouter:
             decision.use_graph = True
         return decision
 
-    @staticmethod
-    def _detect_table_subtype(text: str) -> "TableQueryType":
+    def _detect_table_subtype(self, text: str) -> "TableQueryType | None":
         if _AGG_RE.search(text):
             return TableQueryType.AGGREGATION
         if _SORT_RE.search(text):
@@ -338,7 +337,16 @@ class QueryRouter:
             return TableQueryType.FILTER
         if _TABLE_COMPARE_RE.search(text):
             return TableQueryType.COMPARISON
-        return TableQueryType.LOOKUP
+        # Plain LOOKUP drives the table-cell executor, which returns a
+        # high-confidence single-cell answer. Only take that fast path when the
+        # query actually carries a table lexical signal ("giá trị", "cột", "bao
+        # nhiêu", "value"…). Otherwise an LLM router that over-eagerly tags a
+        # conceptual question as TABLE would hijack it into a wrong cell answer
+        # (e.g. a yes/no "does X use recurrence?" answered with a stray F1 cell).
+        # Without a signal, return None so synthesis answers it normally.
+        if self._table_re.search(text):
+            return TableQueryType.LOOKUP
+        return None
 
     async def route_with_llm(self, query: str, *, llm: "BaseLLM") -> RouteDecision:
         """LLM-powered routing. Falls back to deterministic regex on any failure."""

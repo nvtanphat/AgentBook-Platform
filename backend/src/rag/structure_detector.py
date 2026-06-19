@@ -188,6 +188,10 @@ class HeadingItem:
     material_id: str
     page: int | None
     block_id: str | None
+    # Tier 0: native heading depth from the parser (docling SectionHeader.level,
+    # 0 = doc title). When present it is authoritative; otherwise the level is
+    # re-derived from ladder keywords / numbering.
+    level: int | None = None
 
 
 def _short(text: str, limit: int = 80) -> str:
@@ -237,7 +241,9 @@ def build_hierarchy_tree(
         label = _short(item.text)
         if len(label) < 2:
             continue
-        level = _heading_level(item.text, ladders)
+        # Native parser level (Tier 0) is authoritative; else re-derive from
+        # ladder keywords / numbering; else nest under the current section.
+        level = item.level if item.level is not None else _heading_level(item.text, ladders)
         if level is None:
             level = last_level + 1  # free-form heading nests under current section
         level = min(level, max_depth - 1)
