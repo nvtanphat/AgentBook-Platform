@@ -543,7 +543,7 @@ function VisualCitationStrip({
             className="group relative aspect-[4/3] overflow-hidden rounded-lg border border-outline bg-surface-low transition hover:border-primary hover:shadow-md"
           >
             {isAudio ? (
-              <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 bg-gradient-to-br from-pink-100 to-purple-100 dark:from-pink-900/30 dark:to-purple-900/30">
+              <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 bg-pink-50 dark:bg-pink-900/20">
                 <span className="text-2xl">🎧</span>
                 <span className="font-mono text-[10px] font-bold text-primary">[{mm}:{ss}]</span>
               </div>
@@ -556,7 +556,7 @@ function VisualCitationStrip({
               />
             )}
             {/* Overlay with name */}
-            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 via-black/40 to-transparent p-1.5">
+            <div className="absolute inset-x-0 bottom-0 bg-black/60 p-1.5">
               <p className="truncate text-[10px] font-semibold text-white" title={shortName}>{shortName}</p>
               {c.page && !isAudio && (
                 <p className="text-[9px] text-white/80">trang {c.page}</p>
@@ -1115,7 +1115,7 @@ export default function ChatPanel({ onOpenSources, onOpenEvidence, onTraceGraph,
       )}
 
       {/* Messages */}
-      <div role="log" aria-live="polite" aria-label="Chat messages" className="flex-1 overflow-y-auto p-4 md:p-6 space-y-5" style={{ background: 'linear-gradient(180deg, var(--c-surface-low) 0%, var(--c-surface-mid) 100%)' }}>
+      <div role="log" aria-live="polite" aria-label="Chat messages" className="flex-1 overflow-y-auto p-4 md:p-6 space-y-5" style={{ background: 'var(--c-surface-low)' }}>
         {!hasScope && messages.length <= 1 && <NoSourcesCallout onOpenSources={onOpenSources} />}
         {messages.map((message) => {
           const isStreaming = message.id === streamingId;

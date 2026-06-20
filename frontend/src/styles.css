@@ -51,8 +51,8 @@
   --c-mindmap-bg: hsl(0 0% 100%);
   --c-slate-50: hsl(220 24% 98%);
 
-  /* Brand gradient — used by primary buttons / active toggles */
-  --grad-brand: linear-gradient(135deg, hsl(243 70% 56%) 0%, hsl(258 86% 64%) 100%);
+  /* Brand — solid primary color for buttons / active toggles */
+  --grad-brand: hsl(243 70% 56%);
   /* Multi-layer elevation shadows */
   --shadow-glass: 0 1px 2px hsl(222 47% 11% / 0.04), 0 12px 32px -16px hsl(222 47% 11% / 0.16);
   --shadow-float: 0 2px 4px hsl(222 47% 11% / 0.04), 0 18px 40px -20px hsl(243 70% 56% / 0.28);
@@ -96,7 +96,7 @@
   --c-mindmap-bg: hsl(222 32% 13%);
   --c-slate-50: hsl(220 26% 18%);
 
-  --grad-brand: linear-gradient(135deg, hsl(243 80% 64%) 0%, hsl(258 86% 70%) 100%);
+  --grad-brand: hsl(243 80% 64%);
   --shadow-glass: 0 1px 2px hsl(0 0% 0% / 0.4), 0 12px 32px -16px hsl(0 0% 0% / 0.6);
   --shadow-float: 0 2px 4px hsl(0 0% 0% / 0.4), 0 18px 40px -20px hsl(243 80% 50% / 0.45);
 }
@@ -183,14 +183,11 @@ body {
   background-size: 28px 28px;
 }
 
-/* ── Graph mode: subtle radial gradient for depth ── */
 .graph-flow {
-  background:
-    radial-gradient(ellipse 80% 60% at 50% 50%, var(--c-surface) 0%, var(--c-surface-low) 70%, var(--c-surface-mid) 100%);
+  background: var(--c-surface-low);
 }
 .dark .graph-flow {
-  background:
-    radial-gradient(ellipse 80% 60% at 50% 50%, var(--c-surface-low) 0%, var(--c-background) 70%, #0a0a0a 100%);
+  background: var(--c-background);
 }
 
 .mindmap-flow .react-flow__controls,
@@ -240,9 +237,9 @@ body {
 .prose-paper pre { background: var(--c-prose-pre-bg); color: var(--c-prose-pre-fg); border-radius: 10px; padding: 1rem 1.1rem; overflow-x: auto; font-size: 0.8125rem; line-height: 1.6; margin: 0.85rem 0; }
 .prose-paper pre code { background: transparent; padding: 0; font-size: inherit; }
 
-/* ── Premium glass header ── */
+/* ── Header ── */
 .app-header {
-  background: linear-gradient(180deg, var(--c-header-grad-from) 0%, var(--c-header-grad-to) 100%);
+  background: var(--c-header-grad-from);
   backdrop-filter: blur(12px) saturate(160%);
   -webkit-backdrop-filter: blur(12px) saturate(160%);
   border-bottom: 1px solid var(--c-header-border);
@@ -273,7 +270,7 @@ body {
   transition: background-color 0.2s ease;
 }
 .resize-handle:hover {
-  background: linear-gradient(180deg, transparent 0%, var(--c-primary-soft) 50%, transparent 100%);
+  background: var(--c-primary-soft);
 }
 .resize-handle:active {
   background: var(--c-primary-glow);

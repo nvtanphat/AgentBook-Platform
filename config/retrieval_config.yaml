@@ -96,7 +96,13 @@ graph:
   display_min_mentions: 2              # …to be shown when confidence < display_min_confidence
   max_entities_fetch: 400              # cap entities loaded from Mongo per graph request
   max_relations_fetch: 400             # cap relations loaded per graph request
-  max_visible_nodes: 150               # final cap after dedup / filtering
+  max_visible_nodes: 50                # final cap after dedup / filtering. A force-directed
+                                       # graph turns into an unreadable "hairball" past ~60-75
+                                       # nodes; ~50 keeps an overview legible. Nodes are picked
+                                       # by knowledge-edge salience (concept hubs first) and
+                                       # orphans are dropped, so this shows the most meaningful
+                                       # entities. Depth is reached via click-to-expand
+                                       # (/entity/{id}/subgraph), not by raising this cap.
   focus_primary_cap: 15                # max primary entities kept in focus mode
   focus_neighbor_cap: 12               # 1-hop neighbours added around primary set
   focus_fallback_cap: 20               # fallback node count when name matching yields nothing
@@ -125,11 +131,17 @@ routing:
   agentic_confidence_threshold: 0.55
   modality:
     enabled: true
+    # NOTE: keywords are ASCII-folded before matching, so a bare monosyllable
+    # collides with common Vietnamese compounds and mis-routes modality:
+    #   "dòng"→dong matches "hoạt động"; "hình"/"ảnh" match "mô hình"/"tình hình"/
+    #   "ảnh hưởng". Such false TABLE/FIGURE routing biases retrieval away from
+    #   the answer text and causes false refusals. Prefer specific multi-word
+    #   forms ("hình ảnh", "biểu đồ") over ambiguous lone syllables.
     table_keywords:
-      [bảng, cột, hàng, dòng, ô, giá trị, tổng, trung bình, lớn nhất, nhỏ nhất,
+      [bảng, cột, hàng, ô, giá trị, tổng, trung bình, lớn nhất, nhỏ nhất,
        table, column, row, cell, value, sum, average, mean, total, max, min]
     figure_keywords:
-      [biểu đồ, đồ thị, sơ đồ, hình, ảnh, hình vẽ, hình ảnh,
+      [biểu đồ, đồ thị, sơ đồ, hình vẽ, hình ảnh,
        chart, charts, figure, figures, diagram, diagrams,
        graph, graphs, plot, plots, image, images, visualization, visualizations]
     audio_keywords:

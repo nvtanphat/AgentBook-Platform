@@ -22,6 +22,18 @@ visualization:
     max_tree_depth: 6
     max_timeline_nodes: 120
     max_reference_edges: 200
+    # Mindmap heading recovery: how many TOP ladder levels count as section
+    # headings when rebuilding a tree from run-on block text. Deeper levels
+    # (e.g. khoản/điểm, clause) are mostly inline cross-references, not section
+    # titles, so they are excluded to keep the mindmap a clean section outline.
+    recover_heading_depth: 5
+
+  # Back-matter section titles: once a heading matches one of these, the rest of
+  # the document is treated as references/appendix, not structure. Stops a paper's
+  # long reference list (mis-parsed as dozens of "headings") from drowning the
+  # real numbered sections and collapsing the hierarchy signal. Case-insensitive,
+  # matched against the heading start. Add titles for other languages here.
+  terminal_sections: ["references", "bibliography", "tài liệu tham khảo", "tai lieu tham khao"]
 
   # ── Hierarchy level inference (universal, ladder is just a hint) ────────────
   # Ordered ladders: earlier = higher (shallower) level. Used to assign a depth

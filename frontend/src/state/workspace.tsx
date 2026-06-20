@@ -183,6 +183,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
     const removeUploadedMaterial = (materialId: string) => {
       setMaterials((current) => current.filter((material) => material.materialId !== materialId));
+      setSelectedSourceIdsState((current) => current.filter((id) => id !== materialId));
     };
 
     const clearUploadedMaterialsForCollection = (collectionId: string) => {

@@ -2,7 +2,7 @@ import json, sys
 from pathlib import Path
 sys.stdout.reconfigure(encoding="utf-8")
 
-lines = Path("eval_results/e2e_eval.jsonl").read_text(encoding="utf-8").strip().splitlines()
+lines = Path("evaluation/results/e2e_eval.jsonl").read_text(encoding="utf-8").strip().splitlines()
 rows = {r["id"]: r for r in (json.loads(l) for l in lines if l.strip())}
 
 targets = ["q011", "q012", "q013", "q020"]

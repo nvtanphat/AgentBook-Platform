@@ -9,9 +9,9 @@ from statistics import mean
 import yaml
 
 if __package__ is None or __package__ == "":
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from evaluation.metrics import EvidenceKey, citation_accuracy, mrr_at_k, ndcg_at_k, precision_at_k, ragas_stub, recall_at_k
+from evaluation.harness.metrics import EvidenceKey, citation_accuracy, mrr_at_k, ndcg_at_k, precision_at_k, ragas_stub, recall_at_k
 
 
 def build_parser() -> argparse.ArgumentParser:

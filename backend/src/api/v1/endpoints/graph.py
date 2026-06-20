@@ -1797,6 +1797,50 @@ async def mindmap(
                     entity_type="document",
                     children=subtree,
                 ))
+        # ── Include docs that had no/weak heading structure ──────────────────
+        # Collect material_ids already covered by heading branches.
+        covered_mids: set[str] = {h.material_id for h in heading_items}
+        # All material_ids found in the scoped pages.
+        all_page_mids: set[str] = {str(p.material_id) for p in ordered_pages}
+        # Also include materials that were in scope via body.material_ids but had no pages.
+        if body.material_ids:
+            all_page_mids.update(body.material_ids)
+        uncovered_mids = all_page_mids - covered_mids
+
+        if uncovered_mids and not single_doc:
+            extra_names = await _material_name_map(list(uncovered_mids))
+            for mid in sorted(uncovered_mids):
+                chunk_scope: dict = {
+                    "owner_id": body.owner_id,
+                    "collection_id": PydanticObjectId(body.collection_id) if body.collection_id else None,
+                    "material_id": PydanticObjectId(mid),
+                }
+                if chunk_scope["collection_id"] is None:
+                    chunk_scope.pop("collection_id")
+                top_chunks = await Chunk.find(chunk_scope).sort("-token_count").limit(6).to_list()
+                children: list[MindmapNode] = []
+                seen_labels: set[str] = set()
+                for chunk in top_chunks:
+                    raw = (chunk.content_text or "").strip()
+                    snippet = raw[:80].split("\n")[0].strip()
+                    label = _mindmap_display_label(_short_label(snippet, limit=52)) if snippet else None
+                    if not label or not _is_mindmap_label(label) or label in seen_labels:
+                        continue
+                    seen_labels.add(label)
+                    children.append(MindmapNode(
+                        id=_mindmap_slug("chunk", f"{mid}-{label}"),
+                        label=label,
+                        entity_type="concept",
+                        children=[],
+                    ))
+                doc_label = extra_names.get(mid) or "Tài liệu"
+                doc_branches.append(MindmapNode(
+                    id=f"doc:{mid}",
+                    label=doc_label,
+                    entity_type="document",
+                    children=children,
+                ))
+
         if doc_branches:
             msg = (
                 "Mindmap generated from document structure" if single_doc

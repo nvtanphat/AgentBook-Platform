@@ -46,7 +46,7 @@ export default function AppShell() {
   }, []);
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden" style={{ background: 'linear-gradient(135deg, var(--c-app-grad-from) 0%, var(--c-app-grad-to) 100%)' }}>
+    <div className="flex h-screen flex-col overflow-hidden" style={{ background: 'var(--c-app-grad-from)' }}>
       {/* ── Clean & Academic Header ── */}
       <header className="app-header flex h-14 shrink-0 items-center justify-between px-5 z-50">
         <div className="flex items-center gap-3">

@@ -8,8 +8,8 @@ import { useWorkspace } from "../../../state/workspace";
 
 // ─── Data transforms ──────────────────────────────────────────────────────────
 
-const MAX_GRAPH_NODES = 34;
-const MAX_GRAPH_EDGES = 44;
+const MAX_GRAPH_NODES = 80;
+const MAX_GRAPH_EDGES = 120;
 const MAX_MINDMAP_GROUPS = 8;
 const MAX_MINDMAP_ITEMS_PER_GROUP = 9;
 const MINDMAP_BRANCH_COLORS = ["#0f766e", "#2563eb", "#7c3aed", "#db2777", "#ea580c", "#0891b2", "#65a30d", "#4f46e5"];

@@ -1,0 +1,616 @@
+% !TeX program = pdflatex
+% !TEX TS-program = pdflatex
+\documentclass[aspectratio=169,11pt]{beamer}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T5]{fontenc}
+\usepackage[vietnamese,english]{babel}
+\usepackage{lmodern}
+\usepackage{tikz}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{ragged2e}
+\usepackage{amsmath,amssymb}
+
+\usetikzlibrary{arrows.meta,positioning,calc,backgrounds}
+
+\renewcommand{\familydefault}{\sfdefault}
+
+\definecolor{ABBlue}{HTML}{2563EB}
+\definecolor{ABDeepBlue}{HTML}{1E40AF}
+\definecolor{ABSky}{HTML}{DBEAFE}
+\definecolor{ABSoft}{HTML}{F8FAFC}
+\definecolor{ABLine}{HTML}{CBD5E1}
+\definecolor{ABSlate}{HTML}{334155}
+\definecolor{ABMuted}{HTML}{64748B}
+\definecolor{ABWhite}{HTML}{FFFFFF}
+
+\usetheme{default}
+\useinnertheme{rectangles}
+\usefonttheme{professionalfonts}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{blocks}[default]
+\setbeamercolor{background canvas}{bg=ABWhite}
+\setbeamercolor{normal text}{fg=ABSlate,bg=ABWhite}
+\setbeamercolor{frametitle}{fg=ABWhite,bg=ABDeepBlue}
+\setbeamercolor{title}{fg=ABDeepBlue,bg=ABWhite}
+\setbeamercolor{subtitle}{fg=ABMuted,bg=ABWhite}
+\setbeamercolor{structure}{fg=ABBlue}
+\setbeamercolor{block title}{fg=ABWhite,bg=ABBlue}
+\setbeamercolor{block body}{fg=ABSlate,bg=ABSoft}
+\setbeamercolor{alerted text}{fg=ABDeepBlue}
+\setbeamercolor{footline}{fg=ABWhite,bg=ABDeepBlue}
+\setbeamertemplate{itemize item}{\color{ABBlue}\raise0.2ex\hbox{\scriptsize$\triangleright$}}
+\setbeamertemplate{itemize subitem}{\color{ABMuted}\raise0.2ex\hbox{\scriptsize$\square$}}
+\setbeamertemplate{enumerate item}{\color{ABBlue}\insertenumlabel.}
+
+\setbeamertemplate{footline}{%
+  \leavevmode%
+  \hbox{%
+    \begin{beamercolorbox}[wd=.72\paperwidth,ht=2.65ex,dp=1ex,leftskip=1.2em]{footline}%
+      AgentBook: GraphRAG đa phương thức bảo toàn evidence
+    \end{beamercolorbox}%
+    \begin{beamercolorbox}[wd=.28\paperwidth,ht=2.65ex,dp=1ex,rightskip=1.2em plus1fil]{footline}%
+      \hfill\insertframenumber/\inserttotalframenumber
+    \end{beamercolorbox}%
+  }%
+}
+
+\newcolumntype{Y}{>{\RaggedRight\arraybackslash}X}
+\newcolumntype{L}[1]{>{\RaggedRight\arraybackslash}p{#1}}
+\newcommand{\keyword}[1]{\textcolor{ABBlue}{\textbf{#1}}}
+\newcommand{\code}[1]{{\footnotesize\ttfamily\detokenize{#1}}}
+\newcommand{\smallcode}[1]{{\scriptsize\ttfamily\detokenize{#1}}}
+\newcommand{\tagbox}[2][ABBlue]{\tikz[baseline=(n.base)]\node[draw=#1!45,fill=#1!8,text=#1,inner xsep=6pt,inner ysep=2pt,font=\scriptsize\bfseries] (n) {#2};}
+
+\tikzset{
+  box/.style={draw=ABLine,fill=ABSoft,very thick,align=center,inner sep=5pt,font=\scriptsize,text=ABSlate},
+  emphbox/.style={draw=ABBlue,fill=ABSky,very thick,align=center,inner sep=5pt,font=\scriptsize\bfseries,text=ABDeepBlue},
+  store/.style={draw=ABMuted,fill=ABSoft,very thick,align=center,inner sep=5pt,font=\scriptsize,text=ABSlate},
+  stage/.style={draw=ABLine,fill=ABWhite,very thick,align=center,inner sep=5pt,minimum width=2.35cm,minimum height=0.82cm,font=\scriptsize,text=ABSlate},
+  stagewide/.style={draw=ABLine,fill=ABWhite,very thick,align=center,inner sep=5pt,minimum width=2.85cm,minimum height=0.82cm,font=\scriptsize,text=ABSlate},
+  focusstage/.style={draw=ABBlue,fill=ABSky,very thick,align=center,inner sep=5pt,minimum width=2.45cm,minimum height=0.82cm,font=\scriptsize\bfseries,text=ABDeepBlue},
+  storestage/.style={draw=ABMuted,fill=ABSoft,very thick,align=center,inner sep=5pt,minimum width=2.45cm,minimum height=0.76cm,font=\scriptsize,text=ABSlate},
+  verify/.style={draw=ABDeepBlue,fill=ABSky,very thick,align=center,inner sep=5pt,minimum width=2.45cm,minimum height=0.82cm,font=\scriptsize\bfseries,text=ABDeepBlue},
+  lane/.style={font=\scriptsize\bfseries,text=ABMuted,align=center},
+  arrow/.style={-Latex,thick,draw=ABBlue},
+  grayarrow/.style={-Latex,thick,draw=ABMuted},
+  faintarrow/.style={-Latex,thin,draw=ABMuted!70}
+}
+
+\title[AgentBook]{AgentBook: GraphRAG đa phương thức bảo toàn evidence}
+\subtitle{Hỏi đáp tài liệu đa miền với evidence truy vết được}
+\author{Trợ lý nghiên cứu Prism}
+\date{\today}
+
+\begin{document}
+
+% 1
+\begin{frame}[plain]
+\begin{tikzpicture}[remember picture,overlay]
+  \fill[ABWhite] (current page.south west) rectangle (current page.north east);
+  \fill[ABDeepBlue] (current page.south west) rectangle ($(current page.south east)+(0,0.72)$);
+  \fill[ABSky] ($(current page.north west)+(0.9,-0.65)$) rectangle ($(current page.north east)+(-0.9,-1.08)$);
+\end{tikzpicture}
+\vspace{1.55cm}
+\begin{center}
+{\color{ABDeepBlue}\fontsize{25}{31}\selectfont\bfseries AgentBook: GraphRAG đa phương thức bảo toàn evidence\par}
+\vspace{0.34cm}
+{\color{ABSlate}\Large cho hỏi đáp tài liệu đa miền\par}
+\vspace{0.18cm}
+{\color{ABMuted}\large với evidence truy vết được\par}
+\end{center}
+\vfill
+\end{frame}
+
+% 2
+\begin{frame}{Động lực / Vấn đề}
+\begin{columns}[T,onlytextwidth]
+\column{0.48\textwidth}
+\begin{block}{PDF chatbot thường yếu ở đâu?}
+\begin{itemize}
+  \item Làm phẳng tài liệu thành text chunk, mất cấu trúc.
+  \item Citation thường mơ hồ: không rõ page, block, bbox hoặc cell.
+  \item Bảng, hình, scan, handwriting và audio khó trace ngược.
+  \item LLM dễ tự tính toán hoặc suy diễn ngoài evidence.
+\end{itemize}
+\end{block}
+\column{0.48\textwidth}
+\begin{block}{Yêu cầu của hệ thống nghiên cứu}
+\begin{itemize}
+  \item Hỏi đáp trên tài liệu đa miền.
+  \item Hỗ trợ đa phương thức, không chỉ text PDF.
+  \item Mỗi câu trong answer phải gắn với evidence kiểm chứng được.
+  \item Degrade/refuse khi evidence không đủ.
+\end{itemize}
+\end{block}
+\end{columns}
+\end{frame}
+
+% 3
+\begin{frame}{Khoảng trống nghiên cứu}
+\small
+\begin{tabularx}{\textwidth}{L{0.30\textwidth}Y}
+\toprule
+\textbf{Hướng hiện có} & \textbf{Khoảng trống} \\
+\midrule
+Plain vector RAG & Thường biến tài liệu thành chunk phẳng, mất layout, bbox, table cell và provenance của figure/audio. \\
+Hybrid RAG & Cải thiện recall nhưng citation vẫn thường dựa trên text chunk mơ hồ. \\
+GraphRAG & Nhiều hệ quá nặng về graph hoặc chỉ text-only, khó triển khai lightweight theo collection. \\
+Multimodal QA & Kết quả từ visual/OCR/VLM thường tách rời khỏi retrieval và citation validator. \\
+Post-hoc citation & Ít pipeline kiểm chứng sentence-level, citation alignment và refusal end-to-end. \\
+\bottomrule
+\end{tabularx}
+\vspace{0.25cm}
+\begin{block}{Khoảng trống nghiên cứu}
+Cần một hệ GraphRAG đa phương thức nơi \keyword{evidence trace} là abstraction xuyên suốt ingestion, retrieval, generation và verification.
+\end{block}
+\end{frame}
+
+% 4
+\begin{frame}{Ý tưởng lõi}
+\begin{center}
+\resizebox{0.94\textwidth}{!}{%
+\begin{tikzpicture}[node distance=0.75cm and 0.68cm]
+\node[lane] (l1) {Ingestion};
+\node[stage,below=0.18cm of l1] (ingest) {Parse / OCR / VLM\\Audio / Spreadsheet};
+\node[focusstage,right=of ingest] (evidence) {Evidence Unit\\page · block · bbox};
+\node[stage,right=of evidence] (retrieve) {Hybrid + Graph\\Retrieval};
+\node[stage,right=of retrieve] (generate) {LLM / VLM\\Generation};
+\node[verify,right=of generate] (verify) {Verification\\sau generation};
+\node[storestage,below=0.75cm of evidence] (mongo) {MongoDB\\source-of-truth};
+\node[storestage,below=0.75cm of retrieve] (qdrant) {Qdrant\\dense + sparse};
+\draw[arrow] (ingest) -- (evidence);
+\draw[arrow] (evidence) -- (retrieve);
+\draw[arrow] (retrieve) -- (generate);
+\draw[arrow] (generate) -- (verify);
+\draw[grayarrow] (evidence) -- (mongo);
+\draw[grayarrow] (retrieve) -- (qdrant);
+\draw[faintarrow] (verify.south) |- node[pos=.25,right,font=\scriptsize,text=ABMuted]{kiểm tra citation} (mongo.east);
+\end{tikzpicture}}
+\end{center}
+\vspace{0.15cm}
+\begin{block}{Ý tưởng trong một câu}
+AgentBook xem evidence, không phải raw chunk, là đơn vị trung tâm của multimodal ingestion, graph-augmented retrieval, LLM generation và verification cho câu trả lời.
+\end{block}
+\end{frame}
+
+% 5
+\begin{frame}{Đóng góp}
+\small
+\begin{enumerate}
+  \item \textbf{Multimodal ingestion bảo toàn evidence cho tài liệu đa miền}: PDF, DOCX, PPTX, scan, handwriting, spreadsheet, figure/chart và audio được chuẩn hóa thành evidence unit giàu provenance.
+  \item \textbf{Graph-augmented hybrid retrieval lightweight}: BGE-M3 dense+sparse retrieval, RRF fusion, reranking và graph entity/relation/event lưu trong MongoDB.
+  \item \textbf{Verification sau generation}: citation injection, SLEC, citation alignment, quality gate và controlled refusal.
+  \item \textbf{Table reasoning deterministic tùy chọn}: aggregation/lookup trên full-grid table thay vì để LLM tự tính trên top-k dòng.
+\end{enumerate}
+\vspace{0.2cm}
+\begin{block}{Cách nhấn mạnh điểm mới}
+Không tuyên bố thuật toán RAG mới; điểm mới nằm ở \keyword{evidence-preserving system design} cho tài liệu đa miền, đa phương thức.
+\end{block}
+\end{frame}
+
+% 6
+\begin{frame}{Tổng quan hệ thống}
+\begin{center}
+\resizebox{0.98\textwidth}{!}{%
+\begin{tikzpicture}[x=1cm,y=1cm]
+\node[lane,anchor=west] at (-1.25,0.64) {Ingestion};
+\node[stagewide] (upload) at (0,0) {Tải lên\\scope check};
+\node[stagewide] (parse) at (3.15,0) {Parse\\OCR/VLM/Audio};
+\node[focusstage] (evidence) at (6.30,0) {Evidence\\Map};
+\node[stagewide] (index) at (9.45,0) {Chunk + embed\\index};
+\node[storestage] (mongo) at (5.30,-1.35) {MongoDB\\pages/chunks/KG};
+\node[storestage] (qdrant) at (8.35,-1.35) {Qdrant\\text/visual vectors};
+
+\node[lane,anchor=west] at (-1.25,-2.38) {Hỏi đáp};
+\node[stagewide] (query) at (0,-3.05) {Truy vấn người dùng\\route};
+\node[stagewide] (retr) at (3.15,-3.05) {Hybrid + KG\\retrieval};
+\node[focusstage] (bundle) at (6.30,-3.05) {Evidence\\bundle};
+\node[stagewide] (gen) at (9.45,-3.05) {LLM/VLM\\generation};
+\node[verify,minimum width=2.85cm] (final) at (12.60,-3.05) {Verify\\trả lời + citation};
+
+\draw[arrow] (upload) -- (parse);
+\draw[arrow] (parse) -- (evidence);
+\draw[arrow] (evidence) -- (index);
+\draw[grayarrow] (evidence.south) -- (mongo.north);
+\draw[grayarrow] (index.south) -- (qdrant.north);
+\draw[arrow] (query) -- (retr);
+\draw[arrow] (retr) -- (bundle);
+\draw[arrow] (bundle) -- (gen);
+\draw[arrow] (gen) -- (final);
+\draw[grayarrow] (mongo.south) to[out=-90,in=90] ([xshift=-0.45cm]retr.north);
+\draw[grayarrow] (qdrant.south) to[out=-90,in=90] ([xshift=0.45cm]retr.north);
+\end{tikzpicture}}
+\end{center}
+\vspace{0.1cm}
+\begin{itemize}
+  \item Runtime object luôn mang metadata owner, collection, material, page, block, bbox, modality và confidence.
+  \item Retrieval luôn có scope; citation cuối được hydrate từ MongoDB, không lấy trực tiếp từ raw vector payload.
+\end{itemize}
+\end{frame}
+
+
+% 6b
+\begin{frame}{Ảnh chụp triển khai}
+\small
+\begin{columns}[T,onlytextwidth]
+\column{0.48\textwidth}
+\begin{block}{Stack runtime}
+\begin{itemize}
+  \item \textbf{API}: FastAPI upload/query endpoint có kiểm tra owner và collection.
+  \item \textbf{Pipeline}: async/Celery parse-index job với theo dõi trạng thái material.
+  \item \textbf{Models}: BGE-M3 dense+sparse, cross-encoder reranker, SigLIP visual embedding, LLM/VLM generation.
+\end{itemize}
+\end{block}
+\column{0.48\textwidth}
+\begin{block}{Thiết kế lưu trữ}
+\begin{itemize}
+  \item \textbf{MongoDB}: source-of-truth cho material, page, chunk, evidence, KG và log.
+  \item \textbf{Qdrant}: scoped vector search cho text và visual evidence.
+  \item \textbf{Filesystem}: raw file và parse artifact đã xử lý.
+\end{itemize}
+\end{block}
+\end{columns}
+\vspace{0.15cm}
+\begin{block}{Vì sao quan trọng}
+Kiến trúc đủ lightweight cho MVP nhưng vẫn bảo toàn multimodal evidence và graph provenance.
+\end{block}
+\end{frame}
+
+% 7
+\begin{frame}{Trừu tượng hóa Evidence}
+\small
+\begin{columns}[T,onlytextwidth]
+\column{0.50\textwidth}
+\begin{block}{Evidence unit gồm}
+\begin{itemize}
+  \item \code{owner_id}, \code{collection_id}, \code{material_id}
+  \item page, \code{block_id}, kiểu block, reading order
+  \item bbox, OCR confidence, ngôn ngữ nguồn
+  \item table cell/range, figure crop, audio timestamp khi có
+\end{itemize}
+\end{block}
+\column{0.46\textwidth}
+\begin{block}{Vì sao quan trọng}
+\begin{itemize}
+  \item Kết quả retrieval truy ngược được về page/block nguồn.
+  \item Citation có thể audit ở mức chi tiết.
+  \item Graph link vẫn grounded vào evidence nguồn.
+  \item Verification có thể chạy sau LLM generation.
+\end{itemize}
+\end{block}
+\end{columns}
+\end{frame}
+
+% 8
+\begin{frame}{Ingestion đa phương thức}
+\small
+\begin{center}
+\resizebox{0.84\textwidth}{!}{%
+\begin{tikzpicture}[node distance=0.45cm and 0.54cm]
+\node[lane] (src) {Modality đầu vào};
+\node[stage,below=0.18cm of src] (docs) {PDF / DOCX\\PPTX};
+\node[stage,right=of docs] (scan) {Scan / Image\\Handwriting};
+\node[stage,right=of scan] (sheet) {Spreadsheet\\CSV / XLSX};
+\node[stage,right=of sheet] (audio) {Audio\\Giọng nói};
+
+\node[lane,below=1.05cm of src] (proc) {Xử lý chuyên biệt};
+\node[stage,below=0.18cm of proc] (docling) {Docling\\layout parser};
+\node[stage,right=of docling] (ocr) {OCR + VLM\\caption/table};
+\node[stage,right=of ocr] (grid) {Table grid\\serializer};
+\node[stage,right=of grid] (whisper) {Whisper\\transcript};
+
+\node[focusstage,below=0.72cm of ocr,minimum width=8.2cm,minimum height=0.86cm] (evidence) {Normalize layout + language detect\\EvidenceMap giàu provenance};
+\draw[arrow] (docs) -- (docling);
+\draw[arrow] (scan) -- (ocr);
+\draw[arrow] (sheet) -- (grid);
+\draw[arrow] (audio) -- (whisper);
+\draw[arrow] (docling.south) -- ([xshift=-3.05cm]evidence.north);
+\draw[arrow] (ocr.south) -- ([xshift=-1.00cm]evidence.north);
+\draw[arrow] (grid.south) -- ([xshift=1.00cm]evidence.north);
+\draw[arrow] (whisper.south) -- ([xshift=3.05cm]evidence.north);
+\end{tikzpicture}}
+\end{center}
+\begin{itemize}
+  \item Figure captioning và VLM table fallback làm giàu nội dung visual/numeric.
+  \item Cleaning khử trùng lặp text-layer artifact mà không làm mất provenance.
+  \item Metadata của audio và table luôn gắn với evidence block.
+\end{itemize}
+\end{frame}
+
+% 9
+\begin{frame}{Chunking + Indexing}
+\small
+\begin{columns}[T,onlytextwidth]
+\column{0.48\textwidth}
+\begin{block}{Chunking}
+\begin{itemize}
+  \item Layout-aware: heading, table boundary, token budget.
+  \item Semantic: BGE-M3 block similarity và breakpoint.
+  \item Slide-aware: giữ ranh giới slide trong PPTX.
+  \item Audio: gom transcript theo time window.
+\end{itemize}
+\end{block}
+\column{0.48\textwidth}
+\begin{block}{Indexing}
+\begin{itemize}
+  \item MongoDB lưu material, page, chunk và KG document.
+  \item Qdrant lưu dense và sparse vector từ BGE-M3.
+  \item Visual collection lưu SigLIP embedding cho figure/image.
+  \item Re-index cleanup tránh orphan chunk, graph edge và vector.
+\end{itemize}
+\end{block}
+\end{columns}
+\end{frame}
+
+% 10
+\begin{frame}{Xây dựng Knowledge Graph}
+\begin{center}
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[node distance=0.55cm and 0.55cm]
+\node[focusstage] (evidence) {Evidence\\block};
+\node[stage,right=of evidence] (extract) {Entity / Event\\extraction};
+\node[stage,right=of extract] (resolve) {Refine +\\resolve};
+\node[stage,right=of resolve] (relations) {Relation\\extraction};
+\node[verify,right=of relations] (gate) {Graph\\quality gate};
+\node[storestage,right=of gate] (kgstore) {MongoDB KG\\entities/relations/events};
+\node[storestage,below=0.72cm of relations] (chunks) {Chunk link\\entity\_ids / relation\_ids};
+\draw[arrow] (evidence) -- (extract);
+\draw[arrow] (extract) -- (resolve);
+\draw[arrow] (resolve) -- (relations);
+\draw[arrow] (relations) -- (gate);
+\draw[arrow] (gate) -- (kgstore);
+\draw[grayarrow] (evidence) |- node[pos=.28,left,font=\scriptsize,text=ABMuted]{evidence ref} (chunks);
+\draw[grayarrow] (relations) -- (chunks);
+\draw[grayarrow] (chunks) -| (kgstore);
+\end{tikzpicture}}
+\end{center}
+\begin{itemize}
+  \item Graph link được giữ lightweight và collection-scoped, không tuyên bố đóng góp về graph database mới.
+  \item Node entity/relation/event giữ evidence ref và chunk id để truy vết.
+\end{itemize}
+\end{frame}
+
+% 11
+\begin{frame}{Định tuyến truy vấn}
+\small
+\begin{columns}[T,onlytextwidth]
+\column{0.48\textwidth}
+\begin{block}{Quyết định của router}
+\begin{itemize}
+  \item Intent: trò chuyện, ngoài phạm vi, bình thường.
+  \item Route: factual, so sánh, tóm tắt, graph relation, claim-check.
+  \item Modality: text, table, figure, audio.
+  \item Flag: graph, multi-query, HyDE, MMR, agentic.
+\end{itemize}
+\end{block}
+\column{0.48\textwidth}
+\begin{block}{Xử lý cross-lingual}
+\begin{itemize}
+  \item Giữ nguyên truy vấn tiếng Việt gốc.
+  \item Thêm bản dịch tiếng Anh cho retrieval.
+  \item HyDE chỉ là signal phục vụ retrieval.
+  \item Ngôn ngữ câu trả lời theo ngôn ngữ truy vấn của người dùng.
+\end{itemize}
+\end{block}
+\end{columns}
+\end{frame}
+
+% 12
+\begin{frame}{Hybrid Retrieval}
+\begin{center}
+\resizebox{0.98\textwidth}{!}{%
+\begin{tikzpicture}[x=1cm,y=1cm]
+\node[focusstage] (query) at (0,0) {Biến thể\\truy vấn};
+\node[stage] (encode) at (2.55,0) {BGE-M3\\encode};
+\node[stage] (dense) at (5.10,0.65) {Dense\\prefetch};
+\node[stage] (sparse) at (5.10,-0.65) {Sparse\\prefetch};
+\node[storestage,minimum width=2.55cm] (scope) at (2.55,-2.05) {Scope filter\\owner + collection};
+\node[focusstage] (rrf) at (7.65,0) {RRF\\fusion};
+\node[stagewide] (hydrate) at (10.25,0) {Hydrate\\từ MongoDB};
+\node[verify,minimum width=2.95cm] (rerank) at (13.05,0) {Cross-encoder\\rerank + MMR};
+\draw[arrow] (query) -- (encode);
+\draw[arrow] (encode) -- (dense);
+\draw[arrow] (encode) -- (sparse);
+\draw[arrow] (dense.east) -- ([yshift=0.25cm]rrf.west);
+\draw[arrow] (sparse.east) -- ([yshift=-0.25cm]rrf.west);
+\draw[grayarrow] (scope.north) -- (encode.south);
+\draw[grayarrow] (scope.east) to[out=0,in=-90] (dense.south);
+\draw[grayarrow] (scope.east) to[out=0,in=90] (sparse.north);
+\draw[arrow] (rrf) -- (hydrate);
+\draw[arrow] (hydrate) -- (rerank);
+\end{tikzpicture}}
+\end{center}
+\begin{itemize}
+  \item Dense retrieval bắt semantic similarity; sparse retrieval giữ lexical signal và acronym signal.
+  \item Hydration khôi phục source-of-truth evidence: page, block, bbox, metadata table/audio/figure.
+\end{itemize}
+\end{frame}
+
+% 13
+\begin{frame}{Graph-Augmented Retrieval}
+\begin{columns}[T,onlytextwidth]
+\column{0.32\textwidth}
+\begin{block}{Graph-primary}
+\small Match entity, duyệt relation 1--2 hop, rồi chuyển path thành graph evidence chunk.
+\end{block}
+\column{0.32\textwidth}
+\begin{block}{Graph boost}
+\small Boost chunk sau rerank khi chunk/block trùng với KG relation có confidence cao.
+\end{block}
+\column{0.32\textwidth}
+\begin{block}{Graph probe}
+\small Sau context packing ban đầu, thêm một số graph-linked chunk cho câu hỏi nặng về relation.
+\end{block}
+\end{columns}
+\vspace{0.25cm}
+\begin{block}{Cách đóng khung chính}
+Graph là retrieval-control layer: route, expand, score và probe retrieval nhưng vẫn evidence-grounded.
+\end{block}
+\end{frame}
+
+% 14
+\begin{frame}{Lập kế hoạch Agentic Retrieval}
+\small
+\begin{columns}[T,onlytextwidth]
+\column{0.44\textwidth}
+\begin{block}{Đường trực tiếp}
+\begin{itemize}
+  \item Factual QA đơn giản.
+  \item Route table aggregation/lookup.
+  \item Latency thấp hơn, ít bước orchestration hơn.
+\end{itemize}
+\end{block}
+\column{0.52\textwidth}
+\begin{block}{Đường agentic có giới hạn}
+\begin{itemize}
+  \item Planner phân rã truy vấn phức tạp/multi-hop.
+  \item Director chọn công cụ text, graph hoặc visual.
+  \item Synthesizer trả lời từ packed evidence.
+  \item Câu trả lời cuối vẫn đi qua verification.
+\end{itemize}
+\end{block}
+\end{columns}
+\vspace{0.15cm}
+\begin{block}{Phân biệt quan trọng}
+Đây là controlled retrieval planning, không phải autonomous ReAct-style agent.
+\end{block}
+\end{frame}
+
+% 15
+\begin{frame}{Reasoning với Visual \& Table}
+\small
+\begin{columns}[T,onlytextwidth]
+\column{0.48\textwidth}
+\begin{block}{Visual retrieval}
+\begin{itemize}
+  \item SigLIP index figure/image crop.
+  \item Text-to-visual và image-as-query search visual collection.
+  \item Câu trả lời VLM dùng image path khi có; caption-only fallback được kiểm soát.
+\end{itemize}
+\end{block}
+\column{0.48\textwidth}
+\begin{block}{Deterministic table executor}
+\begin{itemize}
+  \item Nạp full table/grid từ MongoDB.
+  \item Chạy sum, avg, max, min, count hoặc lookup theo deterministic rule.
+  \item Trả về table/cell citation thay vì để LLM đoán phép tính.
+\end{itemize}
+\end{block}
+\end{columns}
+\end{frame}
+
+% 16
+\begin{frame}{Generation với Evidence}
+\begin{center}
+\resizebox{0.94\textwidth}{!}{%
+\begin{tikzpicture}[node distance=0.62cm and 0.62cm]
+\node[stage] (chunks) {Retrieved\\chunk};
+\node[stage,right=of chunks] (filter) {Substantive\\filter};
+\node[stage,right=of filter] (pack) {Context\\packing};
+\node[focusstage,right=of pack] (bundle) {EvidenceBundle\\fusion};
+\node[stage,right=of bundle] (prompt) {Grounded prompt\\language lock};
+\node[verify,right=of prompt] (llm) {LLM/VLM\\trả lời nháp};
+\draw[arrow] (chunks) -- (filter);
+\draw[arrow] (filter) -- (pack);
+\draw[arrow] (pack) -- (bundle);
+\draw[arrow] (bundle) -- (prompt);
+\draw[arrow] (prompt) -- (llm);
+\end{tikzpicture}}
+\end{center}
+\begin{itemize}
+  \item Context packing giảm middle-position loss và ưu tiên evidence phù hợp modality.
+  \item Prompt xem retrieved evidence là untrusted input và yêu cầu citation marker map tới evidence ID.
+\end{itemize}
+\end{frame}
+
+% 17
+\begin{frame}{Verification sau Generation}
+\begin{center}
+\resizebox{0.98\textwidth}{!}{%
+\begin{tikzpicture}[node distance=0.50cm and 0.50cm]
+\node[stage] (draft) {Câu trả lời\\nháp};
+\node[stage,right=of draft] (inject) {Citation\\injection};
+\node[stage,right=of inject] (valid) {Citation\\validity};
+\node[stage,right=of valid] (slec) {SLEC\\coverage};
+\node[stage,right=of slec] (align) {Citation\\alignment};
+\node[verify,right=of align] (gate) {Quality gate\\refuse/prune};
+\node[focusstage,right=of gate] (final) {Câu trả lời cuối\\+ citation};
+\draw[arrow] (draft) -- (inject);
+\draw[arrow] (inject) -- (valid);
+\draw[arrow] (valid) -- (slec);
+\draw[arrow] (slec) -- (align);
+\draw[arrow] (align) -- (gate);
+\draw[arrow] (gate) -- (final);
+\end{tikzpicture}}
+\end{center}
+\begin{itemize}
+  \item Câu không được support có thể bị prune; coverage thấp kích hoạt controlled refusal.
+  \item Citation được prune, đánh số lại và align với evidence thật sự support từng câu trả lời.
+\end{itemize}
+\end{frame}
+
+
+% 17b
+\begin{frame}{Bất biến về độ tin cậy \& an toàn}
+\small
+\begin{columns}[T,onlytextwidth]
+\column{0.48\textwidth}
+\begin{block}{An toàn evidence}
+\begin{itemize}
+  \item Không retrieval nếu thiếu owner và collection/material scope.
+  \item Không tạo citation từ raw Qdrant payload trước Mongo hydration.
+  \item Không dùng KG relation nếu thiếu evidence ref hoặc chunk id.
+\end{itemize}
+\end{block}
+\column{0.48\textwidth}
+\begin{block}{Degradation có kiểm soát}
+\begin{itemize}
+  \item Lỗi Parser/OCR/VLM/retriever degrade sang fallback path.
+  \item Câu trả lời dạng table dùng deterministic executor khi có full grid.
+  \item Nếu evidence không đủ, hệ thống refuse thay vì fabricate.
+\end{itemize}
+\end{block}
+\end{columns}
+\vspace{0.15cm}
+\begin{block}{Tín hiệu vận hành}
+Request trace, query log và pipeline job hiển thị latency, route decision, selected evidence và quality-stage verdict để debug.
+\end{block}
+\end{frame}
+
+% 18
+\begin{frame}{Thiết kế đánh giá}
+\small
+\begin{itemize}
+  \item \textbf{Dataset}: corpus đa miền gồm legal, finance, academic, scanned OCR, table, figure và audio.
+  \item \textbf{Task}: factual QA, multi-hop QA, table aggregation, visual QA, cross-lingual QA và citation faithfulness.
+  \item \textbf{Baseline}: plain vector RAG, hybrid RAG không KG, GraphRAG không verification và AgentBook đầy đủ.
+  \item \textbf{Metric}: recall@k, MRR/nDCG, answer faithfulness, citation accuracy, refusal precision và latency.
+  \item \textbf{Ablation}: no graph, no reranker, no SLEC, no deterministic table executor.
+\end{itemize}
+\end{frame}
+
+% 19
+\begin{frame}{Hạn chế \& hướng phát triển}
+\small
+\begin{itemize}
+  \item KG extraction phụ thuộc vào chất lượng parser/OCR và độ tin cậy của entity/relation extractor.
+  \item Visual QA phụ thuộc vào crop quality, hiệu năng SigLIP/VLM và chất lượng figure caption.
+  \item Agentic planning cải thiện query phức tạp nhưng tăng latency và inference cost.
+  \item Citation verification giảm hallucination nhưng không thay thế đánh giá chuyên gia trong domain rủi ro cao.
+  \item Hướng tiếp theo: benchmark đa miền lớn hơn với ground-truth citation ở mức page/block/bbox.
+\end{itemize}
+\end{frame}
+
+% 20
+\begin{frame}[plain]
+\vfill
+\begin{center}
+{\color{ABDeepBlue}\fontsize{38}{44}\selectfont\bfseries Cảm ơn!\par}
+\end{center}
+\vfill
+\end{frame}
+
+\end{document}

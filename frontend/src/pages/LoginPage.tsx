@@ -39,7 +39,7 @@ export default function LoginPage() {
   return (
     <div
       className="flex min-h-screen items-center justify-center p-4"
-      style={{ background: "linear-gradient(135deg, var(--c-app-grad-from) 0%, var(--c-app-grad-to) 100%)" }}
+      style={{ background: "var(--c-app-grad-from)" }}
     >
       <div className="w-full max-w-md">
         {/* Logo */}

@@ -207,6 +207,7 @@ class InferenceEngine:
         chunks: list["RetrievedChunk"],
         scope: "RetrievalScope",
         route_decision: "RouteDecision | None" = None,
+        enabled: bool = True,
     ) -> list["RetrievedChunk"]:
         """Post-retrieval graph probe: augment evidence with graph-related chunks.
 
@@ -218,7 +219,7 @@ class InferenceEngine:
         Respects owner/collection scope at all times.
         Returns the merged deduplicated chunk list (graph chunks appended at end).
         """
-        if not getattr(self.settings, "graph_probe_enabled", True):
+        if not enabled or not getattr(self.settings, "graph_probe_enabled", True):
             return chunks
         if self.graph_retriever is None:
             return chunks
@@ -502,7 +503,7 @@ class InferenceEngine:
             answer_language=answer_language,
             hyde_enabled=self.settings.hyde_enabled,
         )
-        use_multi_query = route_decision.use_multi_query and self.settings.multi_query_enabled
+        use_multi_query = route_decision.use_multi_query and flags.get("multi_query_enabled", self.settings.multi_query_enabled)
         retrieval_queries = self._build_retrieval_queries(processed, use_multi_query)
         # HyDE passages widen the candidate pool (retrieval only); reranking keeps
         # using the real queries below so precision is unaffected.
@@ -560,6 +561,7 @@ class InferenceEngine:
                 )
 
         _GRAPH_TIMEOUT = self.settings.inference_graph_timeout_seconds
+        _sparse_enabled = flags.get("sparse_enabled", True)
         _t_retrieve = time.perf_counter()
         try:
             if not fast_path_taken:
@@ -567,6 +569,7 @@ class InferenceEngine:
                     self.retriever.retrieve(
                         query=retrieval_query, scope=scope, limit=retrieval_limit,
                         preferred_modality=self._modality_str(route_decision),
+                        sparse_enabled=_sparse_enabled,
                     )
                     for retrieval_query in retrieval_inputs
                 ]
@@ -650,7 +653,7 @@ class InferenceEngine:
         else:
             reranked = candidates[:final_limit]
         reranked = await self._apply_graph_boost(reranked, scope)
-        if self.settings.crag_evaluator_enabled:
+        if flags.get("crag_enabled", self.settings.crag_evaluator_enabled):
             reranked = self.crag_evaluator.evaluate(chunks=reranked)
 
         # Phase C — route pipeline dispatch
@@ -705,6 +708,7 @@ class InferenceEngine:
             chunks=context_chunks,
             scope=scope,
             route_decision=route_decision,
+            enabled=flags.get("graph_probe_enabled", getattr(self.settings, "graph_probe_enabled", True)),
         )
         evidence_bundle = self.fusion_ranker.fuse(
             query=query,
@@ -924,7 +928,7 @@ class InferenceEngine:
                     refusal_reason = "invalid_citations"
             # Phase C — pipeline.post_generation owns claim verification (CLAIM_CHECK
             # uses an NLI-enhanced verifier; other pipelines no-op).
-            if not should_refuse and not _used_fallback_synthesis and pipeline.hooks.enable_claim_verifier:
+            if not should_refuse and not _used_fallback_synthesis and pipeline.hooks.enable_claim_verifier and flags.get("claim_verifier_enabled", True):
                 answer, _refuse, _reason = await pipeline.post_generation(
                     answer=answer,
                     context_chunks=citation_context_chunks,
@@ -1032,7 +1036,7 @@ class InferenceEngine:
                 context_chunks=citation_context_chunks,
                 route_decision=route_decision,
                 trace=trace,
-                run_slec=True,
+                run_slec=flags.get("slec_enabled", True),
                 multimodal=bool(visual_evidence),
             )
             answer = _fq.answer

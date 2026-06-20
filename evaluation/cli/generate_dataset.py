@@ -62,7 +62,7 @@ from pathlib import Path
 import httpx
 from beanie import PydanticObjectId
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "backend"))
 
 from src.core.config import get_settings
 from src.database import init_database
@@ -121,14 +121,17 @@ async def _llm_ollama(
 
 
 async def _call_llm(*, prompt: str, args: argparse.Namespace) -> str:
+    temperature = getattr(args, "temperature", 0.3)
     if args.provider == "openai":
         return await _llm_openai(
             prompt=prompt, model=args.model,
             api_base=args.api_base, api_key=args.api_key,
+            temperature=temperature,
         )
     else:
         return await _llm_ollama(
             prompt=prompt, model=args.model, api_base=args.api_base,
+            temperature=temperature,
         )
 
 
@@ -208,6 +211,22 @@ async def _fetch_materials(*, owner_id: str, collection_id: str) -> dict[str, Ma
         Material.collection_id == col_oid,
     ).to_list()
     return {str(m.id): m for m in mats}
+
+
+async def _fetch_chunks_via_api(
+    *, owner_id: str, collection_id: str, limit: int, api_url: str
+) -> list[dict]:
+    """Fetch chunk metadata via backend /evaluation/chunks endpoint.
+
+    Use this instead of _fetch_chunks when direct MongoDB connection is unavailable.
+    The backend must be running and already connected to MongoDB.
+    """
+    url = f"{api_url}/api/v1/evaluation/chunks"
+    params = {"owner_id": owner_id, "collection_id": collection_id, "limit": limit}
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.get(url, params=params)
+        resp.raise_for_status()
+        return resp.json()  # list of ChunkMeta dicts
 
 
 # ══ MODE: meta-inventory ══════════════════════════════════════════════════════
@@ -769,6 +788,525 @@ async def run_legacy(args: argparse.Namespace) -> None:
     print(f"\nStep 4/4  Saved {len(samples)} samples → {args.output}\n")
 
 
+# ══ MODE: e2e-gold-v2 (modality-aware, deterministic) ═══════════════════════
+
+_E2E_V2_SUMMARIZE_PROMPT = """\
+Bạn đang xây dựng bộ benchmark cho hệ thống hỏi đáp tài liệu (legal/finance/academic).
+
+Đây là đoạn văn dài từ tài liệu "{document_name}" (trang {page}):
+---
+{content}
+---
+chunk_id: {chunk_id}
+
+Tạo {n} câu hỏi yêu cầu TÓM TẮT nội dung chính của đoạn văn này.
+Câu hỏi nên bằng tiếng Việt. Câu trả lời phải bao phủ các điểm chính.
+
+Trả về JSON array duy nhất — không markdown, không giải thích.
+
+[
+  {{
+    "case_id": "ab-e2e-XXXX",
+    "task_type": "summarize",
+    "query_language": "vi",
+    "answer_language": "vi",
+    "query": "câu hỏi yêu cầu tóm tắt nội dung",
+    "expected_answer_outline": ["điểm chính 1", "điểm chính 2", "điểm chính 3"],
+    "required_facts": ["sự kiện/điểm bắt buộc trong câu trả lời"],
+    "forbidden_claims": ["tuyên bố sai hoặc không có trong đoạn"],
+    "expected_evidence": [
+      {{
+        "document_name": "{document_name}",
+        "page": {page},
+        "block_id": "{block_id}",
+        "chunk_id": "{chunk_id}",
+        "quote_or_fact": "trích dẫn ngắn hoặc diễn giải"
+      }}
+    ],
+    "expected_behavior": "answer",
+    "difficulty": "medium",
+    "tags": ["summarize", "vietnamese"]
+  }}
+]
+"""
+
+_E2E_V2_GRAPH_RELATION_PROMPT = """\
+Bạn đang xây dựng bộ benchmark cho hệ thống hỏi đáp tài liệu học thuật.
+
+Hai đoạn văn sau cùng đề cập đến các khái niệm/thực thể liên quan:
+
+[Đoạn A] từ "{doc_a}" (trang {page_a}):
+---
+{content_a}
+---
+chunk_id_a: {chunk_a}
+
+[Đoạn B] từ "{doc_b}" (trang {page_b}):
+---
+{content_b}
+---
+chunk_id_b: {chunk_b}
+
+Tạo {n} câu hỏi về MỐI QUAN HỆ giữa các thực thể/khái niệm xuất hiện trong cả hai đoạn.
+Câu hỏi nên hỏi về quan hệ, so sánh, hoặc cơ chế liên kết giữa chúng.
+
+Trả về JSON array duy nhất — không markdown, không giải thích.
+
+[
+  {{
+    "case_id": "ab-e2e-XXXX",
+    "task_type": "graph_relation",
+    "query_language": "vi",
+    "answer_language": "vi",
+    "query": "câu hỏi về mối quan hệ giữa thực thể/khái niệm",
+    "expected_answer_outline": ["điểm về A", "điểm về B", "mối liên hệ A-B"],
+    "required_facts": ["sự kiện từ đoạn A", "sự kiện từ đoạn B"],
+    "forbidden_claims": ["tổng hợp sai không được hỗ trợ"],
+    "expected_evidence": [
+      {{"document_name": "{doc_a}", "page": {page_a}, "chunk_id": "{chunk_a}", "quote_or_fact": "..."}},
+      {{"document_name": "{doc_b}", "page": {page_b}, "chunk_id": "{chunk_b}", "quote_or_fact": "..."}}
+    ],
+    "expected_behavior": "answer",
+    "difficulty": "hard",
+    "tags": ["graph_relation", "multi-hop", "academic"]
+  }}
+]
+"""
+
+_E2E_V2_CROSS_LINGUAL_PROMPT = """\
+You are building a cross-lingual benchmark for a bilingual document Q&A system.
+
+This passage is from "{document_name}" (page {page}):
+---
+{content}
+---
+chunk_id: {chunk_id}
+document_language: {source_language}
+
+Generate {n} test cases where the QUERY is in a DIFFERENT language from the passage.
+- If the passage is in Vietnamese → write the query in English
+- If the passage is in English → write the query in Vietnamese
+
+The system must retrieve this passage using cross-lingual matching and answer in the query language.
+
+Return a JSON array only — no markdown, no explanation.
+
+[
+  {{
+    "case_id": "ab-e2e-XXXX",
+    "task_type": "cross_lingual",
+    "query_language": "en",
+    "answer_language": "en",
+    "query": "question in the opposite language from the passage",
+    "expected_answer_outline": ["key point 1", "key point 2"],
+    "required_facts": ["exact fact from passage (in original language)"],
+    "forbidden_claims": ["plausible but unsupported claim"],
+    "expected_evidence": [
+      {{
+        "document_name": "{document_name}",
+        "page": {page},
+        "block_id": "{block_id}",
+        "chunk_id": "{chunk_id}",
+        "quote_or_fact": "brief quote from passage"
+      }}
+    ],
+    "expected_behavior": "answer",
+    "difficulty": "medium",
+    "tags": ["cross_lingual", "bilingual"]
+  }}
+]
+"""
+
+_E2E_V2_TABLE_PROMPT = """\
+Bạn đang xây dựng bộ benchmark cho hệ thống hỏi đáp tài liệu tài chính.
+
+Đây là nội dung bảng từ tài liệu "{document_name}" (trang {page}):
+---
+{content}
+---
+chunk_id: {chunk_id}
+
+Tạo {n} câu hỏi tra cứu hoặc so sánh số liệu cụ thể trong bảng này.
+Câu hỏi nên hỏi về con số, tỷ lệ, hoặc so sánh giữa các dòng/cột trong bảng.
+
+Trả về JSON array duy nhất — không markdown, không giải thích.
+
+[
+  {{
+    "case_id": "ab-e2e-XXXX",
+    "task_type": "table",
+    "query_language": "vi",
+    "answer_language": "vi",
+    "query": "câu hỏi về số liệu cụ thể trong bảng",
+    "expected_answer_outline": ["số liệu chính xác", "đơn vị", "ngữ cảnh"],
+    "required_facts": ["con số/tỷ lệ chính xác từ bảng"],
+    "forbidden_claims": ["con số không có trong bảng"],
+    "expected_evidence": [
+      {{
+        "document_name": "{document_name}",
+        "page": {page},
+        "block_id": "{block_id}",
+        "chunk_id": "{chunk_id}",
+        "quote_or_fact": "dữ liệu bảng liên quan"
+      }}
+    ],
+    "expected_behavior": "answer",
+    "difficulty": "easy",
+    "tags": ["table", "finance", "lookup"]
+  }}
+]
+"""
+
+_E2E_V2_OCR_PROMPT = """\
+Bạn đang xây dựng bộ benchmark cho hệ thống hỏi đáp tài liệu scan/OCR.
+
+Đây là nội dung được OCR từ ảnh scan trong tài liệu "{document_name}" (trang {page}):
+---
+{content}
+---
+chunk_id: {chunk_id}
+
+Tạo {n} câu hỏi về thông tin cụ thể có thể trả lời từ nội dung OCR này.
+Lưu ý: nội dung OCR có thể có lỗi nhỏ — câu hỏi vẫn phải trả lời được từ nội dung này.
+
+Trả về JSON array duy nhất — không markdown, không giải thích.
+
+[
+  {{
+    "case_id": "ab-e2e-XXXX",
+    "task_type": "ocr",
+    "query_language": "vi",
+    "answer_language": "vi",
+    "query": "câu hỏi về thông tin trong tài liệu scan",
+    "expected_answer_outline": ["thông tin chính"],
+    "required_facts": ["thông tin từ nội dung OCR"],
+    "forbidden_claims": ["thông tin không có trong scan"],
+    "expected_evidence": [
+      {{
+        "document_name": "{document_name}",
+        "page": {page},
+        "block_id": "{block_id}",
+        "chunk_id": "{chunk_id}",
+        "quote_or_fact": "trích dẫn từ OCR"
+      }}
+    ],
+    "expected_behavior": "answer",
+    "difficulty": "medium",
+    "tags": ["ocr", "scan"]
+  }}
+]
+"""
+
+_E2E_V2_AUDIO_PROMPT = """\
+Bạn đang xây dựng bộ benchmark cho hệ thống hỏi đáp tài liệu audio.
+
+Đây là bản transcript từ audio "{document_name}" (timestamp khoảng {page}s):
+---
+{content}
+---
+chunk_id: {chunk_id}
+
+Tạo {n} câu hỏi về thông tin cụ thể được đề cập trong đoạn transcript này.
+
+Trả về JSON array duy nhất — không markdown, không giải thích.
+
+[
+  {{
+    "case_id": "ab-e2e-XXXX",
+    "task_type": "audio",
+    "query_language": "vi",
+    "answer_language": "vi",
+    "query": "câu hỏi về nội dung được nói trong audio",
+    "expected_answer_outline": ["thông tin chính"],
+    "required_facts": ["thông tin từ transcript"],
+    "forbidden_claims": ["thông tin không có trong transcript"],
+    "expected_evidence": [
+      {{
+        "document_name": "{document_name}",
+        "page": {page},
+        "block_id": "{block_id}",
+        "chunk_id": "{chunk_id}",
+        "quote_or_fact": "trích dẫn từ transcript"
+      }}
+    ],
+    "expected_behavior": "answer",
+    "difficulty": "easy",
+    "tags": ["audio", "transcript"]
+  }}
+]
+"""
+
+# Task-type targets for e2e-gold-v2
+_V2_TASK_TARGETS = {
+    "factual":       35,
+    "compare":       20,
+    "summarize":     15,
+    "graph_relation": 15,
+    "cross_lingual": 20,
+    "table":         10,
+    "ocr":            5,
+    "audio":          5,
+    "claim_check":    5,
+}
+
+# Which modalities map to which task type
+_MODALITY_TO_TASK = {
+    "table": "table",
+    "figure": "factual",  # figure → factual (caption-based)
+    "audio": "audio",
+    "image": "ocr",
+}
+
+
+async def run_e2e_gold_v2(args: argparse.Namespace) -> None:
+    """Modality-aware, deterministic e2e gold dataset generation.
+
+    Routes each chunk to the appropriate prompt template based on its modality.
+    Uses temperature=0 for reproducibility (set via --temperature 0).
+    """
+    if getattr(args, "seed", None) is not None:
+        random.seed(args.seed)
+
+    meta_rows = _load_jsonl(args.input) if args.input else []
+    if not meta_rows:
+        print("No --input, fetching chunks directly...", flush=True)
+        chunks = await _fetch_chunks(
+            owner_id=args.owner_id, collection_id=args.collection_id,
+            limit=args.max_chunks,
+        )
+        materials = await _fetch_materials(owner_id=args.owner_id, collection_id=args.collection_id)
+        meta_rows = []
+        for c in chunks:
+            mat = materials.get(str(c.material_id))
+            meta_rows.append({
+                "chunk_id": str(c.id),
+                "material_id": str(c.material_id),
+                "document_name": mat.original_name if mat else str(c.material_id),
+                "page": (c.source_pages or [None])[0],
+                "block_id": (c.source_block_ids or [""])[0],
+                "content_preview": (c.content or "")[:600],
+                "token_count": c.token_count or 0,
+                "source_language": c.language or "vi",
+                "modality": c.modality or "text",
+            })
+
+    skip_modalities: set[str] = set(
+        (getattr(args, "skip_modality", None) or "").split(",")
+    ) - {""}
+
+    # Partition chunks by modality
+    by_modality: dict[str, list[dict]] = {}
+    for row in meta_rows:
+        mod = row.get("modality", "text")
+        by_modality.setdefault(mod, []).append(row)
+
+    text_rows = [r for r in meta_rows if r.get("modality", "text") in ("text", "heading", "paragraph", "")]
+    table_rows = by_modality.get("table", [])
+    audio_rows = by_modality.get("audio", [])
+    ocr_rows = by_modality.get("image", []) + by_modality.get("ocr", [])
+
+    # Shuffle deterministically
+    random.shuffle(text_rows)
+    random.shuffle(table_rows)
+
+    all_cases: list[dict] = []
+    case_counter = 1
+
+    task_counts: dict[str, int] = {k: 0 for k in _V2_TASK_TARGETS}
+
+    async def _gen(prompt: str, task_type: str) -> list[dict]:
+        nonlocal case_counter
+        try:
+            raw = await _call_llm(prompt=prompt, args=args)
+            cases = _extract_json_list(raw)
+            valid = []
+            for c in cases:
+                if not c.get("query") or not c.get("expected_evidence"):
+                    continue
+                c["case_id"] = f"ab-e2e-{case_counter:04d}"
+                case_counter += 1
+                c["task_type"] = task_type
+                c["owner_id"] = args.owner_id
+                c["collection_id"] = args.collection_id
+                valid.append(c)
+            return valid
+        except Exception as exc:
+            print(f"  [WARN {task_type}] {exc}", flush=True)
+            return []
+
+    def _remaining(task_type: str) -> int:
+        return _V2_TASK_TARGETS.get(task_type, 0) - task_counts.get(task_type, 0)
+
+    # 1. factual + summarize + claim_check from text chunks
+    for row in text_rows:
+        if all(_remaining(t) <= 0 for t in ("factual", "summarize", "claim_check")):
+            break
+        token_count = row.get("token_count", 0)
+        content = row.get("content_preview", "")
+        if len(content) < 200:
+            continue
+
+        # summarize: prefer long chunks (≥300 tokens)
+        if token_count >= 300 and _remaining("summarize") > 0:
+            n = min(1, _remaining("summarize"))
+            prompt = _E2E_V2_SUMMARIZE_PROMPT.format(
+                document_name=row.get("document_name", "unknown"),
+                page=row.get("page") or 1,
+                content=content[:800],
+                chunk_id=row.get("chunk_id", ""),
+                block_id=row.get("block_id", ""),
+                n=n,
+            )
+            print(f"  [summarize] {row.get('document_name','')[:40]}", flush=True)
+            cases = await _gen(prompt, "summarize", n)
+            all_cases.extend(cases)
+            task_counts["summarize"] += len(cases)
+            await asyncio.sleep(0.3)
+        elif _remaining("factual") > 0:
+            n = min(2, _remaining("factual"))
+            prompt = _E2E_PROMPT.format(
+                document_name=row.get("document_name", "unknown"),
+                page=row.get("page") or 1,
+                content=content[:600],
+                chunk_id=row.get("chunk_id", ""),
+                block_id=row.get("block_id", ""),
+                n=n,
+            )
+            print(f"  [factual] {row.get('document_name','')[:40]}", flush=True)
+            cases = await _gen(prompt, "factual", n)
+            factual = [c for c in cases if c.get("task_type") in ("factual", "claim_check")]
+            all_cases.extend(factual)
+            for c in factual:
+                task_counts[c.get("task_type", "factual")] = task_counts.get(c.get("task_type", "factual"), 0) + 1
+            await asyncio.sleep(0.3)
+
+    # 2. compare + graph_relation from pairs of text chunks
+    for i in range(0, len(text_rows) - 1, 2):
+        if _remaining("compare") <= 0 and _remaining("graph_relation") <= 0:
+            break
+        a, b = text_rows[i], text_rows[i + 1]
+        if _remaining("graph_relation") > 0:
+            prompt = _E2E_V2_GRAPH_RELATION_PROMPT.format(
+                doc_a=a.get("document_name", ""),
+                page_a=a.get("page") or 1,
+                content_a=a.get("content_preview", "")[:400],
+                chunk_a=a.get("chunk_id", ""),
+                doc_b=b.get("document_name", ""),
+                page_b=b.get("page") or 1,
+                content_b=b.get("content_preview", "")[:400],
+                chunk_b=b.get("chunk_id", ""),
+                n=1,
+            )
+            print(f"  [graph_relation] {a.get('document_name','')[:25]} + {b.get('document_name','')[:25]}", flush=True)
+            cases = await _gen(prompt, "graph_relation")
+            all_cases.extend(cases)
+            task_counts["graph_relation"] += len(cases)
+            await asyncio.sleep(0.3)
+        elif _remaining("compare") > 0:
+            prompt = _E2E_HARD_PROMPT.format(
+                doc_a=a.get("document_name", ""),
+                page_a=a.get("page") or 1,
+                content_a=a.get("content_preview", "")[:400],
+                chunk_a=a.get("chunk_id", ""),
+                doc_b=b.get("document_name", ""),
+                page_b=b.get("page") or 1,
+                content_b=b.get("content_preview", "")[:400],
+                chunk_b=b.get("chunk_id", ""),
+                n=1,
+            )
+            print(f"  [compare] {a.get('document_name','')[:25]} + {b.get('document_name','')[:25]}", flush=True)
+            cases = await _gen(prompt, "compare")
+            all_cases.extend(cases)
+            task_counts["compare"] += len(cases)
+            await asyncio.sleep(0.3)
+
+    # 3. cross_lingual from bilingual pairs (FPT EN↔VI) or any text chunk
+    cross_candidates = [r for r in meta_rows if r.get("source_language") in ("en", "vi")]
+    random.shuffle(cross_candidates)
+    for row in cross_candidates:
+        if _remaining("cross_lingual") <= 0:
+            break
+        src_lang = row.get("source_language", "vi")
+        prompt = _E2E_V2_CROSS_LINGUAL_PROMPT.format(
+            document_name=row.get("document_name", "unknown"),
+            page=row.get("page") or 1,
+            content=row.get("content_preview", "")[:600],
+            chunk_id=row.get("chunk_id", ""),
+            block_id=row.get("block_id", ""),
+            source_language=src_lang,
+            n=1,
+        )
+        print(f"  [cross_lingual/{src_lang}] {row.get('document_name','')[:40]}", flush=True)
+        cases = await _gen(prompt, "cross_lingual")
+        all_cases.extend(cases)
+        task_counts["cross_lingual"] += len(cases)
+        await asyncio.sleep(0.3)
+
+    # 4. table task_type from table chunks
+    if "table" not in skip_modalities:
+        for row in table_rows:
+            if _remaining("table") <= 0:
+                break
+            prompt = _E2E_V2_TABLE_PROMPT.format(
+                document_name=row.get("document_name", "unknown"),
+                page=row.get("page") or 1,
+                content=row.get("content_preview", "")[:600],
+                chunk_id=row.get("chunk_id", ""),
+                block_id=row.get("block_id", ""),
+                n=1,
+            )
+            print(f"  [table] {row.get('document_name','')[:40]}", flush=True)
+            cases = await _gen(prompt, "table")
+            all_cases.extend(cases)
+            task_counts["table"] += len(cases)
+            await asyncio.sleep(0.3)
+
+    # 5. ocr from image/ocr chunks
+    if "ocr" not in skip_modalities:
+        for row in ocr_rows:
+            if _remaining("ocr") <= 0:
+                break
+            prompt = _E2E_V2_OCR_PROMPT.format(
+                document_name=row.get("document_name", "unknown"),
+                page=row.get("page") or 1,
+                content=row.get("content_preview", "")[:500],
+                chunk_id=row.get("chunk_id", ""),
+                block_id=row.get("block_id", ""),
+                n=1,
+            )
+            print(f"  [ocr] {row.get('document_name','')[:40]}", flush=True)
+            cases = await _gen(prompt, "ocr")
+            all_cases.extend(cases)
+            task_counts["ocr"] += len(cases)
+            await asyncio.sleep(0.3)
+
+    # 6. audio from audio chunks
+    if "audio" not in skip_modalities:
+        for row in audio_rows:
+            if _remaining("audio") <= 0:
+                break
+            prompt = _E2E_V2_AUDIO_PROMPT.format(
+                document_name=row.get("document_name", "unknown"),
+                page=row.get("page") or 0,
+                content=row.get("content_preview", "")[:500],
+                chunk_id=row.get("chunk_id", ""),
+                block_id=row.get("block_id", ""),
+                n=1,
+            )
+            print(f"  [audio] {row.get('document_name','')[:40]}", flush=True)
+            cases = await _gen(prompt, "audio")
+            all_cases.extend(cases)
+            task_counts["audio"] += len(cases)
+            await asyncio.sleep(0.3)
+
+    _save_jsonl(all_cases, args.output)
+    print(f"\nSaved {len(all_cases)} e2e-gold-v2 cases → {args.output}", flush=True)
+    print("  Distribution:", flush=True)
+    for tt, cnt in sorted(task_counts.items()):
+        tgt = _V2_TASK_TARGETS.get(tt, 0)
+        print(f"    {tt:<20} {cnt:>3} / {tgt}", flush=True)
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 async def main(args: argparse.Namespace) -> None:
@@ -788,6 +1326,8 @@ async def main(args: argparse.Namespace) -> None:
         await run_retrieval_gold(args)
     elif args.mode == "e2e-gold":
         await run_e2e_gold(args)
+    elif args.mode == "e2e-gold-v2":
+        await run_e2e_gold_v2(args)
     elif args.mode == "adversarial":
         await run_adversarial(args)
     elif args.mode == "legacy":
@@ -804,7 +1344,7 @@ if __name__ == "__main__":
     parser.add_argument("--owner-id", required=True)
     parser.add_argument("--collection-id", required=True)
     parser.add_argument("--mode",
-        choices=["meta-inventory", "retrieval-gold", "e2e-gold", "adversarial", "legacy"],
+        choices=["meta-inventory", "retrieval-gold", "e2e-gold", "e2e-gold-v2", "adversarial", "legacy"],
         default="legacy")
 
     # LLM provider
@@ -820,6 +1360,14 @@ if __name__ == "__main__":
                         help="Target number of generated cases (retrieval-gold / e2e-gold / adversarial)")
     parser.add_argument("--max-chunks", type=int, default=100,
                         help="Max chunks to fetch from MongoDB (meta-inventory / direct modes)")
+
+    # e2e-gold-v2 args
+    parser.add_argument("--temperature", type=float, default=0.3,
+                        help="LLM temperature (use 0 for deterministic eval generation)")
+    parser.add_argument("--seed", type=int, default=None,
+                        help="Random seed for reproducible chunk sampling")
+    parser.add_argument("--skip-modality", default="",
+                        help="Comma-separated modalities to skip in e2e-gold-v2 (e.g. 'ocr,audio')")
 
     # Legacy args
     parser.add_argument("--questions-per-chunk", type=int, default=4,

@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
+from beanie import PydanticObjectId
 
-from src.dependencies import get_settings, require_admin_access
+from src.dependencies import get_settings, require_admin_access, verify_owner_access
 from src.evaluation.ragas_evaluator import RAGASEvaluator
+from src.models.chunk import Chunk
+from src.models.material import Material
 from src.rag.embedder import BGEM3Embedder
 
 router = APIRouter(prefix="/evaluation", tags=["evaluation"])
@@ -106,3 +109,62 @@ async def run_ragas_evaluation(
         sample_count=metrics.sample_count,
         note="answer_relevancy requires LLM — use /evaluation/ragas-llm endpoint for full metrics",
     )
+
+
+class ChunkMeta(BaseModel):
+    chunk_id: str
+    material_id: str
+    document_name: str
+    content_preview: str
+    token_count: int
+    modality: str
+    page: int | None
+    block_id: str
+    source_language: str
+
+
+@router.get("/chunks", response_model=list[ChunkMeta])
+async def list_chunks_for_eval(
+    request: Request,
+    owner_id: str = Query(..., min_length=1),
+    collection_id: str = Query(..., min_length=1),
+    limit: int = Query(default=500, ge=1, le=2000),
+    min_content_len: int = Query(default=150, ge=0),
+) -> list[ChunkMeta]:
+    """Return chunk metadata for eval dataset generation.
+
+    Used by evaluation/cli/generate_dataset.py when --api-url is set,
+    so the script doesn't need a direct MongoDB Atlas connection.
+    """
+    verify_owner_access(request, owner_id)
+    col_oid = PydanticObjectId(collection_id)
+
+    # Fetch materials first for document name lookup
+    mats = await Material.find(
+        Material.owner_id == owner_id,
+        Material.collection_id == col_oid,
+    ).to_list()
+    mat_names: dict[str, str] = {str(m.id): m.original_name for m in mats}
+
+    chunks = await Chunk.find(
+        Chunk.owner_id == owner_id,
+        Chunk.collection_id == col_oid,
+    ).limit(limit).to_list()
+
+    result: list[ChunkMeta] = []
+    for c in chunks:
+        content = (c.content or "").strip()
+        if len(content) < min_content_len:
+            continue
+        result.append(ChunkMeta(
+            chunk_id=str(c.id),
+            material_id=str(c.material_id),
+            document_name=mat_names.get(str(c.material_id), str(c.material_id)),
+            content_preview=content[:600],
+            token_count=c.token_count or 0,
+            modality=c.modality or "text",
+            page=(c.source_pages or [None])[0],
+            block_id=(c.source_block_ids or [""])[0],
+            source_language=c.language or "vi",
+        ))
+    return result

@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-lines = Path("eval_results/e2e_eval.jsonl").read_text(encoding="utf-8").strip().splitlines()
+lines = Path("evaluation/results/e2e_eval.jsonl").read_text(encoding="utf-8").strip().splitlines()
 rows = [json.loads(l) for l in lines if l.strip()]
 
 def asc(k):

@@ -35,8 +35,17 @@ class QueryRequest(BaseModel):
     top_k: int | None = Field(default=None, ge=1, le=20)
     answer_language: str | None = None
     # Per-request technique overrides for ablation testing.
-    # Keys: reranker_enabled, agentic_rag_enabled
-    rag_flags: dict[Literal["reranker_enabled", "agentic_rag_enabled"], bool] = Field(default_factory=dict)
+    # All 8 flags documented; only present keys override defaults.
+    rag_flags: dict[Literal[
+        "reranker_enabled",
+        "agentic_rag_enabled",
+        "multi_query_enabled",
+        "sparse_enabled",
+        "graph_probe_enabled",
+        "slec_enabled",
+        "claim_verifier_enabled",
+        "crag_enabled",
+    ], bool] = Field(default_factory=dict)
 
 
 class QueryByGraphRequest(BaseModel):

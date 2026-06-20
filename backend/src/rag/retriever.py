@@ -114,6 +114,7 @@ class HybridRetriever:
         scope: RetrievalScope,
         limit: int | None = None,
         preferred_modality: str | None = None,
+        sparse_enabled: bool = True,
     ) -> list[RetrievedChunk]:
         scope.ensure_scoped()
         embedding = _get_cached_embedding(query)
@@ -140,7 +141,8 @@ class HybridRetriever:
             ),
         ]
 
-        has_sparse_signal = bool(embedding.sparse.indices)
+        # sparse_enabled=False forces dense-only (ablation C0 baseline).
+        has_sparse_signal = sparse_enabled and bool(embedding.sparse.indices)
         # Sparse prefetch only when the query produces a non-empty sparse vector.
         if has_sparse_signal:
             prefetches.append(
