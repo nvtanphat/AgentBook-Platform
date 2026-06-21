@@ -1115,7 +1115,8 @@ export default function ChatPanel({ onOpenSources, onOpenEvidence, onTraceGraph,
       )}
 
       {/* Messages */}
-      <div role="log" aria-live="polite" aria-label="Chat messages" className="flex-1 overflow-y-auto p-4 md:p-6 space-y-5" style={{ background: 'var(--c-surface-low)' }}>
+      <div role="log" aria-live="polite" aria-label="Chat messages" className="flex-1 overflow-y-auto p-4 md:p-6 flex flex-col" style={{ background: 'var(--c-surface-low)' }}>
+       <div className="mt-auto space-y-5">
         {!hasScope && messages.length <= 1 && <NoSourcesCallout onOpenSources={onOpenSources} />}
         {messages.map((message) => {
           const isStreaming = message.id === streamingId;
@@ -1184,6 +1185,7 @@ export default function ChatPanel({ onOpenSources, onOpenEvidence, onTraceGraph,
           </div>
         )}
         <div ref={bottomRef} className="h-4" />
+       </div>
       </div>
 
       {/* Input */}

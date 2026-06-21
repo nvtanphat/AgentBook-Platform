@@ -79,7 +79,7 @@ async def _llm_openai(
     api_key: str,
     temperature: float = 0.3,
     max_tokens: int = 2048,
-    retries: int = 3,
+    retries: int = 5,
 ) -> str:
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     body = {
@@ -98,7 +98,10 @@ async def _llm_openai(
         except Exception as exc:
             last_exc = exc
             if attempt < retries - 1:
-                await asyncio.sleep(2 ** attempt)
+                # 401/503/429 from proxy = rate-limited, wait longer
+                status = getattr(getattr(exc, "response", None), "status_code", 0)
+                wait = 20 if status in (401, 503, 429) else (3 ** attempt)
+                await asyncio.sleep(wait)
     raise RuntimeError(f"OpenAI call failed: {last_exc}")
 
 
@@ -232,48 +235,81 @@ async def _fetch_chunks_via_api(
 # ══ MODE: meta-inventory ══════════════════════════════════════════════════════
 
 async def run_meta_inventory(args: argparse.Namespace) -> None:
-    print("Step 1/2  Fetching chunks from MongoDB...", flush=True)
-    chunks = await _fetch_chunks(
-        owner_id=args.owner_id,
-        collection_id=args.collection_id,
-        limit=args.max_chunks,
-    )
-    if not chunks:
-        print("[ERROR] No indexed chunks found.", file=sys.stderr)
-        sys.exit(1)
-    print(f"  Found {len(chunks)} chunks", flush=True)
-
-    print("Step 2/2  Fetching materials for document names...", flush=True)
-    materials = await _fetch_materials(
-        owner_id=args.owner_id,
-        collection_id=args.collection_id,
-    )
-
+    api_url = getattr(args, "api_url", "")
     records: list[dict] = []
-    for chunk in chunks:
-        mat = materials.get(str(chunk.material_id))
-        doc_name = mat.original_name if mat else str(chunk.material_id)
-        block_id = chunk.source_block_ids[0] if chunk.source_block_ids else ""
-        records.append({
-            "record_id": f"meta-{str(chunk.id)}",
-            "type": "chunk",
-            "chunk_id": str(chunk.id),
-            "material_id": str(chunk.material_id),
-            "document_name": doc_name,
-            "pages": chunk.source_pages or [],
-            "page": (chunk.source_pages or [None])[0],
-            "block_id": block_id,
-            "block_ids": chunk.source_block_ids or [],
-            "content_preview": (chunk.content or "")[:400],
-            "token_count": chunk.token_count or 0,
-            "source_language": chunk.language or "vi",
-            "modality": chunk.modality or "text",
-            "collection_id": args.collection_id,
-            "owner_id": args.owner_id,
-        })
+
+    if api_url:
+        print(f"Step 1/1  Fetching chunks via API ({api_url})...", flush=True)
+        raw = await _fetch_chunks_via_api(
+            owner_id=args.owner_id,
+            collection_id=args.collection_id,
+            limit=args.max_chunks,
+            api_url=api_url,
+        )
+        if not raw:
+            print("[ERROR] No indexed chunks returned by API.", file=sys.stderr)
+            sys.exit(1)
+        print(f"  Found {len(raw)} chunks", flush=True)
+        for r in raw:
+            records.append({
+                "record_id": f"meta-{r['chunk_id']}",
+                "type": "chunk",
+                "chunk_id": r["chunk_id"],
+                "material_id": r["material_id"],
+                "document_name": r["document_name"],
+                "pages": [r["page"]] if r.get("page") is not None else [],
+                "page": r.get("page"),
+                "block_id": r.get("block_id", ""),
+                "block_ids": [r["block_id"]] if r.get("block_id") else [],
+                "content_preview": r["content_preview"][:400],
+                "token_count": r.get("token_count", 0),
+                "source_language": r.get("source_language", "vi"),
+                "modality": r.get("modality", "text"),
+                "collection_id": args.collection_id,
+                "owner_id": args.owner_id,
+            })
+    else:
+        print("Step 1/2  Fetching chunks from MongoDB...", flush=True)
+        chunks = await _fetch_chunks(
+            owner_id=args.owner_id,
+            collection_id=args.collection_id,
+            limit=args.max_chunks,
+        )
+        if not chunks:
+            print("[ERROR] No indexed chunks found.", file=sys.stderr)
+            sys.exit(1)
+        print(f"  Found {len(chunks)} chunks", flush=True)
+
+        print("Step 2/2  Fetching materials for document names...", flush=True)
+        materials = await _fetch_materials(
+            owner_id=args.owner_id,
+            collection_id=args.collection_id,
+        )
+
+        for chunk in chunks:
+            mat = materials.get(str(chunk.material_id))
+            doc_name = mat.original_name if mat else str(chunk.material_id)
+            block_id = chunk.source_block_ids[0] if chunk.source_block_ids else ""
+            records.append({
+                "record_id": f"meta-{str(chunk.id)}",
+                "type": "chunk",
+                "chunk_id": str(chunk.id),
+                "material_id": str(chunk.material_id),
+                "document_name": doc_name,
+                "pages": chunk.source_pages or [],
+                "page": (chunk.source_pages or [None])[0],
+                "block_id": block_id,
+                "block_ids": chunk.source_block_ids or [],
+                "content_preview": (chunk.content or "")[:400],
+                "token_count": chunk.token_count or 0,
+                "source_language": chunk.language or "vi",
+                "modality": chunk.modality or "text",
+                "collection_id": args.collection_id,
+                "owner_id": args.owner_id,
+            })
 
     _save_jsonl(records, args.output)
-    print(f"\nSaved {len(records)} records → {args.output}", flush=True)
+    print(f"\nSaved {len(records)} records -> {args.output}", flush=True)
 
 
 # ══ MODE: retrieval-gold ══════════════════════════════════════════════════════
@@ -382,22 +418,29 @@ async def run_retrieval_gold(args: argparse.Namespace) -> None:
         await asyncio.sleep(0.5)
 
     _save_jsonl(all_cases, args.output)
-    print(f"\nSaved {len(all_cases)} retrieval-gold cases → {args.output}", flush=True)
+    print(f"\nSaved {len(all_cases)} retrieval-gold cases -> {args.output}", flush=True)
 
 
 # ══ MODE: e2e-gold ════════════════════════════════════════════════════════════
 
 _E2E_PROMPT = """\
-You are building an end-to-end benchmark for a Vietnamese legal document Q&A system.
+You are building a RAG benchmark for a Vietnamese document Q&A system (legal/finance/academic).
 
-Given this passage from document "{document_name}" (page {page}):
+Internal reference content (NOT shown to the user) — from "{document_name}" page {page}:
 ---
 {content}
 ---
 chunk_id: {chunk_id}
 block_id: {block_id}
 
-Generate {n} test cases. Each case must be ENTIRELY grounded in the given passage.
+Generate {n} test cases representing natural user queries that this content would answer.
+
+STRICT RULES — VIOLATION DISQUALIFIES THE CASE:
+- Query MUST be a standalone natural-language question a real user would type into the system
+- NEVER use: "trong đoạn trích", "đoạn văn trên", "theo đoạn", "in this passage", "the excerpt", "nội dung trên", "đoạn này"
+- Name specific entities (Vinamilk, Điều 123, Transformer, etc.), not "the document" or "the passage"
+- GOOD: "Điều kiện để được miễn trách nhiệm dân sự theo Bộ luật Dân sự 2015 là gì?"
+- BAD: "Theo đoạn trích, điều kiện để được miễn trách nhiệm là gì?"
 
 Return a JSON array only — no markdown, no explanation.
 
@@ -407,9 +450,9 @@ Return a JSON array only — no markdown, no explanation.
     "task_type": "factual",
     "query_language": "vi",
     "answer_language": "vi",
-    "query": "specific Vietnamese question",
+    "query": "Natural standalone query naming specific entities/facts — NO 'đoạn trích' or 'passage'",
     "expected_answer_outline": ["key point 1", "key point 2"],
-    "required_facts": ["exact fact from passage"],
+    "required_facts": ["exact fact from content"],
     "forbidden_claims": ["plausible but UNSUPPORTED claim"],
     "expected_evidence": [
       {{
@@ -422,12 +465,12 @@ Return a JSON array only — no markdown, no explanation.
     ],
     "expected_behavior": "answer",
     "difficulty": "easy",
-    "tags": ["vietnamese", "factual", "legal"]
+    "tags": ["vietnamese", "factual"]
   }}
 ]
 
-task_type options: factual, compare, summarize, graph_relation, claim_check, cross_lingual
-difficulty: easy (direct), medium (inference), hard (multi-hop reasoning)
+task_type options: factual, claim_check
+difficulty: easy (direct lookup), medium (needs inference), hard (multi-step reasoning)
 - 70% queries in Vietnamese, 30% cross-lingual (EN query, VI doc)
 - required_facts: 1-3 facts that MUST appear in a correct answer
 - forbidden_claims: 1-2 plausible claims NOT supported by the passage
@@ -578,7 +621,7 @@ async def run_e2e_gold(args: argparse.Namespace) -> None:
         await asyncio.sleep(0.5)
 
     _save_jsonl(all_cases, args.output)
-    print(f"\nSaved {len(all_cases)} e2e-gold cases → {args.output}", flush=True)
+    print(f"\nSaved {len(all_cases)} e2e-gold cases -> {args.output}", flush=True)
 
 
 # ══ MODE: adversarial ════════════════════════════════════════════════════════
@@ -671,7 +714,7 @@ async def run_adversarial(args: argparse.Namespace) -> None:
     all_cases = deduped
 
     _save_jsonl(all_cases, args.output)
-    print(f"\nSaved {len(all_cases)} adversarial cases → {args.output}", flush=True)
+    print(f"\nSaved {len(all_cases)} adversarial cases -> {args.output}", flush=True)
 
 
 # ══ MODE: legacy ══════════════════════════════════════════════════════════════
@@ -697,8 +740,6 @@ _LEGACY_ADVERSARIAL = [
 
 
 async def run_legacy(args: argparse.Namespace) -> None:
-    settings = get_settings()
-
     print(f"\n{'='*60}")
     print(f"  Noelys Eval Dataset Generator (legacy mode)")
     print(f"  Owner: {args.owner_id}  Collection: {args.collection_id}")
@@ -785,22 +826,27 @@ async def run_legacy(args: argparse.Namespace) -> None:
         await asyncio.sleep(1.0)
 
     _save_jsonl(samples, args.output)
-    print(f"\nStep 4/4  Saved {len(samples)} samples → {args.output}\n")
+    print(f"\nStep 4/4  Saved {len(samples)} samples -> {args.output}\n")
 
 
 # ══ MODE: e2e-gold-v2 (modality-aware, deterministic) ═══════════════════════
 
 _E2E_V2_SUMMARIZE_PROMPT = """\
-Bạn đang xây dựng bộ benchmark cho hệ thống hỏi đáp tài liệu (legal/finance/academic).
+Bạn đang xây dựng bộ benchmark cho hệ thống RAG (Retrieval-Augmented Generation) về tài liệu pháp lý/tài chính/học thuật.
 
-Đây là đoạn văn dài từ tài liệu "{document_name}" (trang {page}):
+Tài liệu tham khảo nội bộ (KHÔNG hiển thị cho người dùng) — từ "{document_name}" trang {page}:
 ---
 {content}
 ---
 chunk_id: {chunk_id}
 
-Tạo {n} câu hỏi yêu cầu TÓM TẮT nội dung chính của đoạn văn này.
-Câu hỏi nên bằng tiếng Việt. Câu trả lời phải bao phủ các điểm chính.
+Tạo {n} câu hỏi dạng TÓM TẮT mà người dùng thực sự sẽ đặt cho hệ thống.
+
+NGUYÊN TẮC BẮT BUỘC:
+- Query phải là câu người dùng gõ vào chatbot, KHÔNG phải câu hỏi về "đoạn văn" hay "nội dung trên"
+- TUYỆT ĐỐI KHÔNG dùng: "đoạn trích này", "đoạn văn trên", "nội dung trên", "passage", "excerpt", "đoạn này"
+- Câu hỏi phải tự nhiên như người dùng hỏi về chủ đề trong tài liệu: "Vinamilk đã làm gì về X?", "Điều Y quy định như thế nào?"
+- Câu hỏi phải trả lời được từ nội dung chunk, nhưng không được nhắc đến chunk
 
 Trả về JSON array duy nhất — không markdown, không giải thích.
 
@@ -810,10 +856,10 @@ Trả về JSON array duy nhất — không markdown, không giải thích.
     "task_type": "summarize",
     "query_language": "vi",
     "answer_language": "vi",
-    "query": "câu hỏi yêu cầu tóm tắt nội dung",
+    "query": "Câu hỏi tự nhiên về chủ đề trong tài liệu — VÍ DỤ: 'Các biện pháp quản lý rủi ro chính của Vinamilk năm 2024 là gì?'",
     "expected_answer_outline": ["điểm chính 1", "điểm chính 2", "điểm chính 3"],
     "required_facts": ["sự kiện/điểm bắt buộc trong câu trả lời"],
-    "forbidden_claims": ["tuyên bố sai hoặc không có trong đoạn"],
+    "forbidden_claims": ["tuyên bố sai hoặc không có trong nội dung"],
     "expected_evidence": [
       {{
         "document_name": "{document_name}",
@@ -831,24 +877,29 @@ Trả về JSON array duy nhất — không markdown, không giải thích.
 """
 
 _E2E_V2_GRAPH_RELATION_PROMPT = """\
-Bạn đang xây dựng bộ benchmark cho hệ thống hỏi đáp tài liệu học thuật.
+Bạn đang xây dựng bộ benchmark cho hệ thống RAG multi-hop về tài liệu học thuật/pháp lý/tài chính.
 
-Hai đoạn văn sau cùng đề cập đến các khái niệm/thực thể liên quan:
+Hai đoạn nội dung tham khảo nội bộ (KHÔNG hiển thị cho người dùng):
 
-[Đoạn A] từ "{doc_a}" (trang {page_a}):
+[Nguồn A] từ "{doc_a}" trang {page_a}:
 ---
 {content_a}
 ---
 chunk_id_a: {chunk_a}
 
-[Đoạn B] từ "{doc_b}" (trang {page_b}):
+[Nguồn B] từ "{doc_b}" trang {page_b}:
 ---
 {content_b}
 ---
 chunk_id_b: {chunk_b}
 
-Tạo {n} câu hỏi về MỐI QUAN HỆ giữa các thực thể/khái niệm xuất hiện trong cả hai đoạn.
-Câu hỏi nên hỏi về quan hệ, so sánh, hoặc cơ chế liên kết giữa chúng.
+Tạo {n} câu hỏi multi-hop mà cần thông tin từ CẢ HAI nguồn để trả lời.
+
+NGUYÊN TẮC BẮT BUỘC:
+- Query phải là câu người dùng tự hỏi về chủ đề, KHÔNG nhắc đến "đoạn A", "đoạn B", "hai đoạn", "đoạn trích", "passage"
+- Câu hỏi phải về thực thể/khái niệm CỤ THỂ (tên, số liệu, quy định) có trong nội dung
+- VÍ DỤ TỐT: "Cơ chế attention trong Transformer liên quan như thế nào đến kết quả F1-score trong bài báo sentiment analysis?"
+- VÍ DỤ XẤU (TUYỆT ĐỐI KHÔNG): "Trong đoạn A... còn đoạn B...", "Hai đoạn trích này..."
 
 Trả về JSON array duy nhất — không markdown, không giải thích.
 
@@ -858,36 +909,40 @@ Trả về JSON array duy nhất — không markdown, không giải thích.
     "task_type": "graph_relation",
     "query_language": "vi",
     "answer_language": "vi",
-    "query": "câu hỏi về mối quan hệ giữa thực thể/khái niệm",
-    "expected_answer_outline": ["điểm về A", "điểm về B", "mối liên hệ A-B"],
-    "required_facts": ["sự kiện từ đoạn A", "sự kiện từ đoạn B"],
-    "forbidden_claims": ["tổng hợp sai không được hỗ trợ"],
+    "query": "Câu hỏi tự nhiên về mối quan hệ giữa hai khái niệm/thực thể cụ thể",
+    "expected_answer_outline": ["điểm từ nguồn A", "điểm từ nguồn B", "mối liên hệ"],
+    "required_facts": ["sự kiện từ nguồn A", "sự kiện từ nguồn B"],
+    "forbidden_claims": ["tổng hợp sai không có trong nội dung"],
     "expected_evidence": [
       {{"document_name": "{doc_a}", "page": {page_a}, "chunk_id": "{chunk_a}", "quote_or_fact": "..."}},
       {{"document_name": "{doc_b}", "page": {page_b}, "chunk_id": "{chunk_b}", "quote_or_fact": "..."}}
     ],
     "expected_behavior": "answer",
     "difficulty": "hard",
-    "tags": ["graph_relation", "multi-hop", "academic"]
+    "tags": ["graph_relation", "multi-hop"]
   }}
 ]
 """
 
 _E2E_V2_CROSS_LINGUAL_PROMPT = """\
-You are building a cross-lingual benchmark for a bilingual document Q&A system.
+You are building a cross-lingual RAG benchmark. The system indexes documents in one language and must answer queries in another.
 
-This passage is from "{document_name}" (page {page}):
+Internal reference content (NOT shown to users) — from "{document_name}" page {page}:
 ---
 {content}
 ---
 chunk_id: {chunk_id}
 document_language: {source_language}
 
-Generate {n} test cases where the QUERY is in a DIFFERENT language from the passage.
-- If the passage is in Vietnamese → write the query in English
-- If the passage is in English → write the query in Vietnamese
+Generate {n} test cases where the QUERY is in the OPPOSITE language from the passage.
+- Passage in Vietnamese → write query in English
+- Passage in English → write query in Vietnamese
 
-The system must retrieve this passage using cross-lingual matching and answer in the query language.
+STRICT RULES:
+- The query must be a natural standalone question a real user would type — NO reference to "this passage", "the excerpt", "the text above", "đoạn văn", "đoạn trích"
+- Query should ask about the TOPIC/ENTITY/FACT, not about "the document" or "the excerpt"
+- GOOD example (EN passage): "Theo Vinamilk, tốc độ tăng trưởng doanh thu năm 2024 là bao nhiêu?"
+- BAD example: "According to the passage above, what does it say about..."
 
 Return a JSON array only — no markdown, no explanation.
 
@@ -895,11 +950,11 @@ Return a JSON array only — no markdown, no explanation.
   {{
     "case_id": "ab-e2e-XXXX",
     "task_type": "cross_lingual",
-    "query_language": "en",
-    "answer_language": "en",
-    "query": "question in the opposite language from the passage",
+    "query_language": "{target_lang}",
+    "answer_language": "{target_lang}",
+    "query": "Natural standalone question in the opposite language — asking about the topic, not 'the passage'",
     "expected_answer_outline": ["key point 1", "key point 2"],
-    "required_facts": ["exact fact from passage (in original language)"],
+    "required_facts": ["exact fact from the content (in original language)"],
     "forbidden_claims": ["plausible but unsupported claim"],
     "expected_evidence": [
       {{
@@ -907,7 +962,7 @@ Return a JSON array only — no markdown, no explanation.
         "page": {page},
         "block_id": "{block_id}",
         "chunk_id": "{chunk_id}",
-        "quote_or_fact": "brief quote from passage"
+        "quote_or_fact": "brief quote from content"
       }}
     ],
     "expected_behavior": "answer",
@@ -918,16 +973,21 @@ Return a JSON array only — no markdown, no explanation.
 """
 
 _E2E_V2_TABLE_PROMPT = """\
-Bạn đang xây dựng bộ benchmark cho hệ thống hỏi đáp tài liệu tài chính.
+Bạn đang xây dựng bộ benchmark RAG cho hệ thống hỏi đáp tài liệu tài chính/học thuật.
 
-Đây là nội dung bảng từ tài liệu "{document_name}" (trang {page}):
+Nội dung bảng tham khảo nội bộ (KHÔNG hiển thị cho người dùng) — từ "{document_name}" trang {page}:
 ---
 {content}
 ---
 chunk_id: {chunk_id}
 
-Tạo {n} câu hỏi tra cứu hoặc so sánh số liệu cụ thể trong bảng này.
-Câu hỏi nên hỏi về con số, tỷ lệ, hoặc so sánh giữa các dòng/cột trong bảng.
+Tạo {n} câu hỏi tra cứu số liệu mà người dùng thực sự sẽ đặt cho hệ thống.
+
+NGUYÊN TẮC BẮT BUỘC:
+- Query phải hỏi về số liệu/chỉ số CỤ THỂ bằng tên thật: "Vinamilk", "Doanh thu", "2024", v.v.
+- TUYỆT ĐỐI KHÔNG dùng: "trong bảng này", "bảng trên", "theo bảng", "the table", "đoạn trích"
+- VÍ DỤ TỐT: "Lợi nhuận sau thuế của Vinamilk năm 2023 là bao nhiêu tỷ đồng?"
+- VÍ DỤ XẤU (CẤM): "Trong bảng này, con số lợi nhuận là bao nhiêu?"
 
 Trả về JSON array duy nhất — không markdown, không giải thích.
 
@@ -937,7 +997,7 @@ Trả về JSON array duy nhất — không markdown, không giải thích.
     "task_type": "table",
     "query_language": "vi",
     "answer_language": "vi",
-    "query": "câu hỏi về số liệu cụ thể trong bảng",
+    "query": "Câu hỏi cụ thể về số liệu với tên thực thể rõ ràng — VÍ DỤ: 'Tỷ lệ cổ tức Vinamilk Q3 2024 là bao nhiêu?'",
     "expected_answer_outline": ["số liệu chính xác", "đơn vị", "ngữ cảnh"],
     "required_facts": ["con số/tỷ lệ chính xác từ bảng"],
     "forbidden_claims": ["con số không có trong bảng"],
@@ -1100,14 +1160,16 @@ async def run_e2e_gold_v2(args: argparse.Namespace) -> None:
         mod = row.get("modality", "text")
         by_modality.setdefault(mod, []).append(row)
 
-    text_rows = [r for r in meta_rows if r.get("modality", "text") in ("text", "heading", "paragraph", "")]
+    text_rows = [r for r in meta_rows if r.get("modality", "text") in ("text", "heading", "paragraph", "mixed", "list", "")]
     table_rows = by_modality.get("table", [])
     audio_rows = by_modality.get("audio", [])
-    ocr_rows = by_modality.get("image", []) + by_modality.get("ocr", [])
+    ocr_rows = by_modality.get("image", []) + by_modality.get("ocr", []) + by_modality.get("figure", []) + by_modality.get("handwriting", [])
 
-    # Shuffle deterministically
+    # Shuffle deterministically then cap to avoid infinite loops on API failures
     random.shuffle(text_rows)
     random.shuffle(table_rows)
+    text_rows = text_rows[:300]   # max 300 text chunks to sample from
+    table_rows = table_rows[:50]
 
     all_cases: list[dict] = []
     case_counter = 1
@@ -1158,10 +1220,10 @@ async def run_e2e_gold_v2(args: argparse.Namespace) -> None:
                 n=n,
             )
             print(f"  [summarize] {row.get('document_name','')[:40]}", flush=True)
-            cases = await _gen(prompt, "summarize", n)
+            cases = await _gen(prompt, "summarize")
             all_cases.extend(cases)
             task_counts["summarize"] += len(cases)
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(2.0)
         elif _remaining("factual") > 0:
             n = min(2, _remaining("factual"))
             prompt = _E2E_PROMPT.format(
@@ -1173,52 +1235,97 @@ async def run_e2e_gold_v2(args: argparse.Namespace) -> None:
                 n=n,
             )
             print(f"  [factual] {row.get('document_name','')[:40]}", flush=True)
-            cases = await _gen(prompt, "factual", n)
+            cases = await _gen(prompt, "factual")
             factual = [c for c in cases if c.get("task_type") in ("factual", "claim_check")]
             all_cases.extend(factual)
             for c in factual:
                 task_counts[c.get("task_type", "factual")] = task_counts.get(c.get("task_type", "factual"), 0) + 1
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(2.0)
 
-    # 2. compare + graph_relation from pairs of text chunks
-    for i in range(0, len(text_rows) - 1, 2):
-        if _remaining("compare") <= 0 and _remaining("graph_relation") <= 0:
+    # 2. compare + graph_relation — pair chunks from same or related docs
+    # Domain classification for meaningful cross-doc pairing
+    _DOMAIN_MAP = {
+        "vinamilk": "finance", "fpt_financial": "finance", "BaoCaoTaiChinh": "finance",
+        "bo_luat": "legal", "Hop-Dong": "legal", "luat": "legal",
+        "attention": "academic", "hinton": "academic", "s41597": "academic",
+        "100416": "academic", "6222": "academic", "24229": "academic",
+        "DL_Introduce": "academic", "sfsu": "academic", "engr": "academic",
+    }
+    def _domain(row: dict) -> str:
+        name = row.get("document_name", "")
+        for key, dom in _DOMAIN_MAP.items():
+            if key.lower() in name.lower():
+                return dom
+        return "misc"
+
+    # Group chunks by document for same-doc pairing (graph_relation)
+    by_doc: dict[str, list[dict]] = {}
+    for row in text_rows:
+        by_doc.setdefault(row.get("document_name", ""), []).append(row)
+
+    # Same-doc pairs for graph_relation
+    same_doc_pairs: list[tuple[dict, dict]] = []
+    for doc_rows in by_doc.values():
+        if len(doc_rows) >= 2:
+            for j in range(0, len(doc_rows) - 1, 2):
+                same_doc_pairs.append((doc_rows[j], doc_rows[j + 1]))
+    random.shuffle(same_doc_pairs)
+
+    # Same-domain cross-doc pairs for compare
+    by_domain: dict[str, list[dict]] = {}
+    for row in text_rows:
+        by_domain.setdefault(_domain(row), []).append(row)
+    cross_doc_pairs: list[tuple[dict, dict]] = []
+    for dom_rows in by_domain.values():
+        # Pair chunks from different docs within same domain
+        docs_in_dom = list(by_doc.keys() & {r.get("document_name") for r in dom_rows})
+        if len(docs_in_dom) >= 2:
+            for j in range(0, len(docs_in_dom) - 1):
+                da = [r for r in dom_rows if r.get("document_name") == docs_in_dom[j]]
+                db = [r for r in dom_rows if r.get("document_name") == docs_in_dom[j + 1]]
+                if da and db:
+                    cross_doc_pairs.append((da[0], db[0]))
+    random.shuffle(cross_doc_pairs)
+
+    for a, b in same_doc_pairs:
+        if _remaining("graph_relation") <= 0:
             break
-        a, b = text_rows[i], text_rows[i + 1]
-        if _remaining("graph_relation") > 0:
-            prompt = _E2E_V2_GRAPH_RELATION_PROMPT.format(
-                doc_a=a.get("document_name", ""),
-                page_a=a.get("page") or 1,
-                content_a=a.get("content_preview", "")[:400],
-                chunk_a=a.get("chunk_id", ""),
-                doc_b=b.get("document_name", ""),
-                page_b=b.get("page") or 1,
-                content_b=b.get("content_preview", "")[:400],
-                chunk_b=b.get("chunk_id", ""),
-                n=1,
-            )
-            print(f"  [graph_relation] {a.get('document_name','')[:25]} + {b.get('document_name','')[:25]}", flush=True)
-            cases = await _gen(prompt, "graph_relation")
-            all_cases.extend(cases)
-            task_counts["graph_relation"] += len(cases)
-            await asyncio.sleep(0.3)
-        elif _remaining("compare") > 0:
-            prompt = _E2E_HARD_PROMPT.format(
-                doc_a=a.get("document_name", ""),
-                page_a=a.get("page") or 1,
-                content_a=a.get("content_preview", "")[:400],
-                chunk_a=a.get("chunk_id", ""),
-                doc_b=b.get("document_name", ""),
-                page_b=b.get("page") or 1,
-                content_b=b.get("content_preview", "")[:400],
-                chunk_b=b.get("chunk_id", ""),
-                n=1,
-            )
-            print(f"  [compare] {a.get('document_name','')[:25]} + {b.get('document_name','')[:25]}", flush=True)
-            cases = await _gen(prompt, "compare")
-            all_cases.extend(cases)
-            task_counts["compare"] += len(cases)
-            await asyncio.sleep(0.3)
+        prompt = _E2E_V2_GRAPH_RELATION_PROMPT.format(
+            doc_a=a.get("document_name", ""),
+            page_a=a.get("page") or 1,
+            content_a=a.get("content_preview", "")[:400],
+            chunk_a=a.get("chunk_id", ""),
+            doc_b=b.get("document_name", ""),
+            page_b=b.get("page") or 1,
+            content_b=b.get("content_preview", "")[:400],
+            chunk_b=b.get("chunk_id", ""),
+            n=1,
+        )
+        print(f"  [graph_relation] {a.get('document_name','')[:25]} p{a.get('page')} + p{b.get('page')}", flush=True)
+        cases = await _gen(prompt, "graph_relation")
+        all_cases.extend(cases)
+        task_counts["graph_relation"] += len(cases)
+        await asyncio.sleep(0.3)
+
+    for a, b in cross_doc_pairs:
+        if _remaining("compare") <= 0:
+            break
+        prompt = _E2E_HARD_PROMPT.format(
+            doc_a=a.get("document_name", ""),
+            page_a=a.get("page") or 1,
+            content_a=a.get("content_preview", "")[:400],
+            chunk_a=a.get("chunk_id", ""),
+            doc_b=b.get("document_name", ""),
+            page_b=b.get("page") or 1,
+            content_b=b.get("content_preview", "")[:400],
+            chunk_b=b.get("chunk_id", ""),
+            n=1,
+        )
+        print(f"  [compare] {a.get('document_name','')[:25]} + {b.get('document_name','')[:25]}", flush=True)
+        cases = await _gen(prompt, "compare")
+        all_cases.extend(cases)
+        task_counts["compare"] += len(cases)
+        await asyncio.sleep(0.3)
 
     # 3. cross_lingual from bilingual pairs (FPT EN↔VI) or any text chunk
     cross_candidates = [r for r in meta_rows if r.get("source_language") in ("en", "vi")]
@@ -1227,6 +1334,7 @@ async def run_e2e_gold_v2(args: argparse.Namespace) -> None:
         if _remaining("cross_lingual") <= 0:
             break
         src_lang = row.get("source_language", "vi")
+        target_lang = "en" if src_lang == "vi" else "vi"
         prompt = _E2E_V2_CROSS_LINGUAL_PROMPT.format(
             document_name=row.get("document_name", "unknown"),
             page=row.get("page") or 1,
@@ -1234,6 +1342,7 @@ async def run_e2e_gold_v2(args: argparse.Namespace) -> None:
             chunk_id=row.get("chunk_id", ""),
             block_id=row.get("block_id", ""),
             source_language=src_lang,
+            target_lang=target_lang,
             n=1,
         )
         print(f"  [cross_lingual/{src_lang}] {row.get('document_name','')[:40]}", flush=True)
@@ -1259,7 +1368,7 @@ async def run_e2e_gold_v2(args: argparse.Namespace) -> None:
             cases = await _gen(prompt, "table")
             all_cases.extend(cases)
             task_counts["table"] += len(cases)
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(2.0)
 
     # 5. ocr from image/ocr chunks
     if "ocr" not in skip_modalities:
@@ -1278,7 +1387,7 @@ async def run_e2e_gold_v2(args: argparse.Namespace) -> None:
             cases = await _gen(prompt, "ocr")
             all_cases.extend(cases)
             task_counts["ocr"] += len(cases)
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(2.0)
 
     # 6. audio from audio chunks
     if "audio" not in skip_modalities:
@@ -1297,10 +1406,10 @@ async def run_e2e_gold_v2(args: argparse.Namespace) -> None:
             cases = await _gen(prompt, "audio")
             all_cases.extend(cases)
             task_counts["audio"] += len(cases)
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(2.0)
 
     _save_jsonl(all_cases, args.output)
-    print(f"\nSaved {len(all_cases)} e2e-gold-v2 cases → {args.output}", flush=True)
+    print(f"\nSaved {len(all_cases)} e2e-gold-v2 cases -> {args.output}", flush=True)
     print("  Distribution:", flush=True)
     for tt, cnt in sorted(task_counts.items()):
         tgt = _V2_TASK_TARGETS.get(tt, 0)
@@ -1310,7 +1419,12 @@ async def run_e2e_gold_v2(args: argparse.Namespace) -> None:
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 async def main(args: argparse.Namespace) -> None:
-    await init_database(get_settings())
+    # Skip direct MongoDB connection when using API-based fetching.
+    # meta-inventory uses _fetch_chunks_via_api; other modes read from --input file.
+    # Only legacy mode and direct DB modes need init_database.
+    use_api = bool(getattr(args, "api_url", "")) and args.mode != "legacy"
+    if not use_api:
+        await init_database(get_settings())
 
     print(f"\n{'='*60}")
     print(f"  AgentBook Dataset Generator")
@@ -1318,6 +1432,8 @@ async def main(args: argparse.Namespace) -> None:
     print(f"  Provider:   {args.provider}  Model: {args.model}")
     print(f"  Owner:      {args.owner_id}")
     print(f"  Collection: {args.collection_id}")
+    if use_api:
+        print(f"  Fetch via:  API ({args.api_url})")
     print(f"{'='*60}\n")
 
     if args.mode == "meta-inventory":
@@ -1331,6 +1447,8 @@ async def main(args: argparse.Namespace) -> None:
     elif args.mode == "adversarial":
         await run_adversarial(args)
     elif args.mode == "legacy":
+        if not args.api_url:
+            args.api_url = "http://localhost:8000"
         await run_legacy(args)
     else:
         print(f"[ERROR] Unknown mode: {args.mode}", file=sys.stderr)
@@ -1369,11 +1487,14 @@ if __name__ == "__main__":
     parser.add_argument("--skip-modality", default="",
                         help="Comma-separated modalities to skip in e2e-gold-v2 (e.g. 'ocr,audio')")
 
+    # API-based fetching (skip direct MongoDB for meta-inventory)
+    parser.add_argument("--api-url", default="",
+                        help="Backend API URL (e.g. http://localhost:8000). "
+                             "When set, meta-inventory fetches chunks via API instead of direct MongoDB.")
+
     # Legacy args
     parser.add_argument("--questions-per-chunk", type=int, default=4,
                         help="[legacy] Questions per chunk")
-    parser.add_argument("--api-url", default="http://localhost:8000",
-                        help="[legacy] Backend API URL")
 
     args = parser.parse_args()
 

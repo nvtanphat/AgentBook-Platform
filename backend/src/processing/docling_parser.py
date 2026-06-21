@@ -760,6 +760,52 @@ class DoclingParser:
         return blocks
 
     @staticmethod
+    def _clean_table_header(columns: Any) -> list[str]:
+        """Collapse a 2-level (MultiIndex) PDF table header to the real leaf names.
+
+        Docling exports tables with a spanning super-header (e.g. "Huấn luyện mô
+        hình theo truyền thống") flattened onto every column, yielding garbage like
+        ``"Mô hình.Huấn luyện…"``, ``"Tập kiểm tra.Huấn luyện…"``. We keep the part
+        that VARIES across columns (the true header) and drop the shared span.
+        """
+        # MultiIndex tuples → take the most specific non-empty level per column.
+        try:
+            import pandas as pd  # docling dependency
+            if isinstance(columns, pd.MultiIndex):
+                out: list[str] = []
+                for tup in columns:
+                    parts = [str(p).strip() for p in tup
+                             if str(p).strip() and not str(p).startswith("Unnamed")]
+                    out.append(parts[-1] if parts else "")
+                return out
+        except Exception:
+            pass
+
+        from collections import Counter as _Counter
+        cols = [str(c).strip() for c in columns]
+
+        def _looks_like_span(text: str) -> bool:
+            # A real spanning header is a phrase/unit, not a decimal fragment like "0".
+            return " " in text or len(text) >= 5
+
+        # A spanning super-header gets joined as "<leaf>.<span>" (or "<span>.<leaf>")
+        # onto the columns it covers — possibly not every column (row-label cols stay
+        # clean). Strip the component shared by >=2 dotted columns, keep the leaf.
+        dotted = [(c.split(".", 1)[0].strip(), c.split(".", 1)[1].strip()) for c in cols if "." in c]
+        if len(dotted) >= 2:
+            suf_common, suf_n = _Counter(s for _, s in dotted).most_common(1)[0]
+            pre_common, pre_n = _Counter(p for p, _ in dotted).most_common(1)[0]
+            if suf_n >= 2 and suf_n == len(dotted) and _looks_like_span(suf_common):
+                return [c.split(".", 1)[0].strip()
+                        if "." in c and c.split(".", 1)[1].strip() == suf_common else c
+                        for c in cols]
+            if pre_n >= 2 and pre_n == len(dotted) and _looks_like_span(pre_common):
+                return [c.split(".", 1)[1].strip()
+                        if "." in c and c.split(".", 1)[0].strip() == pre_common else c
+                        for c in cols]
+        return cols
+
+    @staticmethod
     def _table_grid(table: Any, document: Any) -> tuple[list[str], list[list[str]]]:
         """Recover ``(header, rows)`` from a Docling TableItem, version-tolerant.
 
@@ -776,7 +822,7 @@ class DoclingParser:
             except TypeError:
                 df = to_df()
             if df is not None and not df.empty:
-                header = [str(c) for c in df.columns]
+                header = DoclingParser._clean_table_header(df.columns)
                 rows = [["" if v is None else str(v) for v in row] for row in df.values.tolist()]
                 if header and rows:
                     return header, rows

@@ -248,7 +248,21 @@ def _citation_accuracy(citations: list[dict], expected_chunk_ids: list[str]) -> 
     if not citations or not expected_chunk_ids:
         return 0.0
     gold = set(expected_chunk_ids)
-    matched = sum(1 for c in citations if c.get("chunk_id") in gold)
+    # Citations expose the chunk id under "evidence_id"; "chunk_id" is not populated.
+    matched = sum(1 for c in citations if (c.get("chunk_id") or c.get("evidence_id")) in gold)
+    return round(matched / len(citations), 4)
+
+
+def _citation_accuracy_page(citations: list[dict], expected_evidence: list[dict]) -> float:
+    """Page-level citation accuracy: a citation counts as correct if it lands on the
+    same (document, page) as any gold evidence — fairer than exact chunk_id match,
+    since single-chunk gold labels under-credit citing an adjacent chunk on the same page."""
+    if not citations or not expected_evidence:
+        return 0.0
+    gold_pages = {(ev.get("document_name"), ev.get("page")) for ev in expected_evidence if ev.get("page") is not None}
+    if not gold_pages:
+        return 0.0
+    matched = sum(1 for c in citations if (c.get("doc_name") or c.get("document_name"), c.get("page")) in gold_pages)
     return round(matched / len(citations), 4)
 
 
@@ -344,6 +358,26 @@ def _ask(
 
 # ── Single config run ──────────────────────────────────────────────────────────
 
+def _flush_semantic_cache(redis_url: str = "redis://localhost:6379/0") -> int:
+    """Flush the semantic query cache (sqc:*) before a config runs.
+
+    The cache is scoped only by owner+collection+language, NOT by rag_flags, so
+    without this flush an identical query answered under a previous config is
+    served from cache (3-5s, no fresh retrieval) — silently invalidating the
+    ablation. Returns the number of keys deleted.
+    """
+    try:
+        import redis as _redis
+        r = _redis.from_url(redis_url)
+        keys = list(r.scan_iter(match="sqc:*", count=500))
+        if keys:
+            r.delete(*keys)
+        return len(keys)
+    except Exception as exc:
+        print(f"  [cache-flush skipped: {exc}]", flush=True)
+        return 0
+
+
 def _run_config(
     *,
     cfg: dict[str, Any],
@@ -361,9 +395,12 @@ def _run_config(
     print(f"\n{'='*70}", flush=True)
     print(f"  CONFIG: {cfg['label']}", flush=True)
     print(f"{'='*70}", flush=True)
+    flushed = _flush_semantic_cache()
+    print(f"  (flushed {flushed} semantic-cache keys → fresh retrieval per config)", flush=True)
 
     # ── Trục A+B: gold cases ──────────────────────────────────────────────────
     truc_a_rows: list[dict] = []
+    gold_refuse_rows: list[dict] = []
     latencies: list[float] = []
     all_results: list[dict] = []
 
@@ -389,11 +426,27 @@ def _run_config(
             was_refused = payload.get("was_refused", False)
             trace = payload.get("trace") or {}
             retrieved_ids: list[str] = trace.get("retrieved_chunk_ids") or []
+            latencies.append(elapsed)
+
+            # Refusal-test gold cases (off_topic_should_refuse) carry no gold
+            # evidence by design → score refusal correctness, skip Trục A so they
+            # don't drag retrieval averages to 0.
+            if case.get("expected_behavior") == "refuse":
+                refused_actual = _should_refuse(answer, was_refused)
+                gold_refuse_rows.append({"case_id": case.get("case_id"), "refused_actual": refused_actual})
+                print(f"        [refuse-case] {'OK-refuse' if refused_actual else 'FALSE-ACCEPT'}  {elapsed:.0f}s", flush=True)
+                all_results.append({
+                    "case_id": case.get("case_id"), "task_type": case.get("task_type"),
+                    "query": query, "answer": answer, "was_refused": was_refused,
+                    "expected_behavior": "refuse", "refused_actual": refused_actual,
+                    "elapsed_s": round(elapsed, 2),
+                })
+                continue
 
             a_metrics = _truc_a_metrics(retrieved_ids, expected_chunk_ids, k=k)
             cit_acc = _citation_accuracy(citations, expected_chunk_ids)
-            truc_a_rows.append({**a_metrics, "citation_accuracy": cit_acc})
-            latencies.append(elapsed)
+            cit_acc_page = _citation_accuracy_page(citations, case.get("expected_evidence") or [])
+            truc_a_rows.append({**a_metrics, "citation_accuracy": cit_acc, "citation_accuracy_page": cit_acc_page})
 
             status = "REFUSED" if was_refused else "ok"
             print(
@@ -416,6 +469,7 @@ def _run_config(
                 "elapsed_s": round(elapsed, 2),
                 **a_metrics,
                 "citation_accuracy": cit_acc,
+                "citation_accuracy_page": cit_acc_page,
             })
         except requests.Timeout:
             print(f"        TIMEOUT {timeout}s", flush=True)
@@ -445,6 +499,7 @@ def _run_config(
         f"avg_mrr_at_{k}": _avg("mrr_at_k"),
         f"avg_ndcg_at_{k}": _avg("ndcg_at_k"),
         "avg_citation_accuracy": _avg("citation_accuracy"),
+        "avg_citation_accuracy_page": _avg("citation_accuracy_page"),
     }
 
     # Bootstrap CI for headline metric nDCG@k
@@ -489,12 +544,25 @@ def _run_config(
 
     truc_c_summary = _truc_c_metrics(adv_results) if adv_results else {}
 
+    # Refusal correctness on gold off_topic_should_refuse cases (false-accept = answered when should refuse).
+    gold_refuse_summary: dict[str, float] = {}
+    if gold_refuse_rows:
+        n_rf = len(gold_refuse_rows)
+        correct = sum(1 for r in gold_refuse_rows if r["refused_actual"])
+        gold_refuse_summary = {
+            "n": n_rf,
+            "correct_refusals": correct,
+            "refuse_accuracy": round(correct / n_rf, 4),
+            "false_accept_rate": round((n_rf - correct) / n_rf, 4),
+        }
+
     return {
         "config_name": name,
         "config_label": cfg["label"],
         "rag_flags": rag_flags,
         "truc_a": truc_a_summary,
         "truc_c": truc_c_summary,
+        "truc_c_gold": gold_refuse_summary,
         "latency": {"p50_s": round(p50, 2), "p95_s": round(p95, 2)},
         "n_gold": len(gold_cases),
         "n_adv": len(adv_cases),

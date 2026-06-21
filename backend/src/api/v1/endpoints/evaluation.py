@@ -128,7 +128,7 @@ async def list_chunks_for_eval(
     request: Request,
     owner_id: str = Query(..., min_length=1),
     collection_id: str = Query(..., min_length=1),
-    limit: int = Query(default=500, ge=1, le=2000),
+    limit: int = Query(default=500, ge=1, le=5000),
     min_content_len: int = Query(default=150, ge=0),
 ) -> list[ChunkMeta]:
     """Return chunk metadata for eval dataset generation.
