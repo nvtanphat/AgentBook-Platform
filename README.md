@@ -1,266 +1,169 @@
-<h1 align="center">📚 AgentBook / Noelys</h1>
+# AgentBook (Noelys) — Evidence-Preserving Multimodal GraphRAG Platform
 
 <p align="center">
-  <strong>AgentBook</strong> is an enterprise-grade, multimodal, multi-model RAG (Retrieval-Augmented Generation) system designed for evidence-grounded question answering over complex heterogeneous learning materials.
+  <img src="frontend/public/noelys-logo.png" alt="Noelys Logo" width="150"/>
 </p>
+
+<p align="center">
+  <strong>Hệ thống GraphRAG đa phương thức bảo toàn và kiểm chứng dẫn chứng cho hỏi đáp tài liệu doanh nghiệp phức tạp.</strong>
+</p>
+
+<p align="center">
+  <a href="https://fastapi.tiangolo.com/"><img src="https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white" alt="FastAPI"/></a>
+  <a href="https://react.dev/"><img src="https://img.shields.io/badge/React-20232A?style=flat-square&logo=react&logoColor=61DAFB" alt="React"/></a>
+  <a href="https://www.mongodb.com/"><img src="https://img.shields.io/badge/MongoDB-47A248?style=flat-square&logo=mongodb&logoColor=white" alt="MongoDB"/></a>
+  <a href="https://qdrant.tech/"><img src="https://img.shields.io/badge/Qdrant-D13838?style=flat-square&logo=qdrant&logoColor=white" alt="Qdrant"/></a>
+  <a href="https://celeryproject.org/"><img src="https://img.shields.io/badge/Celery-37814A?style=flat-square&logo=celery&logoColor=white" alt="Celery"/></a>
+  <a href="https://redis.io/"><img src="https://img.shields.io/badge/Redis-DC382D?style=flat-square&logo=redis&logoColor=white" alt="Redis"/></a>
+</p>
+
+---
+
+## 🌟 Giới thiệu tổng quan
+
+**AgentBook** (tên mã: **Noelys**) là một hệ thống RAG (Retrieval-Augmented Generation) đa phương thức được thiết kế để giải quyết bài toán hỏi đáp tài liệu thực tế của doanh nghiệp và học thuật. Khác với các hệ thống RAG thông thường làm phẳng văn bản và trích dẫn mơ hồ, AgentBook đặt **Evidence Unit (Đơn vị bằng chứng)** làm trung tâm của toàn bộ vòng đời hệ thống (nạp liệu, tìm kiếm, sinh câu trả lời và kiểm chứng).
+
+Hệ thống bảo toàn tuyệt đối thông tin tọa độ hình học (bounding box), số trang, nhãn thời gian âm thanh (audio timestamp) và độ tin cậy trích xuất trên nhiều loại tài liệu: **PDF nhiều cột, PowerPoint, Excel, ảnh quét scan, chữ viết tay và file ghi âm.**
+
+---
+
+## ✨ Các tính năng cốt lõi
+
+1. **Pipeline nạp liệu đa phương thức bảo toàn dẫn chứng**:
+   * **Văn bản & Bố cục**: Phân tách tài liệu bằng `Docling` để giữ nguyên cấu trúc tiêu đề, đoạn văn và thứ tự đọc.
+   * **Bảng biểu & Bảng tính**: Nạp và cấu trúc lại bảng tính Excel/CSV dưới dạng lưới (grid) trong MongoDB.
+   * **Ảnh quét & Chữ viết tay**: Nhận dạng thông qua EasyOCR và chuyển hướng VLM (Qwen2.5-VL) xử lý chữ viết tay hoặc biểu đồ phức tạp.
+   * **Âm thanh**: Chuyển đổi giọng nói thành văn bản bằng `faster-whisper` giữ nguyên nhãn thời gian từng giây để phát lại citation dạng âm thanh.
+
+2. **Tìm kiếm lai kết hợp Đồ thị tri thức nhẹ (Lightweight GraphRAG)**:
+   * Kết hợp tìm kiếm dày-thưa (Dense-Sparse RRF) sử dụng mô hình đa ngôn ngữ `BGE-M3`.
+   * Tích hợp Đồ thị tri thức (Knowledge Graph gồm Entities, Relations, Events) lưu trữ trực tiếp trên MongoDB thay vì Neo4j để tối ưu tài nguyên và hỗ trợ câu hỏi multi-hop.
+
+3. **Tái xếp hạng & Đóng gói ngữ cảnh thông minh**:
+   * Tái xếp hạng các ứng viên bằng Cross-Encoder và phân tán đa dạng bằng thuật toán MMR.
+   * Áp dụng chiến lược đóng gói ngữ cảnh nhằm giảm thiểu hiện tượng LLM bỏ sót thông tin ở giữa ngữ cảnh dài (*Lost in the Middle*).
+
+4. **Kiểm chứng sau sinh (Post-generation Verification)**:
+   * **Sentence-Level Evidence Coverage (SLEC)**: Đối soát độ phủ bằng chứng ở cấp độ từng câu khẳng định của LLM bằng suy luận tự nhiên (NLI).
+   * **Citation Alignment**: Đảm bảo các marker trích dẫn trỏ đúng tới các khối bằng chứng thực sự hỗ trợ câu đó.
+   * **Controlled Refusal**: Tự động từ chối trả lời một cách an toàn nếu độ tin cậy hoặc lượng bằng chứng hợp lệ dưới ngưỡng cấu hình.
+
+5. **Suy luận bảng tất định (Deterministic Table Reasoning)**:
+   * Tự động phát hiện câu hỏi tính toán trên bảng và chuyển đổi sang bộ thực thi tính toán tất định thay vì để LLM tự suy luận số học, giúp loại bỏ hoàn toàn sai số.
+
+---
+
+## 🏗️ Kiến trúc hệ thống
 
 ```mermaid
-graph TD
-    %% Styling
-    classDef input fill:#1e293b,stroke:#a855f7,stroke-width:2px,color:#f8fafc;
-    classDef parse fill:#1e293b,stroke:#06b6d4,stroke-width:2px,color:#f8fafc;
-    classDef frontend fill:#1e293b,stroke:#3b82f6,stroke-width:2px,color:#f8fafc;
-    classDef router fill:#1e293b,stroke:#8b5cf6,stroke-width:2px,color:#f8fafc;
-    classDef process fill:#1e293b,stroke:#10b981,stroke-width:2px,color:#f8fafc;
-    classDef db fill:#1e293b,stroke:#f59e0b,stroke-width:2px,color:#f8fafc;
-    classDef guard fill:#1e293b,stroke:#ef4444,stroke-width:2px,color:#f8fafc;
-
-    %% --- PIPELINE 1: MULTIMODAL INGESTION ---
-    subgraph Ingestion [1. Multimodal Ingestion Pipeline]
-        Files["📄 Heterogeneous Materials<br/>(PDF, DOCX, PPTX, XLSX, Images, Audio)"]:::input
-        
-        Parser["⚙️ Docling Document Parser"]:::parse
-        OCR["👁️ OCR & Handwriting Reader<br/>(EasyOCR & VLM Fallback)"]:::parse
-        Whisper["🔊 Faster-Whisper<br/>(Audio Transcriber)"]:::parse
-        Spreadsheet["📊 Tabular Processing<br/>(Pandas/JSON Serialization)"]:::parse
-    end
-
-    %% --- STORAGE ---
-    subgraph Storage [Databases & Indexing]
-        Mongo[("🍃 MongoDB<br/>(Metadata, Graph Entities, Chunks, Logs)")]:::db
-        Qdrant[("🎯 Qdrant Vector DB<br/>(BGE-M3 Dense + Sparse Vectors)")]:::db
-    end
-
-    %% Ingestion flow to storage
-    Files --> Parser
-    Files --> OCR
-    Files --> Whisper
-    Files --> Spreadsheet
-
-    Parser & OCR & Whisper & Spreadsheet -->|Structured Chunks + Bounding Box Metadata| Mongo
-    Parser & OCR & Whisper & Spreadsheet -->|Embeddings Generation| Qdrant
-
-    %% --- PIPELINE 2: RETRIEVAL & QUERY ANSWERING LOOP ---
-    subgraph UI [User Interface]
-        Client["💻 Noelys Web UI (React + TS)"]:::frontend
-    end
-
-    subgraph Routing [Modality & Intent Router]
-        Router["🧠 Modality & Intent Router<br/>(Text | Table | Image | Audio)"]:::router
-    end
-
-    subgraph DirectRAG [Fast Path: Direct RAG]
-        Retrieval["🔍 Hybrid Retrieval<br/>(Dense + Sparse + Modality Payload Filters)"]:::process
-        RRF["🔀 RRF Fusion & BGE Reranker"]:::process
-        Gen["✍️ LLM Generator"]:::process
-    end
-
-    subgraph Agentic [Deep Path: Deep Reasoning]
-        Planner["📋 Multi-step Planner"]:::process
-        AgentSearch["🔄 Iterative Retriever"]:::process
-        CRAG["🛡️ CRAG Critic"]:::process
-    end
-
-    subgraph Deterministic [Deterministic Engine]
-        TableCalc["🔢 Python Table Executor<br/>(Excel Math & Aggregations)"]:::process
-    end
-
-    subgraph Guardrails [Verification Gates]
-        SLEC["🛡️ Sentence-Level Evidence Coverage"]:::guard
-        Citation["🔗 Citation & Grounding Gate"]:::guard
-    end
-
-    %% QA flow connections
-    Client -->|User Query / Image Query| Router
+flowchart TD
+    User([Người dùng / Frontend React]) <--> API[FastAPI API Layer]
     
-    Router -->|Text / Simple Query| Retrieval
-    Router -->|Complex / Multi-hop| Planner
-    Router -->|Table Aggregation| TableCalc
-    
-    %% DB connections in Retrieval
-    Qdrant -.->|Hybrid Semantic Search| Retrieval
-    Mongo -.->|Modality & Collection Filters| Retrieval
-    
-    %% Fast Path execution
-    Retrieval --> RRF
-    RRF --> Gen
-    
-    %% Deep Path execution
-    Planner --> AgentSearch
-    AgentSearch --> CRAG
-    CRAG -->|Verified Context| Gen
-    CRAG -->|Refine Search| AgentSearch
-    
-    %% Validation & output
-    Gen --> SLEC
-    TableCalc --> Citation
-    SLEC --> Citation
-    Citation -->|Grounded Answer + Bounding Box Citations| Client
+    subgraph Ingestion [1. Pipeline Nạp Dữ Liệu (Async Celery)]
+        Upload[Tải lên & Validation] --> Parse[Docling / OCR / Whisper / Spreadsheet]
+        Parse --> EvMap[Evidence Map & Dedup]
+        EvMap --> Chunking[Layout / Semantic / Audio / Slide Chunker]
+        Chunking --> KGExtract[KG Extraction & Linking]
+        KGExtract --> Embed[BGE-M3 Dense+Sparse & SigLIP Visual Embed]
+    end
+
+    subgraph Storage [2. Hệ Thống Lưu Trữ]
+        Mongo[(MongoDB: Pages, Chunks, KG, Logs)]
+        Qdrant[(Qdrant Vector DB)]
+        FS[(Filesystem: Raw & Processed Artifacts)]
+    end
+
+    subgraph QueryFlow [3. Pipeline Truy Vấn (Real-time)]
+        Router[Intent & Modality Router] --> QP[Dịch VI-EN, Multi-query, HyDE]
+        QP --> Retrieval{Tìm kiếm hỗn hợp}
+        Retrieval --> DenseSparse[Dense + Sparse Search]
+        Retrieval --> GraphRet[Graph Relation Search]
+        Retrieval --> VisualRet[Visual Image Search]
+        DenseSparse & GraphRet & VisualRet --> Rerank[Cross-Encoder Reranker & MMR]
+        Rerank --> Ctx[Evidence Bundle & Context Packing]
+        Ctx --> Gen[LLM / VLM Generation]
+        Gen --> Verify[SLEC & Citation Aligner & Quality Gate]
+    end
+
+    API --> Ingestion
+    Ingestion -.-> Storage
+    API --> QueryFlow
+    QueryFlow <--> Storage
 ```
 
-<p align="center">
-  <a href="https://fastapi.tiangolo.com"><img src="https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi" alt="FastAPI"></a>
-  <a href="https://reactjs.org"><img src="https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB" alt="React"></a>
-  <a href="https://www.typescriptlang.org"><img src="https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript"></a>
-  <a href="https://www.mongodb.com"><img src="https://img.shields.io/badge/MongoDB-4EA94B?style=for-the-badge&logo=mongodb&logoColor=white" alt="MongoDB"></a>
-  <a href="https://qdrant.tech"><img src="https://img.shields.io/badge/Qdrant-red?style=for-the-badge&logo=qdrant&logoColor=white" alt="Qdrant"></a>
-  <a href="https://redis.io"><img src="https://img.shields.io/badge/Redis-DC382D?style=for-the-badge&logo=redis&logoColor=white" alt="Redis"></a>
-  <a href="https://docs.celeryq.dev"><img src="https://img.shields.io/badge/Celery-37814A?style=for-the-badge&logo=celery&logoColor=white" alt="Celery"></a>
-  <img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=for-the-badge" alt="License">
-</p>
+---
+
+## 📈 Kết quả thực nghiệm
+
+Hệ thống được thử nghiệm trên bộ đánh giá gồm **294 câu hỏi trên 12 tài liệu thực tế** (báo cáo tài chính, hợp đồng pháp lý, tài liệu kỹ thuật, slide bài giảng, ghi âm cuộc họp).
+
+### So sánh hiệu năng tổng thể
+| Cấu hình | Recall@5 $\uparrow$ | Answer F1 $\uparrow$ | Citation F1 $\uparrow$ | Groundedness $\uparrow$ | Refusal F1 $\uparrow$ | Độ trễ p95 (s) $\downarrow$ |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Plain Vector RAG** | 0.22 | 0.11 | 0.34 | 0.47 | 0.00 | **113** |
+| **Hybrid RAG** | 0.61 | 0.58 | 0.59 | 0.71 | 0.00 | 260 |
+| **Hybrid + Graph** | 0.75 | **0.70** | **0.69** | **0.80** | 0.33 | 363 |
+| **Full AgentBook (Đề xuất)** | **0.79** | 0.67 | 0.59 | 0.76 | **0.36** | 346 |
+
+> [!NOTE]
+> *Hệ thống đề xuất đạt Recall@5 cao nhất (0.79) và Refusal F1 tốt nhất (0.36). Điểm Answer F1 và Groundedness có sự thỏa hiệp nhẹ do lớp kiểm chứng chủ động cắt bỏ các câu trả lời thiếu bằng chứng hoặc tự động từ chối để ngăn chặn hiện tượng hallucination.*
 
 ---
 
-## ✨ Core Pillars
+## 🛠️ Hướng dẫn cài đặt & Chạy cục bộ
 
-AgentBook is not a generic "vector search + LLM" wrapper. It is engineered from the ground up for strict citation grounding, deterministic data extraction, and modality-aware routing.
+### Yêu cầu hệ thống
+* Docker & Docker Compose
+* Ollama chạy trên máy host (đã cài đặt và tải về mô hình `qwen2.5:7b` và `qwen2.5-vl:3b` nếu sử dụng tính năng thị giác).
 
-*   📂 **Multimodal Ingestion**: Parses PDFs, Word (`.docx`), PowerPoints (`.pptx`), Spreadsheets (`.xlsx`, `.csv`), audio transcripts (`.mp3`, `.wav`), scanned pages, figures, and handwritten notes.
-*   🔍 **Hybrid Semantic Retrieval**: BGE-M3 dense and sparse hybrid search with Reciprocal Rank Fusion (RRF) and Cross-Encoder reranking.
-*   🧠 **Dynamic Routing & Agentic Reasoning**: Features a dual-mode engine:
-    *   **Fast RAG**: Direct, low-latency pipeline for straightforward queries.
-    *   **Deep Reasoning**: Dynamically activated state machine for multi-hop or complex queries.
-*   🔢 **Deterministic Table Execution**: Aggregates, filters, and calculates spreadsheet data programmatically in Python instead of relying on unreliable LLM arithmetic.
-*   🛡️ **Hallucination Guardrails**: Sentence-Level Evidence Coverage (SLEC) verifies every generated sentence against retrieved source coordinates (`bbox`, page, block ID) and automatically censors or flags unsupported claims.
-*   🇻🇳 **Cross-Lingual Alignment**: Accepts Vietnamese queries over English knowledge bases, performs cross-lingual retrieval, and returns sources in their original language.
+### Khởi chạy hệ thống bằng Docker Compose
+Hệ thống cung cấp một script PowerShell duy nhất `run.ps1` để quản lý toàn bộ vòng đời dịch vụ:
 
----
-
-## 🚀 Quick Start
-
-### 📋 Prerequisites
-- **Python** >= 3.12
-- **Node.js** >= 18
-- **Docker Desktop** (for MongoDB, Qdrant, and Redis)
-
-### ⚡ Start All Services
-Launch the entire system locally with a single PowerShell script:
 ```powershell
-.\start_all.ps1
+# 1. Kiểm tra môi trường và khởi động toàn bộ dịch vụ (API, Worker, Frontend, Qdrant, Redis)
+.\run.ps1
+
+# 2. Kiểm tra trạng thái sức khỏe của các service và kết nối Ollama
+.\run.ps1 status
+
+# 3. Xem log của service cụ thể (ví dụ: api hoặc worker)
+.\run.ps1 logs api
+
+# 4. Dừng và gỡ bỏ các container
+.\run.ps1 down
 ```
 
-Once up, the system is exposed at:
-- **Frontend App (Noelys)**: [http://localhost:5173](http://localhost:5173)
-- **Backend Swagger API Docs**: [http://localhost:8000/docs](http://localhost:8000/docs)
-- **Qdrant Vector DB Dashboard**: [http://localhost:6333/dashboard](http://localhost:6333/dashboard)
+### Các cổng dịch vụ mặc định:
+* **Giao diện người dùng (Frontend)**: [http://localhost](http://localhost) (Nginx proxy)
+* **Backend API Swagger**: [http://localhost:8000/docs](http://localhost:8000/docs)
+* **Qdrant Dashboard**: [http://localhost:6333/dashboard](http://localhost:6333/dashboard)
 
 ---
 
-## 🛠️ Repository Layout
+## 📁 Cấu trúc thư mục dự án
 
 ```text
-.
-├── backend/                  # FastAPI Application
+├── backend/                  # Mã nguồn Backend FastAPI
 │   ├── src/
-│   │   ├── agentic/          # Bounded agentic state-machine & planners
-│   │   ├── api/              # Thin FastAPI route handlers
-│   │   ├── core/             # App configs, security, LLM clients
-│   │   ├── guardrails/       # SLEC, citation alignment, quality gates
-│   │   ├── models/           # MongoDB Beanie ODM models
-│   │   ├── processing/       # Ingestion, OCR, handwriting readers, spreadsheets
-│   │   ├── rag/              # BGE-M3 embedding, Qdrant retrieval, RRF, reranking
-│   │   └── tasks/            # Celery async jobs
-│   └── tests/                # Comprehensive unit/integration tests
-├── frontend/                 # React 18, TypeScript, Vite, Tailwind CSS
-│   └── src/
-│       ├── components/       # Studio, Workspace, Evidence & Graph panels
-│       └── pages/            # Core views and canvas workspaces
-├── config/                   # Centralized model, retrieval, & guardrails YAML configs
-└── docs/                     # Documentation, assets, and design roadmaps
+│   │   ├── api/              # Đầu mút API REST
+│   │   ├── agentic/          # Bounded Multi-Agent Planning & Orchestration
+│   │   ├── processing/       # Phân tách tài liệu (Docling, Whisper, EasyOCR)
+│   │   ├── rag/              # Tìm kiếm lai (Qdrant, MongoDB KG, Reranker)
+│   │   ├── inference/        # Gọi LLM/VLM và xử lý bảng tất định
+│   │   └── guardrails/       # Tầng kiểm chứng sau sinh (SLEC, Citation Aligner)
+│   └── Dockerfile
+├── frontend/                 # Giao diện người dùng React + TypeScript + Vite
+│   ├── src/
+│   │   ├── components/       # Các panel Chat, Source, Evidence, GraphCanvas
+│   │   └── pages/            # Workspace và Login
+│   └── Dockerfile
+├── config/                   # Các tệp cấu hình tham số hệ thống (.yaml)
+├── docs/                     # Tài liệu thiết kế và sơ đồ kiến trúc
+├── evaluation/               # Tập dữ liệu gold benchmark & Scripts đánh giá ablation
+└── docker-compose.yml        # Định nghĩa môi trường deploy đa dịch vụ
 ```
 
 ---
 
-## ⚙️ Advanced Configuration & Guide
-
-<details>
-<summary><b>🔌 Environment Variables (<code>backend/.env</code>)</b></summary>
-
-Copy `backend/.env.example` to `backend/.env` and adjust the variables:
-
-```env
-AGENTBOOK_APP_ENV=development
-MONGODB_URI=mongodb://localhost:27017
-AGENTBOOK_MONGODB_DATABASE=agentbook
-AGENTBOOK_QDRANT_URL=http://localhost:6333
-AGENTBOOK_REDIS_URL=redis://localhost:6379/0
-
-# LLM Selection (local vs API)
-AGENTBOOK_LLM_DEFAULT_PROVIDER=local
-AGENTBOOK_LLM_LOCAL_MODEL=qwen2.5:7b
-AGENTBOOK_OLLAMA_BASE_URL=http://localhost:11434
-
-# For Cloud/OpenAI compatible models:
-# AGENTBOOK_LLM_DEFAULT_PROVIDER=openai_compatible
-# AGENTBOOK_OPENAI_BASE_URL=https://api.openai.com/v1
-# OPENAI_API_KEY=your_key_here
-# AGENTBOOK_OPENAI_MODEL=gpt-4o-mini
-```
-</details>
-
-<details>
-<summary><b>🎛️ Performance & RAG Tuning (<code>config/*.yaml</code>)</b></summary>
-
-All system thresholds and prompts live in the `config/` directory.
-
-- **`config/model_config.yaml`**: Configures Ollama, OpenAI-compatible APIs, embedding/reranking paths, OCR, visual models, and Whispers.
-- **`config/retrieval_config.yaml`**: Controls search width knobs (`dense_top_k`, `sparse_top_k`), routing parameters, table routing heuristics, and agentic reasoning thresholds.
-- **`config/guardrails_config.yaml`**: Establishes SLEC coverage thresholds, refusal gates, and claims evaluation.
-
-| Setting | Type | Description |
-|---|---|---|
-| `retrieval.agentic_rag_enabled` | Boolean | Global default toggle for Deep Reasoning availability |
-| `retrieval.dense_top_k` | Integer | Retrieval width for dense semantic search |
-| `retrieval.rerank_input_k` | Integer | Top candidates passed to cross-encoder |
-| `sentence_coverage.refuse_below` | Float | Fallback score below which a query is rejected |
-</details>
-
-<details>
-<summary><b>📮 Main API Endpoints</b></summary>
-
-API endpoints are versioned under `/api/v1`.
-
-| Method | Endpoint | Purpose |
-|---|---|---|
-| `POST` | `/query/ask` | Non-streaming grounded QA query |
-| `POST` | `/query/ask-stream` | Server-Sent Events (SSE) streaming query |
-| `POST` | `/query/ask-image` | Multimodal query using image input |
-| `POST` | `/query/ask-graph` | Graph-based conceptual retrieval query |
-| `POST` | `/materials/upload` | Upload a single training document |
-| `POST` | `/collections` | Create/group logical document collections |
-| `POST` | `/graph/mindmap` | Generate visual knowledge map |
-| `GET` | `/health` | Live backend health verification |
-</details>
-
-<details>
-<summary><b>🧪 Testing & Verification</b></summary>
-
-Run localized tests quickly:
-```powershell
-python -m pytest backend/tests/test_core backend/tests/test_guardrails/test_refusal_policy.py backend/tests/test_rag/test_query_router.py -q
-```
-
-Or execute the complete backend suite:
-```powershell
-python -m pytest backend/tests -q
-```
-
-To verify the production compilation of the React frontend:
-```powershell
-cd frontend
-npm run build
-```
-</details>
-
-<details>
-<summary><b>⚠️ Known Engineering Risks</b></summary>
-
-- **Resource Overheads**: Running BGE-M3 models, rerankers, OCR pipelines, and local LLMs requires a machine with dedicated VRAM. CPU-only execution will result in significant latency.
-- **Stale Cache / local DBs**: Do not commit local SQLite/Qdrant vector stores, database credentials, or generated files in the repository.
-- **Encoding Integrity**: Ensure all documents are UTF-8 clean. Corrupted characters will damage search accuracy and routing confidence.
-</details>
-
----
-
-## 📄 License
-Licensed under the [Apache License 2.0](LICENSE).
+## 📜 Giấy phép & Thông tin nghiên cứu
+Mã nguồn của hệ thống được công bố phục vụ mục đích học thuật và nghiên cứu. Chi tiết về báo cáo khoa học hệ thống của AgentBook tham khảo tại [paper.pdf](paper.pdf) hoặc [BaoCaoDoAn.pdf](BaoCaoDoAn.pdf).
