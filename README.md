@@ -1,11 +1,11 @@
-# AgentBook: Hệ thống GraphRAG đa phương thức bảo toàn và kiểm chứng dẫn chứng cho hỏi đáp tài liệu
+<h1 align="center">AgentBook: Hệ thống GraphRAG đa phương thức bảo toàn và kiểm chứng dẫn chứng cho hỏi đáp tài liệu</h1>
 
 <p align="center">
   <img src="frontend/public/noelys-logo.png" alt="Noelys Logo" width="150"/>
 </p>
 
 <p align="center">
-  <strong>Hệ thống GraphRAG đa phương thức bảo toàn và kiểm chứng dẫn chứng cho hỏi đáp tài liệu (AgentBook: An Evidence-Preserving Multimodal GraphRAG System for Document Q&A)</strong>
+  <strong>(AgentBook: An Evidence-Preserving Multimodal GraphRAG System for Document Q&A)</strong>
 </p>
 
 <p align="center">
