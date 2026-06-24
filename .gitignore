@@ -85,3 +85,7 @@ evaluation/cli/run_agentic_vs_plain.py
 evaluation/cli/judge_ladder.py
 evaluation/cli/rescore_ablation.py
 
+
+# Ignore all LaTeX files
+*.tex
+
