@@ -1,11 +1,11 @@
-<h1 align="center">AgentBook: Hệ thống GraphRAG đa phương thức bảo toàn và kiểm chứng dẫn chứng cho hỏi đáp tài liệu</h1>
+<h1 align="center">AgentBook: Hệ thống RAG đa phương thức bảo toàn và kiểm chứng dẫn chứng cho hỏi đáp tài liệu</h1>
 
 <p align="center">
   <img src="frontend/public/noelys-logo.png" alt="Noelys Logo" width="150"/>
 </p>
 
 <p align="center">
-  <strong>(AgentBook: An Evidence-Preserving Multimodal GraphRAG System for Document Q&A)</strong>
+  <strong>(AgentBook: An Evidence-Preserving Multimodal RAG System for Document Q&A)</strong>
 </p>
 
 <p align="center">
@@ -35,7 +35,7 @@ Hệ thống bảo toàn tuyệt đối thông tin tọa độ hình học (boun
    * **Ảnh quét & Chữ viết tay**: Nhận dạng thông qua EasyOCR và chuyển hướng VLM (Qwen2.5-VL) xử lý chữ viết tay hoặc biểu đồ phức tạp.
    * **Âm thanh**: Chuyển đổi giọng nói thành văn bản bằng `faster-whisper` giữ nguyên nhãn thời gian từng giây để phát lại citation dạng âm thanh.
 
-2. **Tìm kiếm lai kết hợp Đồ thị tri thức nhẹ (Lightweight GraphRAG)**:
+2. **Tìm kiếm lai kết hợp Đồ thị tri thức nhẹ (Lightweight Graph-augmented RAG)**:
    * Kết hợp tìm kiếm dày-thưa (Dense-Sparse RRF) sử dụng mô hình đa ngôn ngữ `BGE-M3`.
    * Tích hợp Đồ thị tri thức (Knowledge Graph gồm Entities, Relations, Events) lưu trữ trực tiếp trên MongoDB thay vì Neo4j để tối ưu tài nguyên và hỗ trợ câu hỏi multi-hop.
 
