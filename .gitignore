@@ -37,6 +37,7 @@ data/cache/*
 data/embeddings/*
 data/vectordb/*
 data/vectordb_local/*
+data/.hf_cache/
 evaluation/results/*
 
 # Eval Outputs
@@ -73,4 +74,14 @@ Thumbs.db
 
 # VietOCR local test files
 vietocr_*.txt
+
+
+# Evaluation scripts containing hardcoded API keys/configs
+evaluation/cli/topup_gaps.py
+evaluation/cli/topup_compare.py
+evaluation/cli/cleanup_queries.py
+evaluation/cli/build_benchmark.py
+evaluation/cli/run_agentic_vs_plain.py
+evaluation/cli/judge_ladder.py
+evaluation/cli/rescore_ablation.py
 
