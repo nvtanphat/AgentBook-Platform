@@ -1,11 +1,11 @@
-# AgentBook (Noelys) — Evidence-Preserving Multimodal GraphRAG Platform
+# AgentBook: Hệ thống GraphRAG đa phương thức bảo toàn và kiểm chứng dẫn chứng cho hỏi đáp tài liệu
 
 <p align="center">
   <img src="frontend/public/noelys-logo.png" alt="Noelys Logo" width="150"/>
 </p>
 
 <p align="center">
-  <strong>Hệ thống GraphRAG đa phương thức bảo toàn và kiểm chứng dẫn chứng cho hỏi đáp tài liệu doanh nghiệp phức tạp.</strong>
+  <strong>Hệ thống GraphRAG đa phương thức bảo toàn và kiểm chứng dẫn chứng cho hỏi đáp tài liệu (AgentBook: An Evidence-Preserving Multimodal GraphRAG System for Document Q&A)</strong>
 </p>
 
 <p align="center">
@@ -57,32 +57,34 @@ Hệ thống bảo toàn tuyệt đối thông tin tọa độ hình học (boun
 
 ```mermaid
 flowchart TD
-    User([Người dùng / Frontend React]) <--> API[FastAPI API Layer]
+    User(["Người dùng / Frontend React"]) <--> API[FastAPI API Layer]
     
-    subgraph Ingestion [1. Pipeline Nạp Dữ Liệu (Async Celery)]
-        Upload[Tải lên & Validation] --> Parse[Docling / OCR / Whisper / Spreadsheet]
-        Parse --> EvMap[Evidence Map & Dedup]
-        EvMap --> Chunking[Layout / Semantic / Audio / Slide Chunker]
-        Chunking --> KGExtract[KG Extraction & Linking]
-        KGExtract --> Embed[BGE-M3 Dense+Sparse & SigLIP Visual Embed]
+    subgraph Ingestion ["1. Pipeline Nạp Dữ Liệu (Async Celery)"]
+        Upload["Tải lên & Validation"] --> Parse["Docling / OCR / Whisper / Spreadsheet"]
+        Parse --> EvMap["Evidence Map & Dedup"]
+        EvMap --> Chunking["Layout / Semantic / Audio / Slide Chunker"]
+        Chunking --> KGExtract["KG Extraction & Linking"]
+        KGExtract --> Embed["BGE-M3 Dense+Sparse & SigLIP Visual Embed"]
     end
 
-    subgraph Storage [2. Hệ Thống Lưu Trữ]
-        Mongo[(MongoDB: Pages, Chunks, KG, Logs)]
-        Qdrant[(Qdrant Vector DB)]
-        FS[(Filesystem: Raw & Processed Artifacts)]
+    subgraph Storage ["2. Hệ Thống Lưu Trữ"]
+        Mongo[("MongoDB: Pages, Chunks, KG, Logs")]
+        Qdrant[("Qdrant Vector DB")]
+        FS[("Filesystem: Raw & Processed Artifacts")]
     end
 
-    subgraph QueryFlow [3. Pipeline Truy Vấn (Real-time)]
-        Router[Intent & Modality Router] --> QP[Dịch VI-EN, Multi-query, HyDE]
-        QP --> Retrieval{Tìm kiếm hỗn hợp}
-        Retrieval --> DenseSparse[Dense + Sparse Search]
-        Retrieval --> GraphRet[Graph Relation Search]
-        Retrieval --> VisualRet[Visual Image Search]
-        DenseSparse & GraphRet & VisualRet --> Rerank[Cross-Encoder Reranker & MMR]
-        Rerank --> Ctx[Evidence Bundle & Context Packing]
-        Ctx --> Gen[LLM / VLM Generation]
-        Gen --> Verify[SLEC & Citation Aligner & Quality Gate]
+    subgraph QueryFlow ["3. Pipeline Truy Vấn (Real-time)"]
+        Router["Intent & Modality Router"] --> QP["Dịch VI-EN, Multi-query, HyDE"]
+        QP --> Retrieval{"Tìm kiếm hỗn hợp"}
+        Retrieval --> DenseSparse["Dense + Sparse Search"]
+        Retrieval --> GraphRet["Graph Relation Search"]
+        Retrieval --> VisualRet["Visual Image Search"]
+        DenseSparse --> Rerank["Cross-Encoder Reranker & MMR"]
+        GraphRet --> Rerank
+        VisualRet --> Rerank
+        Rerank --> Ctx["Evidence Bundle & Context Packing"]
+        Ctx --> Gen["LLM / VLM Generation"]
+        Gen --> Verify["SLEC & Citation Aligner & Quality Gate"]
     end
 
     API --> Ingestion
