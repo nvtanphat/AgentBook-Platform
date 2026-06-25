@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import math
 import re
 import unicodedata
@@ -38,6 +39,7 @@ from src.schemas.graph import AutoVizResponse, GraphEdge, GraphNode, GraphRespon
 from src.schemas.mindmap import MindmapNode, MindmapResponse
 
 router = APIRouter(prefix="/graph", tags=["graph"])
+logger = logging.getLogger(__name__)
 
 _CROSS_MODAL_TYPES = frozenset({"table", "figure", "equation"})
 
@@ -379,6 +381,19 @@ _GENERIC_NOUN_SET = frozenset({
     "value", "score", "weight", "feature", "label", "class",
 })
 
+# Ubiquitous abstract nouns that ARE valid graph nodes but make terrible "Kiểm
+# chứng" anchors: they name-match almost any answer because the answer naturally
+# uses the word (quyền/người/ngày…), drowning the topic-specific nodes. Kept as
+# ascii-folded keys; only excluded in FOCUS matching, never from the graph itself.
+_FOCUS_GENERIC_SET = frozenset({
+    "quyen", "nghia vu", "nguoi", "ngay", "thang", "nam", "thoi han", "thoi gian",
+    "truong hop", "yeu cau", "hieu luc", "quyet dinh", "thong bao", "phap luat",
+    "noi dung", "thong tin", "van de", "muc dich", "gia tri", "tai san", "ca nhan",
+    "to chuc", "quy dinh", "hanh vi", "co quan", "don vi",
+    "right", "person", "people", "day", "month", "year", "time", "case",
+    "content", "information", "value", "purpose", "rule", "decision", "notice",
+})
+
 
 def _is_quality_entity_label(label: str) -> bool:
     """Reject entities that look like extraction noise.
@@ -572,11 +587,96 @@ def _evidence_refs(refs) -> list[dict[str, str | int]]:
     ]
 
 
+def _node_primary_evidence(
+    entity, text_map: dict[tuple[str, str], str]
+) -> tuple[list[dict[str, str | int]], str | None]:
+    """Pick the mention block that is actually VERIFIABLE for this node.
+
+    Prefers the mention whose chunk text contains the entity's canonical name
+    (so clicking "Kiểm chứng" lands on a passage that truly mentions it), then
+    returns that block first in evidence_refs plus its snippet text. Falls back
+    to the first block that has loaded text, then to plain refs with no snippet —
+    never an arbitrary unrelated block.
+    """
+    refs = list(entity.mention_refs)
+    folded_name = _ascii_fold(entity.canonical_name).strip()
+    best_idx: int | None = None
+    if folded_name:
+        for i, ref in enumerate(refs):
+            if not ref.block_id:
+                continue
+            text = text_map.get((str(ref.material_id), ref.block_id))
+            if text and folded_name in _ascii_fold(text):
+                best_idx = i
+                break
+    if best_idx is None:
+        for i, ref in enumerate(refs):
+            if ref.block_id and text_map.get((str(ref.material_id), ref.block_id)):
+                best_idx = i
+                break
+    if best_idx is None:
+        return _evidence_refs(refs), None
+    primary = refs[best_idx]
+    ordered = [primary, *refs[:best_idx], *refs[best_idx + 1:]]
+    snippet = text_map.get((str(primary.material_id), primary.block_id or ""))
+    return _evidence_refs(ordered), (snippet[:600] if snippet else None)
+
+
 def _blocks_in_reading_order(blocks: list) -> list:
     """Page blocks top-to-bottom. Defensive: re-indexed materials already store a
     corrected reading_order (so this is a no-op), but legacy materials parsed
     before the fix still need it. Shares one implementation with the parser."""
     return order_blocks_by_reading(blocks)
+
+
+async def _load_scoped_pages(query: dict) -> list:
+    """Load scoped pages with only the block fields the structure mindmap/graph
+    needs, via a projected raw-motor cursor.
+
+    A full ``MaterialPageDocument.find().to_list()`` over a 12-document
+    collection pulls every block's ``bbox``/``ocr_confidence``/``extra`` from a
+    remote (shared-tier) Atlas cluster, which throttles bulk egress — measured at
+    ~190 s for 428 pages / 13 k blocks. Projecting to the four fields the
+    hierarchy code actually reads and using a large batch size cuts that to
+    ~30 s. bbox is intentionally dropped: ``order_blocks_by_reading`` falls back
+    to the (already-correct) stored ``reading_order`` when blocks lack bbox.
+    """
+    from types import SimpleNamespace
+
+    motor = MaterialPageDocument.get_motor_collection()
+    projection = {
+        "material_id": 1,
+        "page_number": 1,
+        "blocks.block_id": 1,
+        "blocks.block_index": 1,
+        "blocks.block_type": 1,
+        "blocks.content": 1,
+        "blocks.reading_order": 1,
+        "blocks.extra": 1,
+    }
+    pages: list = []
+    # Hard cap so a whole-collection request can't pull unbounded pages off a
+    # throttled remote cluster and exceed the request timeout.
+    cursor = motor.find(query, projection).batch_size(500).limit(600)
+    async for doc in cursor:
+        blocks = [
+            SimpleNamespace(
+                block_id=b.get("block_id"),
+                block_index=b.get("block_index", 0),
+                block_type=b.get("block_type"),
+                content=b.get("content") or "",
+                reading_order=b.get("reading_order", 0),
+                extra=b.get("extra") or {},
+                bbox=None,
+            )
+            for b in (doc.get("blocks") or [])
+        ]
+        pages.append(SimpleNamespace(
+            material_id=doc.get("material_id"),
+            page_number=doc.get("page_number", 0),
+            blocks=blocks,
+        ))
+    return pages
 
 
 def _fallback_node(node_id: str) -> GraphNode:
@@ -1100,16 +1200,37 @@ async def graph(
     focus_text = " ".join(filter(None, [body.focus_query_text or "", body.focus_answer_text or ""])).strip()
     is_focus_mode = bool(focus_block_set or focus_material_set or focus_page_set or focus_text)
     primary_ids: set[str] = set()
+
+    # How many REAL typed knowledge edges touch each entity. Computed here (not
+    # only for the later node sort) so focus mode can prefer relational, topic-
+    # specific entities over ubiquitous generic concepts ("quyền", "người",
+    # "ngày") that name-match the answer simply because the answer uses the word.
+    knowledge_degree: dict[str, int] = defaultdict(int)
+    for r in relations:
+        if r.relation_type in _STRUCTURAL_RELATION_TYPES:
+            continue
+        if r.source_id.startswith("entity:") and r.target_id.startswith("entity:"):
+            knowledge_degree[r.source_id] += 1
+            knowledge_degree[r.target_id] += 1
     if is_focus_mode:
         primary: list = []
-        # Tier 1 (preferred): name match in query + answer text
+        # Tier 1 (preferred): name match in query + answer text.
+        # Diacritic-SENSITIVE, word-boundary match. Ascii-folding here conflated
+        # Vietnamese homographs after diacritic loss — e.g. the person "Lương"
+        # ("luong") falsely matched "lưu lượng" ("luu luong") in the answer and got
+        # marked as backing it. casefold() keeps diacritics; the lookarounds reject
+        # substring hits inside a longer word.
         if focus_text:
-            folded_text = _ascii_fold(focus_text)
+            text_cf = focus_text.casefold()
             for entity in deduped:
+                # Skip ubiquitous generic nouns — they match nearly any answer and
+                # bury the topic-specific nodes that actually back it.
+                if _ascii_fold(entity.canonical_name).strip() in _FOCUS_GENERIC_SET:
+                    continue
                 names = [entity.canonical_name, *(entity.aliases or [])]
                 for name in names:
-                    folded_name = _ascii_fold(name).strip()
-                    if len(folded_name) >= 3 and folded_name in folded_text:
+                    nm = name.casefold().strip()
+                    if len(nm) >= 3 and re.search(rf"(?<!\w){re.escape(nm)}(?!\w)", text_cf):
                         primary.append(entity)
                         break
 
@@ -1132,8 +1253,8 @@ async def graph(
         # NOTE: material-level fallback intentionally removed — it pulls every entity
         # in the cited document and defeats the purpose of "focused" view.
 
-        # Cap primary by mention_count (most central entities first). Earlier
-        # caps of 10/6 made focused views feel empty (e.g. KAN-GRU → 2-node graph).
+        # Cap primary by mention_count (most central entities first). Generic
+        # nouns are already excluded above, so the survivors are topic-specific.
         primary = sorted(primary, key=lambda e: len(e.mention_refs), reverse=True)[: settings.graph_focus_primary_cap]
         primary_ids = {_entity_slug(e.canonical_name) for e in primary}
 
@@ -1166,17 +1287,9 @@ async def graph(
         deduped = primary
 
     # ── Salience-aware node selection (KET-RAG skeleton idea) ────────────────
-    # Rank candidates by how many REAL typed knowledge edges touch them, not by
-    # raw mention_count. This demotes reference-list authors (0 typed edges) and
-    # promotes concept hubs, so the visible graph is knowledge-dense. Layout /
-    # positional edges are excluded so they cannot inflate salience.
-    knowledge_degree: dict[str, int] = defaultdict(int)
-    for r in relations:
-        if r.relation_type in _STRUCTURAL_RELATION_TYPES:
-            continue
-        if r.source_id.startswith("entity:") and r.target_id.startswith("entity:"):
-            knowledge_degree[r.source_id] += 1
-            knowledge_degree[r.target_id] += 1
+    # Rank candidates by how many REAL typed knowledge edges touch them (computed
+    # above), not by raw mention_count — demotes reference-list authors (0 typed
+    # edges) and promotes concept hubs, so the visible graph is knowledge-dense.
     entities = sorted(
         deduped,
         key=lambda e: (
@@ -1198,6 +1311,28 @@ async def graph(
         mats = await Material.find({"_id": {"$in": list(all_material_ids)}}).to_list()
         material_name_map = {str(m.id): m.original_name for m in mats}
 
+    # Pre-load the chunk text behind every entity mention block so each node can
+    # carry the EXACT verified passage it was extracted from. This makes the
+    # "Kiểm chứng" passage server-authoritative instead of a fragile client-side
+    # page-block guess (which could surface an unrelated block on the same page).
+    node_refs_by_material: dict[str, set[str]] = defaultdict(set)
+    for entity in all_entities:
+        for ref in entity.mention_refs:
+            if ref.block_id:
+                node_refs_by_material[str(ref.material_id)].add(ref.block_id)
+    node_text_map: dict[tuple[str, str], str] = {}
+    for mat_id_str, block_ids in node_refs_by_material.items():
+        try:
+            mat_chunks = await Chunk.find(
+                {"material_id": PydanticObjectId(mat_id_str), "source_block_ids": {"$in": list(block_ids)}}
+            ).to_list()
+            for chunk in mat_chunks:
+                for bid in chunk.source_block_ids:
+                    if bid in block_ids and (mat_id_str, bid) not in node_text_map:
+                        node_text_map[(mat_id_str, bid)] = chunk.content
+        except Exception:
+            logger.debug("Node evidence chunk load failed", extra={"material_id": mat_id_str})
+
     nodes_by_id: dict[str, GraphNode] = {}
     for entity in all_entities:
         cleaned = _clean_entity_label(entity.canonical_name) or entity.canonical_name
@@ -1208,6 +1343,7 @@ async def graph(
         existing = nodes_by_id.get(slug)
         if existing and existing.mention_count >= len(entity.mention_refs):
             continue
+        ordered_refs, node_evidence_text = _node_primary_evidence(entity, node_text_map)
         nodes_by_id[slug] = GraphNode(
             id=slug,
             label=_short_label(cleaned, limit=40),
@@ -1220,7 +1356,8 @@ async def graph(
                 for ref in entity.mention_refs
                 if str(ref.material_id) in material_name_map
             ))[:5],
-            evidence_refs=_evidence_refs(entity.mention_refs),
+            evidence_refs=ordered_refs,
+            evidence_text=node_evidence_text,
         )
 
     node_ids = set(nodes_by_id.keys())
@@ -1472,7 +1609,7 @@ async def auto_viz(
         .limit(settings.graph_max_relations_fetch)
         .to_list()
     )
-    pages = await MaterialPageDocument.find(page_query).to_list()
+    pages = await _load_scoped_pages(page_query)
 
     # Collect headings (ordered) + all block texts for the signal computations.
     heading_items: list[HeadingItem] = []
@@ -1560,6 +1697,19 @@ async def auto_viz(
         )
         if is_focus and relevant_heading_ids:
             tree = prune_tree_to_focus(tree, relevant_heading_ids)
+        # A citation network is only meaningful when it actually LINKS articles.
+        # On scanned/OCR docs the "Điều N" cross-references are garbled, so the
+        # builder collapses to a 1–2 node stub with no edges — useless in the
+        # Knowledge Graph tab. Fall back to the concept graph (far richer) while
+        # keeping the section tree for the Mindmap tab.
+        cn_cfg = settings.viz_config.get("citation_network", {}) or {}
+        min_nodes = int(cn_cfg.get("min_useful_nodes", 3))
+        min_edges = int(cn_cfg.get("min_useful_edges", 1))
+        if mode == "citation_network" and (
+            graph is None or len(graph.nodes) < min_nodes or len(graph.edges) < min_edges
+        ):
+            mode = "concept_graph"
+            graph = None  # signal the client to load the concept graph via POST /graph
         # Nothing usable from structure → let the client fall back to concept graph.
         if not graph and not tree:
             mode = "concept_graph"
@@ -1711,7 +1861,7 @@ async def mindmap(
     page_query = _scope_query(body)
     if body.material_ids:
         page_query["material_id"] = {"$in": [PydanticObjectId(m) for m in body.material_ids]}
-    pages = await MaterialPageDocument.find(page_query).to_list()
+    pages = await _load_scoped_pages(page_query)
 
     heading_items: list[HeadingItem] = []
     block_texts: list[str] = []
@@ -1821,7 +1971,7 @@ async def mindmap(
                 children: list[MindmapNode] = []
                 seen_labels: set[str] = set()
                 for chunk in top_chunks:
-                    raw = (chunk.content_text or "").strip()
+                    raw = (chunk.content or "").strip()
                     snippet = raw[:80].split("\n")[0].strip()
                     label = _mindmap_display_label(_short_label(snippet, limit=52)) if snippet else None
                     if not label or not _is_mindmap_label(label) or label in seen_labels:

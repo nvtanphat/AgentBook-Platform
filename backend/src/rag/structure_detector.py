@@ -212,6 +212,28 @@ def _article_label(text: str, max_words: int = 6) -> str:
     return " ".join(words[:max_words]) + "…"
 
 
+_BARE_NUMBER_RE = re.compile(r"^[\d\W_]+$")
+
+
+def _is_meaningful_heading(label: str) -> bool:
+    """Reject OCR/page-number noise that scanned PDFs leak into the heading set.
+
+    Drops bare page numbers ("11", "62"), punctuation-only fragments and mojibake
+    so they never become tree nodes the user could "Kiểm chứng" against. A real
+    section heading ("Điều 90. Chia pháp nhân", "CHƯƠNG I") always survives.
+    """
+    s = label.strip()
+    if len(s) < 3:
+        return False
+    if _BARE_NUMBER_RE.match(s):  # only digits/punctuation → page-number leak
+        return False
+    if sum(1 for c in s if c.isalpha()) < 2:  # needs real letters to be a heading
+        return False
+    if any(marker in s for marker in ("Ã", "Â", "â", "�")):  # OCR mojibake
+        return False
+    return True
+
+
 def build_hierarchy_tree(
     *,
     root_topic: str,
@@ -239,7 +261,7 @@ def build_hierarchy_tree(
         if emitted >= max_nodes:
             break
         label = _short(item.text)
-        if len(label) < 2:
+        if not _is_meaningful_heading(label):
             continue
         # Native parser level (Tier 0) is authoritative; else re-derive from
         # ladder keywords / numbering; else nest under the current section.

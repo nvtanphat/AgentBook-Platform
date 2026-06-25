@@ -220,6 +220,15 @@ _MULTIHOP_RE = re.compile(
     re.IGNORECASE,
 )
 _CROSSDOC_RE = re.compile(r"\b(tat ca tai lieu|cac tai lieu|nhieu nguon|across documents|all sources|moi nguon)\b", re.IGNORECASE)
+# Two or more interrogatives in one query = a compound / multi-question ask that
+# genuinely needs >1 retrieval+reasoning hop (e.g. "X khi nao, va sau khi X thi
+# khi nao Y?"). The bare-"và" exclusion above meant these slipped through as
+# SIMPLE and never reached the agentic path even with the flag on.
+_INTERROGATIVE_RE = re.compile(
+    r"(khi nao|nhu the nao|the nao|la gi|bao nhieu|ra sao|tai sao|vi sao|o dau|"
+    r"\bwhen\b|\bhow\b|\bwhy\b|\bwhat\b|\bwhich\b|\bwhere\b)",
+    re.IGNORECASE,
+)
 _TEMPORAL_RE = re.compile(
     r"\b(theo thoi gian|tien trinh|lich su|truoc do|sau do|"
     r"before that|after that|over time|timeline|evolution)\b",
@@ -306,6 +315,8 @@ class QueryRouter:
         factors += 1 if _TEMPORAL_RE.search(text) else 0
         has_trend = bool(_TREND_RE.search(text))
         factors += 1 if has_trend else 0
+        # 2+ distinct interrogatives → compound multi-question → multi-hop.
+        factors += 1 if len(_INTERROGATIVE_RE.findall(text)) >= 2 else 0
         if decision.route_type in (RouteType.COMPARISON, RouteType.GRAPH_RELATION):
             factors += 1  # relational/synthesis routes are inherently multi-hop
         if factors >= 3:

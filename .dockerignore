@@ -1,16 +1,44 @@
+# Git & IDE
 .git
+.github
+.vscode
+.claude
+.gemini
+
+# Python artifacts
+**/__pycache__
+**/*.pyc
+**/*.pyo
+*.egg-info
 .pytest_cache
-.codex-logs
-data
-docs
-evaluation
-notebooks
-stitch_agentbook_graph_rag_intelligence_dashboard
+.mypy_cache
+
+# Node
 frontend/node_modules
 frontend/dist
 frontend/.vite
-backend/__pycache__
-backend/**/*.pyc
-backend/**/__pycache__
-**/__pycache__
-**/*.pyc
+
+# Logs
+*.log
+*.out.log
+*.err.log
+
+# Data & uploads (mounted as volumes at runtime)
+data/
+
+# Dev/research artifacts (not needed in image)
+evaluation/
+notebooks/
+docs/
+notes/
+scripts/
+stitch_agentbook_graph_rag_intelligence_dashboard/
+
+# Build artifacts
+*.tex
+*.backup*
+
+# Secrets — never bake into image
+backend/.env
+backend/.env.production
+.env

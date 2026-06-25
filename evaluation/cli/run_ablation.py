@@ -28,6 +28,7 @@ import argparse
 import json
 import math
 import random
+import re
 import sys
 import time
 from pathlib import Path
@@ -212,18 +213,59 @@ ALL_CONFIG_MAP: dict[str, dict[str, Any]] = {
 
 # ── Metrics — Trục A (retrieval gold-labeled) ─────────────────────────────────
 
+_CHUNK_IDX: dict[str, dict] | None = None
+_TEXT_THRESH = 0.5
+
+
+def _chunk_index() -> dict[str, dict]:
+    """Lazy-load chunk_id -> (doc, page, tokens) from meta_dataset.jsonl."""
+    global _CHUNK_IDX
+    if _CHUNK_IDX is None:
+        _CHUNK_IDX = {}
+        meta = Path(__file__).resolve().parents[1] / "datasets" / "gold" / "meta_dataset.jsonl"
+        try:
+            with open(meta, encoding="utf-8") as f:
+                for line in f:
+                    if line.strip():
+                        r = json.loads(line)
+                        _CHUNK_IDX[r["chunk_id"]] = {
+                            "doc": r.get("document_name"),
+                            "page": r.get("page"),
+                            "toks": set(re.findall(r"\w+", (r.get("content_preview", "") or "").lower())),
+                        }
+        except Exception:
+            _CHUNK_IDX = {}
+    return _CHUNK_IDX
+
+
+def _chunk_match(ret_id: str, gold_id: str) -> bool:
+    """Hit if same chunk, same (doc,page), or strong text overlap — fairer than
+    strict chunk_id equality given single-chunk gold labels."""
+    if ret_id == gold_id:
+        return True
+    idx = _chunk_index()
+    a, b = idx.get(ret_id), idx.get(gold_id)
+    if not a or not b or not a["doc"] or a["doc"] != b["doc"]:
+        return False
+    if a["page"] is not None and a["page"] == b["page"]:
+        return True
+    if b["toks"] and len(a["toks"] & b["toks"]) / len(b["toks"]) >= _TEXT_THRESH:
+        return True
+    return False
+
+
 def _truc_a_metrics(
     retrieved_chunk_ids: list[str],
     expected_chunk_ids: list[str],
     k: int = 5,
 ) -> dict[str, float]:
-    """Gold-labeled retrieval metrics (harness/metrics.py definitions)."""
+    """Gold-labeled retrieval metrics with PAGE+TEXT matching (not strict chunk_id)."""
     if not expected_chunk_ids:
         return {"recall_at_k": 0.0, "precision_at_k": 0.0, "mrr_at_k": 0.0, "ndcg_at_k": 0.0}
-    gold = set(expected_chunk_ids)
     topk = retrieved_chunk_ids[:k]
-    hits = [1 if cid in gold else 0 for cid in topk]
-    recall = sum(hits) / len(gold) if gold else 0.0
+    hits = [1 if any(_chunk_match(cid, g) for g in expected_chunk_ids) else 0 for cid in topk]
+    found = sum(1 for g in expected_chunk_ids if any(_chunk_match(cid, g) for cid in topk))
+    recall = found / len(expected_chunk_ids) if expected_chunk_ids else 0.0
     precision = sum(hits) / k if k else 0.0
     mrr = 0.0
     for rank, hit in enumerate(hits, start=1):

@@ -115,22 +115,12 @@ class ParseIndexPipeline:
             section_confidence=settings.structure_section_confidence,
             belongs_to_confidence=settings.structure_belongs_to_confidence,
         )
-        # Semantic relation extraction adds an extra LLM call per material on
-        # top of entity extraction. Small local models (qwen2.5:3b) saturate
-        # the Ollama queue and time out, leaving 0 semantic relations and
-        # wasted compute. Route this task to a configured cloud
-        # (OpenAI-compatible) endpoint when available so latency / reliability
-        # match the workload, while keeping the local LLM for answer generation
-        # and entity-extraction fallback. Falls back to the default LLM for a
-        # cloud-default setup, and to None for a local-only setup with no key.
-        if settings.openai_api_key:
-            from src.core.openai_client import OpenAICompatibleLLM
-
-            _semantic_llm = OpenAICompatibleLLM(settings)
-        elif (settings.llm_default_provider or "").lower() != "local":
-            _semantic_llm = _llm
-        else:
-            _semantic_llm = None
+        # Semantic relation extraction + entity refinement add LLM calls per
+        # material on top of entity extraction. Cloud routing removed — these
+        # now run on the same local LLM as answer generation (qwen2.5:7b). On a
+        # GPU host this is reliable; on a tiny local model (e.g. qwen2.5:3b) the
+        # Ollama queue can saturate, so use a capable local model.
+        _semantic_llm = _llm
         self.semantic_relation_extractor = LLMSemanticRelationExtractor(
             llm=_semantic_llm,
             max_concepts=settings.graph_semantic_relation_max_concepts,

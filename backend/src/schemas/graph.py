@@ -21,6 +21,10 @@ class GraphNode(BaseModel):
     is_focused: bool = False          # In focus mode: directly matches citation evidence (primary node)
     source_docs: list[str] = Field(default_factory=list)
     evidence_refs: list[dict[str, str | int]] = Field(default_factory=list)
+    # Verified passage text of the node's PRIMARY mention block (the block whose
+    # chunk text actually contains the entity name). Lets "Kiểm chứng" show the
+    # exact grounding passage server-side, instead of a fragile page-block guess.
+    evidence_text: str | None = None
 
 
 class GraphEdge(BaseModel):

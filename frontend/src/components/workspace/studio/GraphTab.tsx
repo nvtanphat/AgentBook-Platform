@@ -318,6 +318,7 @@ type SelectedNode = {
   mention_count: number;
   source_docs: string[];
   evidenceRefs: Array<Record<string, string | number>>;
+  evidenceText?: string | null;   // server-verified passage of the node's primary mention block
   connections: { label: string; relation: string }[];
 };
 
@@ -427,6 +428,18 @@ function NodeQuickRead({
     const docId = String(ref.doc_id ?? ref.material_id);
     const page = Number(ref.page);
     const blockId = typeof ref.block_id === "string" && ref.block_id ? ref.block_id : null;
+
+    // Server already resolved the EXACT verified passage for this node (the block
+    // whose chunk text actually mentions the entity). Trust it: no round-trip and
+    // no risk of surfacing an unrelated block that merely shares the page.
+    if (node.evidenceText && node.evidenceText.trim()) {
+      setText(node.evidenceText.trim());
+      setSrc({ docId, page, blockId, docName: null });
+      setFailed(false);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     setFailed(false);
     setText(null);
@@ -434,20 +447,19 @@ function NodeQuickRead({
       .then((res) => {
         if (cancelled) return;
         const blocks: EvidenceBlock[] = res.blocks ?? [];
-        // Show the exact cited block. This is the precise grounding passage the
-        // node points to and is correct for any document type (no language- or
-        // format-specific reconstruction). Reading the surrounding section is one
-        // click away via "Mở toàn văn". Fallbacks stay generic:
+        // Fallback path (node carried no server-verified text). Only show a block
+        // we can ACTUALLY tie to this node — never an arbitrary "first block on the
+        // page", which is the classic source of confidently-wrong evidence:
         //   1. exact block_id match
         //   2. the block whose text contains the node label
-        //   3. the first block on the page
+        // If neither matches, leave it empty and say so honestly.
         let chosen = blockId ? blocks.filter((b) => b.block_id === blockId) : [];
         if (!chosen.length) {
           const needle = node.label.trim().toLowerCase();
           const match = needle
             ? blocks.find((b) => (b.snippet_original ?? "").toLowerCase().includes(needle))
             : undefined;
-          chosen = match ? [match] : blocks.slice(0, 1);
+          chosen = match ? [match] : [];
         }
         const joined = chosen.map((b) => b.snippet_original).filter(Boolean).join("\n\n").trim();
         setText(joined || null);
@@ -463,7 +475,7 @@ function NodeQuickRead({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [node.id, ownerId, collectionId]);
+  }, [node.id, node.evidenceText, ownerId, collectionId]);
 
   if (!node.evidenceRefs.length) return null;
 
@@ -489,7 +501,7 @@ function NodeQuickRead({
         </blockquote>
       ) : (
         <p className="rounded-lg border border-outline/40 bg-slate-50 px-3 py-2 text-[11px] text-muted">
-          {failed ? "Không tải được đoạn văn nguồn." : "Node này chưa gắn đoạn văn text."}
+          {failed ? "Không tải được đoạn văn nguồn." : "Không tìm thấy đoạn văn khớp chính xác cho node này."}
         </p>
       )}
       {onOpenEvidence && src && (
@@ -1192,6 +1204,7 @@ export default function GraphTab({
       mention_count: (node as any)?.mention_count ?? 0,
       source_docs: (node as any)?.source_docs ?? [],
       evidenceRefs: (node as any)?.evidence_refs ?? [],
+      evidenceText: (node as any)?.evidence_text ?? null,
       connections,
     });
   }, [canvas]);

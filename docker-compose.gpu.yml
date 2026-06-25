@@ -1,0 +1,61 @@
+# ============================================================
+# GPU override — chạy stack trên máy có NVIDIA GPU (vd RTX 4060).
+#
+# Dùng kèm file gốc, KHÔNG thay thế:
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+# hoặc gọn hơn:  .\run.ps1 up -Gpu   /   .\run.ps1 build -Gpu
+#
+# Yêu cầu trên máy GPU:
+#   - NVIDIA driver (>=535 cho cu121) + nvidia-container-toolkit đã cài
+#   - Ollama chạy trên host, đã `ollama pull qwen2.5:7b` (Ollama tự dùng GPU)
+#
+# Profile VRAM cho 4060 (8GB): Ollama 7b (~5-6GB) trên GPU; BGE-M3 + reranker +
+# SigLIP trên GPU FP16 (~2.6GB). Whisper + OCR giữ CPU để không tranh VRAM lúc
+# ingest (figure-caption gọi Ollama VLM cùng lúc). Nếu vẫn OOM → đổi LLM sang
+# qwen2.5:3b hoặc bỏ reranker xuống CPU (AGENTBOOK_RERANKER_DEVICE=cpu).
+# ============================================================
+services:
+  api:
+    build:
+      args:
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cu121
+    environment:
+      AGENTBOOK_EMBEDDING_DEVICE: cuda
+      AGENTBOOK_EMBEDDING_USE_FP16: "true"
+      AGENTBOOK_EMBEDDING_BATCH_SIZE: "16"
+      AGENTBOOK_RERANKER_DEVICE: cuda
+      AGENTBOOK_VISUAL_EMBEDDING_DEVICE: cuda
+      # Whisper + VietOCR cố ý giữ CPU (xem ghi chú VRAM ở trên)
+      AGENTBOOK_AUDIO_WHISPER_DEVICE: cpu
+      AGENTBOOK_OCR_VIETOCR_DEVICE: cpu
+      NVIDIA_VISIBLE_DEVICES: all
+    deploy:
+      resources:
+        limits: { memory: 6G }
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  worker:
+    build:
+      args:
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cu121
+    environment:
+      AGENTBOOK_EMBEDDING_DEVICE: cuda
+      AGENTBOOK_EMBEDDING_USE_FP16: "true"
+      AGENTBOOK_EMBEDDING_BATCH_SIZE: "16"
+      AGENTBOOK_RERANKER_DEVICE: cuda
+      AGENTBOOK_VISUAL_EMBEDDING_DEVICE: cuda
+      AGENTBOOK_AUDIO_WHISPER_DEVICE: cpu
+      AGENTBOOK_OCR_VIETOCR_DEVICE: cpu
+      NVIDIA_VISIBLE_DEVICES: all
+    deploy:
+      resources:
+        limits: { memory: 7G }
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

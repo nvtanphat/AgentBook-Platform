@@ -21,6 +21,7 @@ retrieval:
   rerank_input_k: 30       # was 20 → 30 (match dense/sparse_top_k so high-rank gold chunks survive to rerank)
   graph_max_hops: 2
   agentic_rag_enabled: true
+  agentic_planner_llm_enabled: true   # LLM planner decomposes multi-hop queries into sub-questions (1 extra LLM call); off = single-pass plan
   agentic_critic_enabled: false   # skip post-synthesis critic loop (saves 30-90s/query); guardrails + slec already cover review
   agentic_max_retrieval_iterations: 0   # single retrieval pass; iterations re-ran same queries (no new info) — pure overhead
   multi_query_enabled: true

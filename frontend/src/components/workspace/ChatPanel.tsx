@@ -1,6 +1,6 @@
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, Brain, CheckCircle2, ChevronDown, ChevronUp, FileText, Image, ImagePlus, Loader2, Network, Send, Table2, Trash2, Library, X, Workflow, Zap } from "lucide-react";
-import { API_V1_BASE_URL, Citation, QueryResponse, SentenceCoverageReport, askQuestionStream, askQuestionWithImage } from "../../api/client";
+import { API_BASE_URL, API_V1_BASE_URL, Citation, QueryResponse, SentenceCoverageReport, askQuestionStream, askQuestionWithImage } from "../../api/client";
 import { useWorkspace } from "../../state/workspace";
 import { StudioTab } from "../../pages/WorkspacePage";
 import MarkdownRenderer from "../MarkdownRenderer";
@@ -493,9 +493,23 @@ function citationFileIcon(name: string) {
   return <FileText size={10} className="text-slate-400 shrink-0" />;
 }
 
-function isImageCitation(c: Citation): boolean {
+// Resolve a real, displayable image URL for a citation, or null.
+//   1. An extracted figure image (PDF figures etc.) → figure endpoint URL.
+//   2. A whole-document image upload (png/jpg/…) → raw material URL.
+// A "figure" block_type WITHOUT a saved figure image is NOT displayable as an
+// image (the /raw endpoint would return the source PDF → broken <img>), so it
+// must not enter the visual strip.
+function citationImageSrc(c: Citation, ownerId: string): string | null {
+  const figUrl =
+    c.figure_image_url ||
+    (c.evidence_blocks ?? []).find((b) => b.figure_image_url)?.figure_image_url ||
+    null;
+  if (figUrl) return figUrl.startsWith("http") ? figUrl : `${API_BASE_URL}${figUrl}`;
   const name = (c.doc_name || "").toLowerCase();
-  return /\.(png|jpe?g|gif|webp|bmp)$/.test(name) || c.block_type === "figure" || c.block_type === "image";
+  if (/\.(png|jpe?g|gif|webp|bmp)$/.test(name) && c.doc_id) {
+    return `${API_V1_BASE_URL}/materials/${c.doc_id}/raw?owner_id=${encodeURIComponent(ownerId)}`;
+  }
+  return null;
 }
 
 function isAudioCitation(c: Citation): boolean {
@@ -513,8 +527,13 @@ function VisualCitationStrip({
   ownerId: string;
   onSelect: (c: Citation) => void;
 }) {
-  // Show inline thumbnails for image citations. Audio gets a special tile.
-  const visual = citations.filter((c) => (isImageCitation(c) || isAudioCitation(c)) && c.doc_id);
+  // Show inline thumbnails only for citations with a REAL displayable image
+  // (extracted figure or whole-document image upload). Audio gets a special
+  // tile. A PDF figure-caption block with no saved image is excluded so it
+  // doesn't render a broken <img> pointing at the source PDF.
+  const visual = citations.filter(
+    (c) => (citationImageSrc(c, ownerId) || isAudioCitation(c)) && c.doc_id,
+  );
   // Dedup by doc_id (one tile per source)
   const seen = new Set<string>();
   const tiles = visual.filter((c) => {
@@ -528,7 +547,7 @@ function VisualCitationStrip({
     <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
       {tiles.map((c, i) => {
         const isAudio = isAudioCitation(c);
-        const url = `${API_V1_BASE_URL}/materials/${c.doc_id}/raw?owner_id=${encodeURIComponent(ownerId)}`;
+        const url = citationImageSrc(c, ownerId) ?? "";
         const shortName = c.doc_name.replace(/\.[^.]+$/, "");
         const audioBlock = isAudio ? (c.evidence_blocks ?? []).find((b) => b.audio_start_seconds != null) : null;
         const startSec = audioBlock?.audio_start_seconds ?? 0;
@@ -553,6 +572,11 @@ function VisualCitationStrip({
                 alt={c.doc_name}
                 loading="lazy"
                 className="h-full w-full object-cover transition group-hover:scale-105"
+                onError={(e) => {
+                  // Safety net: hide a tile whose image fails to load instead of
+                  // showing the browser's broken-image glyph.
+                  (e.currentTarget.closest("button") as HTMLElement | null)?.style.setProperty("display", "none");
+                }}
               />
             )}
             {/* Overlay with name */}

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from dataclasses import dataclass
 
 from src.core.config import Settings
@@ -12,6 +13,14 @@ logger = logging.getLogger(__name__)
 os.environ.setdefault("USE_TF", "0")
 os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
 os.environ.setdefault("USE_FLAX", "0")
+
+# Serialize BGE-M3 encode across the whole process. The encode is a CPU-bound
+# torch op that internally fans out to ~half the cores; FastAPI runs it on a
+# threadpool, so N concurrent queries spawn N concurrent encodes that oversubscribe
+# the CPU and each collapse from <1s to ~50s (thread thrashing). One encode at a
+# time → each runs at full speed; concurrent queries queue instead of thrashing.
+# EMBEDDING_MAX_CONCURRENCY raises the cap if the host has cores to spare.
+_ENCODE_SEMAPHORE = threading.Semaphore(max(1, int(os.environ.get("EMBEDDING_MAX_CONCURRENCY", "1"))))
 
 
 def _patch_flag_embedding_dtype_kwarg() -> None:
@@ -117,14 +126,17 @@ class BGEM3Embedder:
         # Retry with halved batch size on OOM to survive low-RAM environments
         for attempt in range(4):
             try:
-                output = self.model.encode(
-                    texts,
-                    batch_size=batch_size,
-                    max_length=max_length,
-                    return_dense=True,
-                    return_sparse=True,
-                    return_colbert_vecs=False,
-                )
+                # Serialize the heavy torch encode so concurrent queries don't
+                # oversubscribe the CPU and thrash each other down to ~50s/batch.
+                with _ENCODE_SEMAPHORE:
+                    output = self.model.encode(
+                        texts,
+                        batch_size=batch_size,
+                        max_length=max_length,
+                        return_dense=True,
+                        return_sparse=True,
+                        return_colbert_vecs=False,
+                    )
                 break
             except (MemoryError, RuntimeError) as exc:
                 if batch_size <= 1:

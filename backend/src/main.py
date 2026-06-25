@@ -164,6 +164,33 @@ async def _reenqueue_uploaded_materials(settings) -> None:
     logger.info("Re-enqueued %d/%d uploaded materials", ok, len(uploaded))
 
 
+async def _warmup_models(settings, logger: logging.Logger) -> None:
+    """Pre-load BGE-M3 embedder and CrossEncoder reranker into RAM at startup."""
+    import asyncio
+
+    async def _load_embedder():
+        try:
+            from src.rag.embedder import get_cached_bge_m3_model
+            await asyncio.to_thread(get_cached_bge_m3_model, settings)
+            logger.info("BGE-M3 embedder warmed up")
+        except Exception as exc:
+            logger.warning("BGE-M3 embedder warmup failed (will warm on first query): %s", exc)
+
+    async def _load_reranker():
+        try:
+            from src.rag.reranker import CrossEncoderReranker
+            reranker = CrossEncoderReranker(settings)
+            await reranker._aload_model()
+            logger.info("CrossEncoder reranker warmed up")
+        except Exception as exc:
+            logger.warning("CrossEncoder reranker warmup failed (will warm on first query): %s", exc)
+
+    # Sequentially, not gathered: initializing two torch models concurrently
+    # races on device placement and raises "Cannot copy out of meta tensor".
+    await _load_embedder()
+    await _load_reranker()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _configure_logging()
@@ -179,6 +206,11 @@ async def lifespan(app: FastAPI):
         await _ensure_seed_user(settings)
         await _recover_stuck_materials()
         await _reenqueue_uploaded_materials(settings)
+    # Pre-warm heavy models as a background task so startup doesn't block.
+    # create_task before yield = task runs concurrently while server serves traffic.
+    if not settings.testing:
+        import asyncio
+        asyncio.create_task(_warmup_models(settings, logger))
     yield
     await shutdown_background_tasks()
     await close_query_service()

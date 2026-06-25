@@ -1,8 +1,9 @@
 upload:
   max_file_size_mb: 100  # audio files (mp3/wav/m4a) can be larger than PDFs
   # owner = reject the same binary across all collections for a user.
-  # collection = legacy behavior; only reject duplicates inside one collection.
-  dedupe_scope: "owner"
+  # collection = only reject duplicates inside one collection (lets a user add
+  #   the same source document to multiple collections — the common case).
+  dedupe_scope: "collection"
   allowed_extensions:
     - "pdf"
     - "docx"

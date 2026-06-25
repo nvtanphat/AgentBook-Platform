@@ -1,6 +1,8 @@
 fastapi==0.115.5
 uvicorn[standard]==0.32.1
-pydantic==2.9.2
+pydantic[email]==2.9.2
+# explicit: pip skips the [email] extra when torch pre-installs bare pydantic first
+email-validator>=2.0.0
 pydantic-settings==2.6.1
 beanie==1.26.0
 motor==3.6.0
@@ -8,21 +10,37 @@ qdrant-client==1.12.1
 python-multipart==0.0.17
 PyYAML==6.0.2
 httpx==0.27.2
-pytest==8.3.4
-pytest-asyncio==0.24.0
 celery==5.4.0
 redis==5.2.0
 docling
 pypdf
+# PyMuPDF (fitz): renders PDF pages for figure captioning + visual-evidence
+# backfill. Without it those paths silently no-op (return None).
+PyMuPDF>=1.24.0
 transformers>=4.49,<4.53
 easyocr
+# VietOCR: tone-accurate Vietnamese recognition on scanned PDFs. config/
+# model_config.yaml sets recognition_engine: "vietocr"; without it Vietnamese
+# OCR raises DependencyUnavailableError and the whole ingest fails.
+vietocr>=0.3.13
+# Per-sentence / per-block language detection (cross-lingual routing). Falls back
+# to a latin-char heuristic when absent, but is far more accurate installed.
+langdetect>=1.0.9
 openpyxl
 xlrd
-opencv-python
+# headless variant — no Qt/GTK GUI libs needed in container
+opencv-python-headless
 numpy
 FlagEmbedding>=1.4.0
 sentence-transformers>=2.7.0
+# GLiNER2 zero-LLM entity extraction. config/extraction_config.yaml defaults to
+# entity_backend: "gliner"; without this the extractor silently falls back to a
+# regex grabber that yields single-syllable junk entities for every new upload.
+gliner>=0.2.13
+faster-whisper>=1.0.0
+bcrypt>=4.0.0
 slowapi==0.1.9
 rapidfuzz>=3.6.0
 Pillow>=10.0.0
 networkx>=3.3
+# torch and torchvision are installed separately in Dockerfile with CPU-only index URL

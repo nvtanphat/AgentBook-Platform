@@ -28,6 +28,12 @@ celery_app.conf.update(
     task_acks_late=True,
     task_reject_on_worker_lost=True,
     task_max_retries=3,
+    # Redis re-delivers any task still running past the broker visibility_timeout
+    # (default 3600s). A 90+-page OCR ingest can run >1h, so with acks_late it was
+    # being re-queued every hour and re-processed forever. Widen the window well
+    # past the longest ingest so a still-running task is never falsely redelivered.
+    broker_transport_options={"visibility_timeout": 21600},  # 6h
+    result_backend_transport_options={"visibility_timeout": 21600},
 )
 
 

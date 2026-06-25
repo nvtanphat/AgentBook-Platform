@@ -654,7 +654,7 @@ def get_settings() -> Settings:
         llm_timeout_seconds=float(env_value("LLM_TIMEOUT_SECONDS", llm_config.get("timeout_seconds", 180.0))),
         reranker_enabled=env_bool("RERANKER_ENABLED", reranker_config.get("enabled", True)),
         reranker_model_name=reranker_config.get("model_name", "BAAI/bge-reranker-v2-m3"),
-        reranker_device=reranker_config.get("device", "cpu"),
+        reranker_device=env_value("RERANKER_DEVICE", reranker_config.get("device", "cpu")),
         reranker_max_pairs=int(reranker_config.get("max_pairs", 80)),
         dense_top_k=retrieval_section.get("dense_top_k", 20),
         sparse_top_k=retrieval_section.get("sparse_top_k", 20),
@@ -761,8 +761,10 @@ def get_settings() -> Settings:
         min_contrast=image_quality_config.get("min_contrast", 18.0),
         max_abs_skew_degrees=image_quality_config.get("max_abs_skew_degrees", 12.0),
         audio_whisper_model=audio_config.get("whisper_model", "small"),
-        audio_whisper_device=audio_config.get("whisper_device", "cpu"),
-        audio_whisper_compute_type=audio_config.get("whisper_compute_type", "int8"),
+        audio_whisper_device=env_value("AUDIO_WHISPER_DEVICE", audio_config.get("whisper_device", "cpu")),
+        audio_whisper_compute_type=env_value(
+            "AUDIO_WHISPER_COMPUTE_TYPE", audio_config.get("whisper_compute_type", "int8")
+        ),
         audio_whisper_beam_size=int(audio_config.get("whisper_beam_size", 5)),
         audio_whisper_vad_filter=bool(audio_config.get("whisper_vad_filter", True)),
         audio_chunk_target_seconds=float(audio_config.get("audio_chunk_target_seconds", 45.0)),

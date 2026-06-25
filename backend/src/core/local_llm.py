@@ -11,7 +11,6 @@ from src.core.base_llm import BaseLLM
 from src.core.config import Settings
 
 logger = logging.getLogger(__name__)
-
 _THINK_TAG_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 

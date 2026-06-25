@@ -46,6 +46,7 @@ export type Citation = {
   role: string;
   source_language: string;
   confidence: number;
+  figure_image_url?: string | null;
   evidence_blocks?: EvidenceBlock[];
 };
 
@@ -366,6 +367,7 @@ export type GraphNode = {
   is_focused?: boolean;         // Focus mode — primary entity from citations
   source_docs?: string[];
   evidence_refs?: Array<Record<string, string | number>>;
+  evidence_text?: string | null;   // server-verified passage of the node's primary mention block
 };
 
 export type GraphEdge = {

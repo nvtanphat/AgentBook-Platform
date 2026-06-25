@@ -15,7 +15,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp,
   Copy, FileAudio, FileSpreadsheet, FileText, Image, Loader2,
-  Presentation, RotateCcw, X,
+  Maximize2, Presentation, RotateCcw, X,
 } from "lucide-react";
 import { API_BASE_URL, Citation, EvidenceBlock, EvidencePageResponse, loadEvidencePage } from "../api/client";
 import SnippetRenderer from "./SnippetRenderer";
@@ -188,8 +188,10 @@ function MatchedSnippet({ citation, ownerId }: { citation: Citation; ownerId: st
         </div>
       )}
 
-      {/* Premium blockquote */}
-      <div className="border-l-[3px] border-primary bg-slate-50/60 px-3.5 py-3 rounded-r-lg">
+      {/* Premium blockquote — cap height so a long single-paragraph snippet (few
+          line breaks, so the line-count collapse never triggers) scrolls inside
+          its own box instead of pushing the page canvas off-screen. */}
+      <div className="max-h-[40vh] overflow-y-auto border-l-[3px] border-primary bg-slate-50/60 px-3.5 py-3 rounded-r-lg">
         <HighlightedText
           text={text}
           exactSnippet={citation.cited_span}
@@ -248,6 +250,7 @@ function SourceImageViewer({
   const [containerWidth, setContainerWidth] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
   const [imgError, setImgError] = useState(false);
+  const [zoomed, setZoomed] = useState(false);
   const absoluteUrl = url.startsWith("http") ? url : `${API_BASE_URL}${url}`;
 
   useEffect(() => {
@@ -262,10 +265,20 @@ function SourceImageViewer({
 
   return (
     <div className="border-b border-slate-100 bg-slate-900 p-3" ref={containerRef}>
-      <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-slate-400">Source Image</p>
+      <div className="mb-1.5 flex items-center justify-between">
+        <p className="text-[10px] font-medium uppercase tracking-wider text-slate-400">Source Image</p>
+        <button
+          type="button"
+          onClick={() => setZoomed(true)}
+          className="flex items-center gap-1 text-[10px] font-medium text-slate-400 transition hover:text-slate-200"
+        >
+          <Maximize2 size={10} /> Phóng to
+        </button>
+      </div>
       <div className="relative overflow-hidden rounded border border-slate-700">
         <img
-          src={absoluteUrl} alt={alt} className="w-full object-contain"
+          src={absoluteUrl} alt={alt} className="w-full object-contain cursor-zoom-in"
+          onClick={() => setZoomed(true)}
           onLoad={(e) => { const img = e.currentTarget; setImgSize({ w: img.naturalWidth, h: img.naturalHeight }); }}
           onError={() => setImgError(true)}
         />
@@ -288,6 +301,30 @@ function SourceImageViewer({
           </>
         )}
       </div>
+
+      {/* Fullscreen lightbox — the inline preview gets squeezed when the matched
+          snippet is tall, so let the user open the source page at full size. */}
+      {zoomed && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 p-4"
+          onClick={() => setZoomed(false)}
+        >
+          <img
+            src={absoluteUrl}
+            alt={alt}
+            className="max-h-full max-w-full cursor-zoom-out object-contain"
+            onClick={() => setZoomed(false)}
+          />
+          <button
+            type="button"
+            onClick={() => setZoomed(false)}
+            className="absolute right-4 top-4 rounded-full bg-white/15 p-2 text-white transition hover:bg-white/30"
+            aria-label="Đóng"
+          >
+            <X size={18} />
+          </button>
+        </div>
+      )}
     </div>
   );
 }
