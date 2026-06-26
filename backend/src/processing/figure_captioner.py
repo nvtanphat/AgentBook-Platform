@@ -31,9 +31,14 @@ _CAPTION_PROMPT_VI = (
     "Quan sát toàn bộ ảnh, xác định từng vùng nội dung, rồi áp dụng quy tắc phù hợp:\n"
     "\n"
     "- **Bảng:** Xuất Markdown table giữ nguyên hàng × cột. Ghi rõ đơn vị nếu có. Không bỏ sót hàng.\n"
-    "- **Biểu đồ cột/đường/vùng:** Xuất Markdown table. DÒNG HEADER là các nhãn trục X (ví dụ năm 2020, 2021…), KHÔNG ghi 'Cột 2/Cột 3'. "
-    "Mỗi cụm/loạt cột là một hàng. ĐẾM số cột (số vạch trục X) rồi điền ĐỦ đúng bấy nhiêu giá trị cho mỗi hàng — đọc số ghi trên đỉnh từng cột, không bỏ sót, không gộp. "
-    "Nếu một cột không có nhãn số thì ghi [không rõ] để giữ đúng vị trí. Không viết mô tả xu hướng.\n"
+    "- **Biểu đồ cột/đường/vùng:** Xuất Markdown table theo 3 bước:\n"
+    "  Bước 1 – Đọc chú giải (legend): liệt kê từng chuỗi dữ liệu theo thứ tự xuất hiện trong legend. "
+    "Dùng ĐÚNG nhãn chú giải làm cột đầu tiên (row header) — ví dụ 'Lợi nhuận trước thuế', 'Lợi nhuận sau thuế'. "
+    "Không tự đặt tên 'Chuỗi 1' hay 'Cột 2'.\n"
+    "  Bước 2 – Dòng HEADER: đọc nhãn trục X từ TRÁI qua PHẢI, từng nhãn nằm dưới mỗi nhóm cột (ví dụ 2019, 2020, 2021, 2022, 2023). "
+    "KHÔNG lấy khoảng năm từ tiêu đề biểu đồ — tiêu đề có thể ghi '2019–2023' nhưng phải đọc từng nhãn riêng trên trục X.\n"
+    "  Bước 3 – Điền giá trị: với mỗi chuỗi, đọc số in trên đỉnh cột, khớp đúng với nhãn năm bên dưới cột đó. "
+    "ĐẾM số nhóm cột = số nhãn trục X rồi điền ĐỦ bấy nhiêu giá trị — không bỏ sót, không gộp. Không đọc được → ghi [không rõ]. Không mô tả xu hướng.\n"
     "- **Biểu đồ tròn/donut:** Liệt kê từng phần: tên — giá trị hoặc %.\n"
     "- **Sơ đồ phân cấp/tổ chức:** Dùng indent thể hiện quan hệ cha–con.\n"
     "- **Lưu đồ/quy trình:** Liệt kê các bước theo thứ tự, giữ nguyên nhãn mũi tên/điều kiện.\n"
@@ -54,9 +59,14 @@ _CAPTION_PROMPT_EN = (
     "Survey the whole image, identify each content region, then apply the matching rule:\n"
     "\n"
     "- **Table:** Output a Markdown table preserving all rows × columns. Include units if shown. Do not skip rows.\n"
-    "- **Bar/line/area chart:** Output a Markdown table. The HEADER row is the X-axis labels (e.g. years 2020, 2021…), NOT 'Column 2/Column 3'. "
-    "Each series is one row. COUNT the columns (X-axis ticks), then fill EXACTLY that many values per row — read the number printed on top of each bar, do not skip or merge any. "
-    "If a column has no printed value, write [unclear] to keep its position. Do not describe trends.\n"
+    "- **Bar/line/area chart:** Output a Markdown table in 3 steps:\n"
+    "  Step 1 – Read the legend: list each data series in the order they appear in the legend. "
+    "Use the EXACT legend label as the first column (row header) — e.g. 'Pre-tax profit', 'Post-tax profit'. "
+    "Do not invent names like 'Series 1' or 'Column 2'.\n"
+    "  Step 2 – Header row: read X-axis labels LEFT to RIGHT, one label per bar group (e.g. 2019, 2020, 2021, 2022, 2023). "
+    "Read the tick label printed below each bar group — do NOT use the year range from the chart title (e.g. a title saying '2019–2023' is not the same as reading individual axis labels).\n"
+    "  Step 3 – Fill values: for each series, read the number printed on top of its bar, matched to the year label directly below that bar. "
+    "COUNT bar groups = number of X-axis labels; fill EXACTLY that many values per row — do not skip or merge. Unreadable → write [unclear]. Do not describe trends.\n"
     "- **Pie/donut chart:** List each segment: label — value or percentage.\n"
     "- **Hierarchy/org chart:** Use indentation to show parent–child relationships.\n"
     "- **Flowchart/process:** List steps in order, preserving arrow labels and conditions.\n"
@@ -123,7 +133,7 @@ def _looks_like_gibberish(text: str) -> bool:
 # Vision models supported by Ollama, tried in order of document/table strength.
 # qwen2.5vl / qwen2-vl read dense tables + Vietnamese far better than minicpm-v,
 # which hallucinates on number-dense financial pages. minicpm-v kept as fallback.
-_OLLAMA_VISION_MODELS = ["qwen2.5vl", "qwen2-vl", "minicpm-v", "llava", "moondream", "bakllava", "llava-phi3"]
+_OLLAMA_VISION_MODELS = ["qwen2.5-vl", "qwen2.5vl", "qwen2-vl", "minicpm-v", "llava", "moondream", "bakllava", "llava-phi3"]
 
 
 class FigureCaptioner:
@@ -138,8 +148,10 @@ class FigureCaptioner:
         timeout: float = 300.0,
         image_max_side_px: int = 1024,
         num_ctx: int = 8192,
+        num_predict: int = 512,
         list_bullet_ratio_max: float = 0.70,
         list_bullet_max_words: int = 3,
+        ollama_model: str | None = None,
     ) -> None:
         self.ollama_base_url = ollama_base_url.rstrip("/")
         self.language = language
@@ -147,8 +159,10 @@ class FigureCaptioner:
         self.timeout = timeout
         self.image_max_side_px = image_max_side_px
         self.num_ctx = num_ctx
+        self.num_predict = num_predict
         self.list_bullet_ratio_max = list_bullet_ratio_max
         self.list_bullet_max_words = list_bullet_max_words
+        self.ollama_model = ollama_model
         self._available_model: str | None = None
         self._model_checked: bool = False
         self._ocr_engine = None  # lazy-init, reused across all figures
@@ -245,7 +259,7 @@ class FigureCaptioner:
                     "prompt": prompt,
                     "images": [image_b64],
                     "stream": False,
-                    "options": {"temperature": 0.1, "num_predict": 512, "num_ctx": self.num_ctx},
+                    "options": {"temperature": 0.1, "num_predict": self.num_predict, "num_ctx": self.num_ctx},
                 },
                 timeout=self.timeout,
             )
@@ -319,6 +333,19 @@ class FigureCaptioner:
             resp.raise_for_status()
             all_models = resp.json().get("models", [])
             installed = {m["name"].split(":")[0]: m["name"] for m in all_models}
+            
+            if self.ollama_model:
+                pref = self.ollama_model.strip()
+                if pref in [m["name"] for m in all_models]:
+                    self._available_model = pref
+                    logger.info("Figure captioner using configured VLM model: %s", self._available_model)
+                    return self._available_model
+                pref_base = pref.split(":")[0]
+                if pref_base in installed:
+                    self._available_model = installed[pref_base]
+                    logger.info("Figure captioner using configured VLM model: %s", self._available_model)
+                    return self._available_model
+
             for model in _OLLAMA_VISION_MODELS:
                 if model in installed:
                     self._available_model = installed[model]
@@ -381,7 +408,8 @@ class FigureCaptioner:
                 with self._ocr_engine_lock:
                     if self._ocr_engine is None:
                         from src.processing.ocr_engine import EasyOCREngine
-                        self._ocr_engine = EasyOCREngine(lang="vi" if self.language == "vi" else "en")
+                        from src.core.config import get_settings as _get_settings
+                        self._ocr_engine = EasyOCREngine(lang="vi" if self.language == "vi" else "en", gpu=_get_settings().ocr_easyocr_gpu)
             parsed = self._ocr_engine.parse_image(image_path, language=self.language)
             text = " ".join(b.content for b in parsed.blocks if b.content.strip())
             if text:
