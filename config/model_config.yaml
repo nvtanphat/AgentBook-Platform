@@ -110,6 +110,7 @@ reranker:
   enabled: true
   model_name: "BAAI/bge-reranker-v2-m3"
   device: "cpu"
+  max_length: 512   # truncate each (query, chunk) pair; long chunks (big tables) otherwise make a predict batch take minutes
 
 versions:
   parse_version: "docling-2026-04-mining"

@@ -1,4 +1,3 @@
-import asyncio
 import json
 import logging
 
@@ -27,40 +26,6 @@ from src.services.summary_service import SummaryService
 router = APIRouter(prefix="/query", tags=["query"])
 logger = logging.getLogger(__name__)
 
-# Cap concurrent heavy query executions. On a CPU box, the embedding/rerank steps
-# are serialized by a process-wide semaphore; letting many abandoned/retried
-# requests run at once thrashes the CPU and cascades every query into multi-minute
-# latency. Bounding concurrency keeps each query close to its standalone time.
-_QUERY_CONCURRENCY = asyncio.Semaphore(2)
-
-
-async def _run_cancellable(request: Request, make_coro):
-    """Run a query coroutine under the concurrency cap, cancelling it if the
-    client disconnects so abandoned work stops instead of piling up on the CPU.
-    """
-    async with _QUERY_CONCURRENCY:
-        task = asyncio.ensure_future(make_coro())
-        watcher = asyncio.ensure_future(_until_disconnect(request))
-        try:
-            done, _ = await asyncio.wait({task, watcher}, return_when=asyncio.FIRST_COMPLETED)
-            if task in done:
-                return task.result()
-            # Client went away first — stop the pipeline.
-            task.cancel()
-            try:
-                await task
-            except BaseException:
-                pass
-            logger.info("Query cancelled — client disconnected before completion")
-            raise asyncio.CancelledError()
-        finally:
-            watcher.cancel()
-
-
-async def _until_disconnect(request: Request) -> None:
-    while not await request.is_disconnected():
-        await asyncio.sleep(1.0)
-
 
 @router.post("/ask", response_model=APIResponse[QueryResponse])
 @limiter.limit("15/minute")
@@ -71,11 +36,7 @@ async def ask(
 ) -> APIResponse[QueryResponse]:
     verify_owner_access(request, body.owner_id)
     try:
-        result = await _run_cancellable(request, lambda: query_service.ask(body))
-    except asyncio.CancelledError:
-        # Client disconnected before completion — the connection is already gone,
-        # so the status code is moot; just stop without running the pipeline further.
-        raise HTTPException(status_code=499, detail="Client closed request.") from None
+        result = await query_service.ask(body)
     except ValueError as exc:
         logger.warning("Invalid query request", extra={"owner_id": body.owner_id, "collection_id": body.collection_id, "error": str(exc)})
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid query request.") from exc
@@ -98,52 +59,15 @@ async def ask_stream(
     verify_owner_access(request, body.owner_id)
 
     async def generate():
-        # CPU-bound steps (BGE-M3 embedding, local LLM generation) can run for
-        # minutes without emitting an SSE event. A silent gap that long makes
-        # ngrok / proxies / the browser treat the stream as dead and drop it
-        # ("connection error while receiving data"). Emit a keepalive comment
-        # every HEARTBEAT_SECONDS of silence — SSE comment lines (": …") are
-        # ignored by EventSource but keep the TCP connection alive.
-        heartbeat_seconds = 15.0
-        # Hold a concurrency slot for the stream's lifetime; released on completion
-        # or client disconnect (Starlette throws GeneratorExit → finally runs).
-        async with _QUERY_CONCURRENCY:
-            agen = query_service.ask_stream(body).__aiter__()
-            pending: asyncio.Future | None = None
-            try:
-                while True:
-                    if pending is None:
-                        # One task pulls the next event; on a heartbeat timeout we keep
-                        # awaiting THIS SAME task (never cancel it) so the underlying
-                        # async generator is not corrupted mid-step.
-                        pending = asyncio.ensure_future(agen.__anext__())
-                    done, _ = await asyncio.wait({pending}, timeout=heartbeat_seconds)
-                    if pending not in done:
-                        yield ": keepalive\n\n"
-                        continue
-                    task, pending = pending, None
-                    try:
-                        line = task.result()
-                    except StopAsyncIteration:
-                        break
-                    yield line
-            except ValueError:
-                logger.warning("Invalid streaming query request", extra={"owner_id": body.owner_id, "collection_id": body.collection_id})
-                yield f"event: error\ndata: {json.dumps({'message': 'Invalid query request.'})}\n\n"
-            except Exception:
-                logger.exception("Streaming query pipeline failed", extra={"owner_id": body.owner_id, "collection_id": body.collection_id})
-                yield f"event: error\ndata: {json.dumps({'message': 'Query pipeline failed. Please retry later.'})}\n\n"
-            finally:
-                # Client disconnect / completion: cancel any in-flight pull and close
-                # the upstream generator so the pipeline doesn't keep running detached.
-                if pending is not None:
-                    pending.cancel()
-                aclose = getattr(agen, "aclose", None)
-                if aclose is not None:
-                    try:
-                        await aclose()
-                    except Exception:
-                        pass
+        try:
+            async for line in query_service.ask_stream(body):
+                yield line
+        except ValueError:
+            logger.warning("Invalid streaming query request", extra={"owner_id": body.owner_id, "collection_id": body.collection_id})
+            yield f"event: error\ndata: {json.dumps({'message': 'Invalid query request.'})}\n\n"
+        except Exception:
+            logger.exception("Streaming query pipeline failed", extra={"owner_id": body.owner_id, "collection_id": body.collection_id})
+            yield f"event: error\ndata: {json.dumps({'message': 'Query pipeline failed. Please retry later.'})}\n\n"
 
     return StreamingResponse(
         generate(),

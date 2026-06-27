@@ -136,6 +136,7 @@ class Settings(BaseSettings):
     reranker_model_name: str = "BAAI/bge-reranker-v2-m3"
     reranker_device: str = "cpu"
     reranker_max_pairs: int = 100
+    reranker_max_length: int = 512  # truncate each (query, chunk) pair so long chunks (e.g. big tables) don't blow a predict batch up to minutes
     dense_top_k: int = 20
     sparse_top_k: int = 20
     graph_top_k: int = 10
@@ -193,7 +194,7 @@ class Settings(BaseSettings):
     chunk_target_token_count: int = 512
     chunk_min_token_count: int = 100
     chunk_overlap_token_count: int = 50
-    chunk_max_blocks_per_chunk: int = 8
+    chunk_max_blocks_per_chunk: int = 20
     semantic_chunk_breakpoint_percentile: float = 95.0
     min_ocr_text_quality: float = 0.35
     warn_ocr_text_quality: float = 0.55
@@ -665,6 +666,7 @@ def get_settings() -> Settings:
         reranker_model_name=reranker_config.get("model_name", "BAAI/bge-reranker-v2-m3"),
         reranker_device=env_value("RERANKER_DEVICE", reranker_config.get("device", "cpu")),
         reranker_max_pairs=int(reranker_config.get("max_pairs", 80)),
+        reranker_max_length=int(reranker_config.get("max_length", 512)),
         dense_top_k=retrieval_section.get("dense_top_k", 20),
         sparse_top_k=retrieval_section.get("sparse_top_k", 20),
         graph_top_k=retrieval_section.get("graph_top_k", 10),
@@ -711,7 +713,7 @@ def get_settings() -> Settings:
         chunk_target_token_count=chunking_config.get("target_token_count", 512),
         chunk_min_token_count=chunking_config.get("min_token_count", 100),
         chunk_overlap_token_count=chunking_config.get("overlap_token_count", 50),
-        chunk_max_blocks_per_chunk=chunking_config.get("max_blocks_per_chunk", 8),
+        chunk_max_blocks_per_chunk=chunking_config.get("max_blocks_per_chunk", 20),
         semantic_chunk_breakpoint_percentile=float(chunking_config.get("breakpoint_percentile", 95.0)),
         adaptive_retrieval_enabled=env_bool(
             "ADAPTIVE_RETRIEVAL_ENABLED",
