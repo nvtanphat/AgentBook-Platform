@@ -205,7 +205,36 @@ A utility script `run.ps1` is provided to easily orchestrate the deployment life
 .\run.ps1 down
 ```
 
-*Note: For machines equipped with NVIDIA GPUs, use `docker-compose.gpu.yml` directly or adjust environment configurations.*
+#### Running with NVIDIA GPU (CUDA Acceleration)
+
+If your host machine is equipped with an NVIDIA GPU (e.g., RTX 4060 or better), you can leverage CUDA to run embedding models, cross-encoder rerankers, and vision models on the GPU, while keeping lightweight ingestion operations on the CPU to avoid VRAM congestion.
+
+1. **System Requirements**:
+   - Ensure the latest **NVIDIA Driver** is installed on the host.
+   - Install **nvidia-container-toolkit** to allow Docker containers to access GPU devices.
+
+2. **Bootstrapping the GPU Stack**:
+   - Run the setup option with the `-Gpu` flag to pull the required Ollama models and build the Docker images configured with PyTorch CUDA (`cu121`):
+     ```powershell
+     .\run.ps1 setup -Gpu
+     ```
+   - For subsequent runs, start the stack using:
+     ```powershell
+     .\run.ps1 up -Gpu
+     ```
+
+3. **Manual Docker Compose Command**:
+   - If not using PowerShell, launch the GPU services using the override file:
+     ```bash
+     docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+     ```
+
+4. **Resource & VRAM Considerations**:
+   - **VRAM Allocation**: On a standard 8GB GPU (like an RTX 4060), running the local LLM (`qwen2.5:7b`) consumes around 5–6GB. The rest is allocated to BGE-M3 text embeddings, cross-encoder reranking, and SigLIP visual embeddings.
+   - **Ingestion Fallback**: Whisper (audio transcribing) and EasyOCR (image parsing) are deliberately pinned to the CPU (`AGENTBOOK_AUDIO_WHISPER_DEVICE: cpu`) to prevent Out-of-Memory (OOM) failures when multiple files are processed concurrently.
+   - **OOM Mitigation**: If your GPU runs out of memory:
+     - Set `AGENTBOOK_RERANKER_DEVICE: cpu` in `docker-compose.gpu.yml` to move the cross-encoder to the CPU.
+     - Pull and run a smaller LLM model such as `qwen2.5:3b` in Ollama.
 
 ---
 
