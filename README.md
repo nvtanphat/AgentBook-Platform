@@ -1,11 +1,11 @@
-# AgentBook (Noelys): Bilingual Multimodal GraphRAG
+# AgentBook (Noelys): Bilingual Multimodal RAG
 
 <p align="center">
   <img src="frontend/public/noelys-logo.png" alt="Noelys Logo" width="160"/>
 </p>
 
 <p align="center">
-  <strong>An Evidence-Preserving Multimodal GraphRAG System for Bilingual (Vietnamese & English) Document Q&A</strong>
+  <strong>An Evidence-Preserving Multimodal RAG System for Bilingual (Vietnamese & English) Document Q&A</strong>
 </p>
 
 <p align="center">
@@ -23,7 +23,7 @@
 
 ## 🌟 System Overview
 
-**AgentBook** (codename: **Noelys**) is a state-of-the-art multimodal GraphRAG (Retrieval-Augmented Generation) system designed to tackle document Q&A challenges for enterprises and academic research. 
+**AgentBook** (codename: **Noelys**) is a state-of-the-art multimodal RAG (Retrieval-Augmented Generation) system designed to tackle document Q&A challenges for enterprises and academic research. 
 
 Unlike traditional RAG systems that flatten document structures into simple text blocks and produce loose citations, AgentBook centers its entire lifecycle around the **Evidence Unit**. By preserving precise layout coordinates (bounding boxes), page numbers, audio timestamps, and extraction confidence, AgentBook ensures that every claim in a generated answer can be verified and audited back to the exact source.
 
