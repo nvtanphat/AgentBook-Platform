@@ -29,6 +29,8 @@ Unlike traditional RAG systems that flatten document structures into simple text
 
 It fully supports multi-modal files: **multi-column PDFs, PowerPoint slides, Excel spreadsheets, scanned images, handwritten notes, and audio recordings.**
 
+It is natively optimized for **Vietnamese and Bilingual (Vietnamese & English) Q&A**, featuring robust cross-lingual retrieval (translating and searching across language barriers) and native Vietnamese OCR parsing.
+
 ---
 
 ## 📋 Table of Contents
@@ -69,6 +71,7 @@ It fully supports multi-modal files: **multi-column PDFs, PowerPoint slides, Exc
    - Combines BGE-M3 dense embeddings and sparse lexical tokens through Reciprocal Rank Fusion (Dense-Sparse RRF).
    - Features a **lightweight Knowledge Graph** (Entities, Relations, Events) stored directly in MongoDB, enabling relation-path traversal and graph probe context extension without the resource overhead of Neo4j.
    - Supports **Visual Retrieval** via SigLIP visual embeddings for charts, diagrams, and cropped images.
+   - **Bilingual & Cross-Lingual Search**: Handles cross-lingual queries (e.g., asking in Vietnamese about English documents or vice-versa) using `BGE-M3` multilingual alignment, query translation caching, and matching.
 
 4. **Deterministic Table Reasoning**:
    - Automatically routing math and aggregation table questions to a **deterministic computation executor** instead of the LLM generator, eliminating mathematical hallucinations and arithmetic errors.
