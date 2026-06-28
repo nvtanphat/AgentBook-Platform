@@ -1,4 +1,4 @@
-# AgentBook (Noelys): Bilingual Multimodal RAG
+<h1 align="center">AgentBook (Noelys): Bilingual Multimodal RAG</h1>
 
 <p align="center">
   <img src="frontend/public/noelys-logo.png" alt="Noelys Logo" width="160"/>
