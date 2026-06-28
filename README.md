@@ -21,22 +21,6 @@
 
 ---
 
-## 🌟 System Overview
-
-<p align="center">
-  <img src="docs/assets/overview.png" alt="AgentBook System UI Overview" width="95%"/>
-</p>
-
-**AgentBook** (codename: **Noelys**) is a state-of-the-art multimodal RAG (Retrieval-Augmented Generation) system designed to tackle document Q&A challenges for enterprises and academic research. 
-
-Unlike traditional RAG systems that flatten document structures into simple text blocks and produce loose citations, AgentBook centers its entire lifecycle around the **Evidence Unit**. By preserving precise layout coordinates (bounding boxes), page numbers, audio timestamps, and extraction confidence, AgentBook ensures that every claim in a generated answer can be verified and audited back to the exact source.
-
-It fully supports multi-modal files: **multi-column PDFs, PowerPoint slides, Excel spreadsheets, scanned images, handwritten notes, and audio recordings.**
-
-It is natively optimized for **Vietnamese and Bilingual (Vietnamese & English) Q&A**, featuring robust cross-lingual retrieval (translating and searching across language barriers) and native Vietnamese OCR parsing.
-
----
-
 ## 📋 Table of Contents
 
 - [🌟 System Overview](#-system-overview)
@@ -54,6 +38,22 @@ It is natively optimized for **Vietnamese and Bilingual (Vietnamese & English) Q
   - [Overall Performance Comparison](#overall-performance-comparison)
   - [Ablation Study](#ablation-study)
 - [📜 License & Academic Citation](#-license--academic-citation)
+
+---
+
+## 🌟 System Overview
+
+**AgentBook** (codename: **Noelys**) is a state-of-the-art multimodal RAG (Retrieval-Augmented Generation) system designed to tackle document Q&A challenges for enterprises and academic research. 
+
+Unlike traditional RAG systems that flatten document structures into simple text blocks and produce loose citations, AgentBook centers its entire lifecycle around the **Evidence Unit**. By preserving precise layout coordinates (bounding boxes), page numbers, audio timestamps, and extraction confidence, AgentBook ensures that every claim in a generated answer can be verified and audited back to the exact source.
+
+It fully supports multi-modal files: **multi-column PDFs, PowerPoint slides, Excel spreadsheets, scanned images, handwritten notes, and audio recordings.**
+
+It is natively optimized for **Vietnamese and Bilingual (Vietnamese & English) Q&A**, featuring robust cross-lingual retrieval (translating and searching across language barriers) and native Vietnamese OCR parsing.
+
+<p align="center">
+  <img src="docs/assets/overview.png" alt="AgentBook System UI Overview" width="95%"/>
+</p>
 
 ---
 
