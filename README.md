@@ -1,11 +1,11 @@
-# AgentBook (Noelys)
+# AgentBook (Noelys): Bilingual Multimodal GraphRAG
 
 <p align="center">
   <img src="frontend/public/noelys-logo.png" alt="Noelys Logo" width="160"/>
 </p>
 
 <p align="center">
-  <strong>An Evidence-Preserving Multimodal GraphRAG System for Document Q&A</strong>
+  <strong>An Evidence-Preserving Multimodal GraphRAG System for Bilingual (Vietnamese & English) Document Q&A</strong>
 </p>
 
 <p align="center">
