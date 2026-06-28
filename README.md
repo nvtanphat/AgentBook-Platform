@@ -19,13 +19,13 @@
   <a href="https://ollama.com/"><img src="https://img.shields.io/badge/Ollama-black?style=flat-square&logo=ollama&logoColor=white" alt="Ollama"/></a>
 </p>
 
-<p align="center">
-  <img src="docs/assets/overview.png" alt="AgentBook Overview" width="90%"/>
-</p>
-
 ---
 
 ## 🌟 System Overview
+
+<p align="center">
+  <img src="docs/assets/overview.png" alt="AgentBook System UI Overview" width="95%"/>
+</p>
 
 **AgentBook** (codename: **Noelys**) is a state-of-the-art multimodal RAG (Retrieval-Augmented Generation) system designed to tackle document Q&A challenges for enterprises and academic research. 
 
