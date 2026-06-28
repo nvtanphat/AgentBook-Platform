@@ -78,6 +78,12 @@ It fully supports multi-modal files: **multi-column PDFs, PowerPoint slides, Exc
    - **Citation Aligner & Quality Gate**: Checks citation markers, aligns them with concrete source coordinates, and filters out unverified statements.
    - **Controlled Refusal**: Triggers an automated refusal when evidence coverage or retrieval confidence falls below thresholds.
 
+6. **Bounded Agentic Planning & Routing**:
+   - For multi-hop, comparative, or graph-dependent queries, AgentBook routes requests through a **bounded multi-agent orchestration layer** (`backend/src/agentic/`).
+   - A `PlannerAgent` decomposes complex questions into sequential sub-questions.
+   - A `RetrieverDirectorAgent` coordinates specific tools (`HybridTextSearchTool`, `GraphRelationSearchTool`, `VisualImageSearchTool`) to extract evidence.
+   - A `SynthesizerAgent` compiles the retrieved evidence bundles into a unified response, which is then verified by the same post-generation guardrails to ensure correctness.
+
 ---
 
 ## 🏗️ System Architecture
@@ -130,6 +136,7 @@ flowchart TD
 | **Services** | `query_service.py`, `material_service.py` | Core orchestration and business logic interfaces. |
 | **Processing** | `backend/src/processing/` | Document conversions, EasyOCR/VLM layout analysis, entity extraction. |
 | **RAG Retrieval** | `backend/src/rag/` | Employs dense+sparse vectors, knowledge graph relation search, and cross-encoders. |
+| **Agentic Planning** | `backend/src/agentic/` | Bounded agentic planner, multi-agent director, and retrieval tool coordinator. |
 | **Inference** | `backend/src/inference/` | Intent routing, LLM/VLM prompting, and deterministic table calculation engine. |
 | **Guardrails** | `backend/src/guardrails/` | SLEC verification, citation alignment checks, and quality-controlled refusals. |
 
